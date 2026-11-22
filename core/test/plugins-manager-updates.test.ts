@@ -89,11 +89,12 @@ describe('a staged update', () => {
     expect(await made.pluginsManager.update('nobody', await stage(made.dataDir, worker('nobody')))).toEqual({ outcome: 'refused', reason: 'missing' })
   })
 
-  it('is refused for a first-party copy, which changes only with the install', async () => {
-    const made = await harness({ install: { ...coreInstall(), git: { files: worker('git'), firstParty: true } } })
-    await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'git')).toBe('ready')
-    expect(await made.pluginsManager.update('git', await stage(made.dataDir, worker('git', { version: '1.1.0' })))).toEqual({ outcome: 'refused', reason: 'reserved-id' })
+  it('is staged for git and layout as for any plugin-folder plugin', async () => {
+    for (const id of ['git', 'layout']) {
+      const made = await running({ folder: { [id]: worker(id) }, entries: { [id]: signed() } })
+      expect(stateOf(made.pluginsManager, id)).toBe('ready')
+      expect(await made.pluginsManager.update(id, await stage(made.dataDir, worker(id, { version: '1.1.0' })))).toEqual({ outcome: 'confirm', stops: [id] })
+    }
   })
 
   it('waits for plugin.updated to land and applies nothing when it is lost', async () => {

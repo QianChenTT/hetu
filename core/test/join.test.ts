@@ -8,7 +8,6 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/policy-jobs.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
-import { FIRST_PARTY_SIGNER } from '../api/install.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { RouterDoor } from '../backend/router/header.ts'
 import { wireCore, type WireOptions } from '../backend/wire.ts'
@@ -266,31 +265,6 @@ describe('a plugin\'s life through the joined core', () => {
     expect(runtime.half('beta', 2).got('init')).toHaveLength(1)
   })
 
-  // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real core record lane
-  it('holds a first-party copy back until its record landed', async () => {
-    let failing = true
-    const { recording, router, pluginsManager, dataDir } = await joined({
-      install: { ...coreInstall(), git: { files: filesFor(workerManifest('git')), firstParty: true } },
-      before: booted => {
-        const append = booted.log.append.bind(booted.log)
-        booted.log.append = async (event, fields) => {
-          if (failing) throw new Error('disk full')
-          return append(event, fields)
-        }
-        Object.defineProperty(booted.log, 'healthy', { get: () => !failing, configurable: true })
-      },
-    })
-    const started = pluginsManager.start()
-    await tick(100)
-    expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(false)
-    expect(pluginsManager.plugin('git')).toBe(null)
-    failing = false
-    await recording.flush()
-    await started
-    await pluginsManager.settled()
-    expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(true)
-    expect(pluginsManager.plugin('git')?.state).toBe('ready')
-  })
 })
 
 // Shutdown stops sandboxed plugins in reverse graph order, then the core modules close with the log last. A plugin in
@@ -927,7 +901,7 @@ describe('the door through the joined core', () => {
   })
 
   // How mcp sits in the plugin folder: approved unsigned by its hash, unsigned with no allowUnsigned naming its hash, or
-  // carrying the first-party signer with its hash approved
+  // carrying the first-party signer an older build wrote with its hash approved
   type McpAs = 'approved' | 'unsigned' | 'first-party-signer'
 
   async function door(mcpAs: McpAs = 'approved') {
@@ -950,7 +924,7 @@ describe('the door through the joined core', () => {
         beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })),
         mcp: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } })),
       },
-      entries: { beta: { granted: [callMcp] }, mcp: { signer: mcpAs === 'first-party-signer' ? FIRST_PARTY_SIGNER : null } },
+      entries: { beta: { granted: [callMcp] }, mcp: { signer: mcpAs === 'first-party-signer' ? 'hetu first-party' : null } },
       prepare: async dataDir => {
         if (mcpAs === 'unsigned') return
         const allowUnsigned = [await hashOf(path.join(dataDir, 'plugins', 'mcp'))]

@@ -2,8 +2,7 @@ import path from 'node:path'
 import type { PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
 import { grantKeyOf, type Caller } from '../../api/envelope.ts'
-import { firstPartyIds } from '../../api/ids.ts'
-import { FIRST_PARTY_SIGNER, isNewer } from '../../api/install.ts'
+import { isNewer } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
@@ -68,8 +67,6 @@ export abstract class PluginsChanges extends PluginsInstall {
         return this.approve(change.plugin, confirm)
       case 'plugin.remove':
         return this.remove(change.plugin, confirm)
-      case 'plugin.restore':
-        return this.restore(change.plugin, confirm)
       case 'plugin.update':
         return this.applyStaged(change.plugin, confirm)
       case 'devMode':
@@ -187,12 +184,7 @@ export abstract class PluginsChanges extends PluginsInstall {
         await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
       }
       if (k.from === 'folder' && k.entry !== null) {
-        const change = this.classes('reset', id, null, confirm)
-        await this.settle(change.others, true)
-        await this.store.removePlugin(id)
-        delete this.state.plugins[id]
-        await this.settle(change.others, false)
-        this.raiseOwed(this.touched(change))
+        await this.entryGone(id, this.classes('reset', id, null, confirm))
         this.entryChecks.set(id, 'absent')
         k.entry = null
         this.bump()
@@ -322,20 +314,11 @@ export abstract class PluginsChanges extends PluginsInstall {
   }
 
   // The entry goes first so nothing can run, then the plugin stops with its dependents, then its code, storage and
-  // cache. A first-party plugin leaves a tombstone, written before anything else
+  // cache
   protected async remove(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder') throw new Error(`${id} is not a plugin-folder plugin`)
-    const change = this.classes('remove', id, null, confirm)
-    await this.settle(change.others, true)
-    if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
-      await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
-    }
-    await this.store.removePlugin(id)
-    delete this.state.plugins[id]
-    this.pairsGone(id)
-    await this.settle(change.others, false)
-    this.raiseOwed(this.touched(change))
+    await this.entryGone(id, this.classes('remove', id, null, confirm), () => this.pairsGone(id))
     // What the human let this plugin do goes with it, so a plugin added later under the id asks again
     const { switches } = this.state
     const plugins = bare({ ...switches.limits.plugins })
@@ -360,38 +343,12 @@ export abstract class PluginsChanges extends PluginsInstall {
     this.replan()
   }
 
-  // Copies the install's bytes again and clears the tombstone. Never over a community plugin holding the id
-  protected async restore(id: string, confirm: boolean): Promise<void> {
-    const read = this.bundled.get(id)
-    const listed = this.install?.plugins[id]
-    if (read === undefined || listed === undefined || read.problem !== null || read.hash !== listed.hash) {
-      throw new Error(`no install copy of ${id} to restore`)
-    }
-    const entry = this.state.plugins[id] ?? null
-    if (entry !== null && entry.signer !== FIRST_PARTY_SIGNER) throw new Error(`${id} is held by another plugin`)
-    if (isOne(this.state.switches.removed, id)) {
-      await this.writeSwitches({ ...this.state.switches, removed: this.state.switches.removed.filter(other => other !== id) })
-    }
-    const k = this.known.get(id)
-    if (k?.live) {
-      k.held = { kind: 'held', state: 'stopped', reason: 'update' }
-      this.replan()
-      await this.pumped()
-    }
-    const copied = await this.copy(id, read, listed, 'restore', entry?.enabled ?? true, entry?.version ?? null, confirm)
-    if (!copied) throw new Error('the restore record did not land')
-    const now = this.know(id, 'folder', folders.plugins(this.dataDir, id), read, null, this.state.plugins[id])
-    if (k !== undefined) now.lastStop = k.lastStop
-    this.replan()
-  }
-
   // ---- staged updates
 
   // An update staged beside the old version, resolved against the live graph before anything changes. One that closes
   // a cycle is refused, and so is a version that isn't newer, so an old release with a known hole can't be swapped
   // back in. Every other one waits for the human's Confirm, raised as plugin.update naming the running plugins it
-  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked. The signer is checked against the pin once provenance exists. A
-  // first-party copy changes only with the install
+  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked. The signer is checked against the pin once provenance exists
   update(id: string, dir: string): Promise<UpdateOutcome> {
     // No plugin starts once shutdown began, so an update has nothing to restart into
     if (this.closing) return Promise.reject({ code: 'stopped' })
@@ -401,7 +358,6 @@ export abstract class PluginsChanges extends PluginsInstall {
   protected async updateNow(id: string, dir: string): Promise<UpdateOutcome> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder' || k.entry === null) return { outcome: 'refused', reason: 'missing' }
-    if (isOne(firstPartyIds, id)) return { outcome: 'refused', reason: 'reserved-id' }
     const read = await readPlugin(dir, id, 'folder')
     if (read.problem !== null) return { outcome: 'refused', reason: read.problem }
     if (!isNewer(read.manifest!.version, k.entry.version)) return { outcome: 'refused', reason: 'not-newer' }

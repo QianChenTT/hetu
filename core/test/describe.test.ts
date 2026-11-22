@@ -14,7 +14,6 @@ const everyKind = [
   { kind: 'plugin.on', plugin: 'search' },
   { kind: 'plugin.off', plugin: 'gate' },
   { kind: 'plugin.remove', plugin: 'search' },
-  { kind: 'plugin.restore', plugin: 'git' },
   { kind: 'plugin.clearStorage', plugin: 'mcp' },
   { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
@@ -169,7 +168,7 @@ describe("the core's words for a class moved up with no Confirm", () => {
 
   it.each([
     ['approve', 'the approval of "reader" without a Confirm'],
-    ['copy', 'the copy of "reader" hetu ships, made at start'],
+    ['copy', 'the copy of "reader" hetu shipped, made at start'],
     ['update', 'the update of "reader" without a Confirm'],
     ['widen', 'a grant given to "reader" without a Confirm'],
     ['restore', 'the restore of "reader" without a Confirm'],

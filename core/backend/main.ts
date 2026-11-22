@@ -124,7 +124,7 @@ async function start(): Promise<void> {
       (plugin: string, name: LimitName) => router?.limit(plugin, name) ?? defaultLimits[name],
       () => modules?.state('flood-control') === 'off',
     )
-    // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
+    // A renderer per plugin, opened when its first worker starts.
     // A worker's start waits for its page, within the plugin's own ready deadline
     const renderer = new WorkerRenderers(group => new WorkerRenderer({
       open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, LOCKED, group),

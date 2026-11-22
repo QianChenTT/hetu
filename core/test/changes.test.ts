@@ -13,7 +13,6 @@ const everyKind = [
   { kind: 'plugin.on', plugin: 'search' },
   { kind: 'plugin.off', plugin: 'gate' },
   { kind: 'plugin.remove', plugin: 'search' },
-  { kind: 'plugin.restore', plugin: 'git' },
   { kind: 'plugin.clearStorage', plugin: 'mcp' },
   { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
@@ -31,9 +30,9 @@ const everyKind = [
 ]
 
 describe('the change kinds', () => {
-  it("are the twenty-one change kinds the trusted window applies", () => {
+  it("are the nineteen change kinds the trusted window applies", () => {
     expect(changeKinds).toEqual([
-      'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
+      'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.clearStorage',
       'plugin.reset',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.pick', 'devMode', 'exec.anyCommand', 'skipVerification',
       'confirmOff', 'allowUnsigned', 'limit.set', 'identity.revoke',
@@ -191,7 +190,6 @@ describe('whether a change widens', () => {
   it.each([
     ['a new entry', { kind: 'plugin.approve', plugin: 'search' }],
     ['an update', { kind: 'plugin.update', plugin: 'search' }],
-    ['a first-party copy brought back', { kind: 'plugin.restore', plugin: 'git' }],
     ['a plugin switched on', { kind: 'plugin.on', plugin: 'search' }],
     ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
     ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],

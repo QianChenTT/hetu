@@ -10,7 +10,7 @@ import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { luoshuModule } from './modules-fakes.ts'
 import {
-  coreInstall, entryFor, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
+  coreInstall, entryFor, FakeRuntime, filesFor, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
   type Half, type Message,
 } from './plugins-manager-fakes.ts'
 
@@ -43,7 +43,6 @@ async function joined(gate: 'on' | 'off') {
   await writeInstall(installDir, {
     ...coreInstall(),
     'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
-    artifacts: { files: artifacts, firstParty: true },
   })
   const store = new StateStore(dataDir)
   const root = path.join(dataDir, 'plugins', 'mcp')
@@ -54,7 +53,7 @@ async function joined(gate: 'on' | 'off') {
   await store.writePlugin('mcp', await entryFor(root, { signer: null, granted: mcpGrant, class: 1 }))
   const artifactsRoot = path.join(dataDir, 'plugins', 'artifacts')
   await writeFolder(artifactsRoot, artifacts)
-  await store.writePlugin('artifacts', firstPartyEntry(await hashOf(artifactsRoot), { granted: [everything], class: 1 }))
+  await store.writePlugin('artifacts', await entryFor(artifactsRoot, { granted: [everything], class: 1 }))
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
   // Runs once before the next perform, as another program acting on the folder between prepare and perform

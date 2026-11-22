@@ -148,19 +148,6 @@ describe('the human\'s switches, applied', () => {
     expect(reasonOf(made.pluginsManager, 'beta')).toBe('unsigned')
   })
 
-  it('removed keeps a removed first-party plugin out and touches nothing else', async () => {
-    const made = await harness({
-      install: { ...coreInstall(), git: { files: worker('git'), firstParty: true }, notify: { files: worker('notify'), firstParty: true } },
-      folder: { alpha: worker('alpha') },
-      entries: { alpha: signed() },
-      switches: { removed: ['git'] },
-    })
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.plugin('git')).toBe(null)
-    expect(stateOf(made.pluginsManager, 'notify')).toBe('ready')
-    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
-  })
-
   it('approves a found plugin from the one read it was found with', async () => {
     const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [{ type: 'ui.view' }] }) } })
     await made.pluginsManager.start()

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreModuleIds, coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
+  coreModuleIds, coreNamespaces, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, utilityIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
   failSafeControls,
 } from '../api/ids.ts'
@@ -135,20 +135,15 @@ describe('policy jobs, providers and guards', () => {
 })
 
 describe('reserved ids', () => {
-  // Section 3: every namespace the router serves, every policy job, provider and install id and the ids first party keeps
+  // Section 3: every namespace the router serves, every policy job, provider and install id
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
     'luoshu', 'lock', 'history', 'exec', 'net', 'mcp-http-handler',
-    'git', 'artifacts', 'notify', 'layout', 'hidden-marks',
   ]
 
   it('holds exactly the reserved ids', () => {
     expect(reservedIds).toEqual([...expected].sort())
-  })
-
-  it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['git', 'artifacts', 'notify', 'layout', 'hidden-marks'])
   })
 
   it.each(expected)('reserves %j', id => {
@@ -160,7 +155,7 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['leases', 'searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes', 'file-explorer', 'search', 'mcp'])(
+  it.each(['leases', 'searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes', 'file-explorer', 'search', 'mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)
@@ -182,7 +177,6 @@ describe('the tables', () => {
     expect(() => (judgingModuleIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
     expect(() => (corePluginIds as unknown as string[]).push('mine')).toThrow()
-    expect(() => (firstPartyIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (utilityIds as unknown as string[]).push('mine')).toThrow()
     expect(() => { (providers as Record<string, string>).luoshu = 'mine' }).toThrow()
     expect(() => { (guards['luoshu.write'] as string[]).push('mine') }).toThrow()

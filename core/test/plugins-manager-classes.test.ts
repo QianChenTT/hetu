@@ -8,7 +8,7 @@ import path from 'node:path'
 import type { Plugin, Switches } from '../backend/boot/state.ts'
 import type { ClassTable, GrantRiskClassifier } from '../api/classes.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, throwingClassifier,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, throwingClassifier,
   tick, until, workerManifest, writeFolder, type Files, type Listing, type Message,
 } from './plugins-manager-fakes.ts'
 import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
@@ -158,26 +158,6 @@ describe('a staged update the classifier answers for', () => {
     const keeping: GrantRiskClassifier = { classes: table => (tables.push(table), real.classes(table)) }
     await updating({ class: 0 }, false, [{ type: 'storage' }], { modules: { grantRiskClassifier: keeping } })
     expect(tables.at(-1)).toMatchObject({ cause: 'update', change: { id: 'calc', granted: [] }, confirm: false, requested: [{ type: 'storage' }] })
-  })
-})
-
-describe('a first-party copy', () => {
-  const bundled = (files: Files) => ({ files, firstParty: true })
-
-  it('takes its class from the policy job, which starts before the copy', async () => {
-    const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read])) } })
-    await made.pluginsManager.start()
-    const entry = (await made.store.load()).state.plugins.git
-    expect(entry.class).toBe(1)
-    expect(entry.firstUse).toBeUndefined()
-  })
-
-  it('asks at the first use of every item with the policy job down', async () => {
-    const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read, { type: 'storage' }])) }, modules: down() })
-    await made.pluginsManager.start()
-    const entry = (await made.store.load()).state.plugins.git
-    expect(entry.class).toBeNull()
-    expect(entry.firstUse).toEqual([read, { type: 'storage' }])
   })
 })
 
@@ -528,43 +508,6 @@ describe('what the class rests on', () => {
   })
 })
 
-describe('a new copy of a first-party plugin', () => {
-  const bundled = (files: Files) => ({ files, firstParty: true })
-
-  async function copied(base: string | undefined, capabilities: Capability[], version: string) {
-    const made = await harness({ ...(base === undefined ? {} : { base }), install: { ...coreInstall(), git: bundled(filesFor(workerManifest('git', { version, capabilities }))) } })
-    await made.pluginsManager.start()
-    return made
-  }
-
-  it('asks again for an item that never asked before, once the new grants make it close a pair', async () => {
-    const first = await copied(undefined, [fetchOne], '1.0.0')
-    expect((await first.store.load()).state.plugins.git.firstUse).toBeUndefined()
-    await first.pluginsManager.shutdown()
-    const second = await copied(first.base, [fetchOne, read], '1.1.0')
-    const entry = (await second.store.load()).state.plugins.git
-    expect(entry.class).toBe(4)
-    expect(entry.firstUse).toEqual([fetchOne])
-  })
-
-  it('keeps an item asking that asked before and that the human never confirmed', async () => {
-    const first = await copied(undefined, [read, fetchOne], '1.0.0')
-    expect((await first.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
-    await first.pluginsManager.shutdown()
-    const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
-    expect((await second.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
-  })
-
-  it('keeps an item the human confirmed from asking again', async () => {
-    const first = await copied(undefined, [read, fetchOne], '1.0.0')
-    expect((await first.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
-    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
-    await first.pluginsManager.shutdown()
-    const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
-    expect((await second.store.load()).state.plugins.git.firstUse).toBeUndefined()
-  })
-})
-
 // After a change to one plugin every other plugin whose links it changes is classed again and its entry takes the new
 // class and first-use list. A move up is named on the Confirm of the request that causes it, a move down is stored
 // without a word
@@ -662,6 +605,14 @@ describe('a class another plugin\'s change moves', () => {
     expect(entry.firstUse).toBeUndefined()
   })
 
+  it('leaves the removed plugin out of every later change, so a widen after the remove keeps the move down', async () => {
+    const made = await listening()
+    await approved(made, 'reader')
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'reader' })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'listener', capability: { type: 'storage' } })
+    expect((await stored(made, 'listener')).class).toBe(3)
+  })
+
   it('stores a move down once the grant that lifted it is narrowed', async () => {
     const made = await plugins({ a: [[read, calls('b')], 1], b: [[{ type: 'storage' }], 0] })
     await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'b', capability: fetchOne })
@@ -710,16 +661,6 @@ describe('a class another plugin\'s change moves', () => {
     expect((await stored(made, 'listener')).class).toBe(4)
   })
 
-  it('replaces the class and the list with no Confirm on screen, for a first-party copy at start', async () => {
-    const made = await harness({
-      install: { ...coreInstall(), git: { files: worker('git', [fetchOne]), firstParty: true } },
-      folder: { notes: worker('notes') },
-      entries: { notes: root => entryFor(root, { granted: [read, calls('git')], class: 1 }) },
-    })
-    await made.pluginsManager.start()
-    expect((await stored(made, 'git')).class).toBe(4)
-    expect(await stored(made, 'notes')).toMatchObject({ class: 4, firstUse: [calls('git')] })
-  })
 })
 
 // At start every plugin-folder entry is classed again from the graph as it stands, before any plugin-folder plugin
@@ -899,18 +840,16 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
   type Scenario = {
     seeded?: Seeded
     folder?: Record<string, Capability[]>
-    install?: Record<string, Listing>
     // Items the human confirms with the policy job on, before the policy job takes its state
     confirm?: [string, Capability][]
     // The change, none for the classing at start
     change?: Change
     staged?: Capability[]
-    // The policy job takes its state at start, for the first-party copy and the pass at start
+    // The policy job takes its state at start, for the pass at start
     atStart?: boolean
     subject: string
   }
 
-  const bundledGit = (capabilities: Capability[]): Listing => ({ files: worker('git', capabilities), firstParty: true })
   const scenarios: Record<string, Scenario> = {
     'a first approval': { folder: { sync: [read, fetchOne] }, change: { kind: 'plugin.approve', plugin: 'sync' }, subject: 'sync' },
     'an approval that moves another plugin up': {
@@ -931,19 +870,9 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
       seeded: { listener: [[fetchOne, listens], 4, [fetchOne, listens]], reader: [[read], 4] }, confirm: [['listener', fetchOne]],
       change: { kind: 'plugin.reset', plugin: 'reader' }, subject: 'listener',
     },
-    'a restore that moves its own plugin up': { install: { git: bundledGit([read, fetchOne]) }, change: { kind: 'plugin.restore', plugin: 'git' }, subject: 'git' },
     'an update that moves nothing': {
       seeded: { tool: [[read, fetchOne], 4, [fetchOne]] }, confirm: [['tool', fetchOne]], change: { kind: 'plugin.update', plugin: 'tool' }, staged: [read, fetchOne],
       subject: 'tool',
-    },
-    'a first-party copy at start that moves another plugin up': {
-      install: { git: bundledGit([fetchOne]) }, seeded: { notes: [[read, calls('git')], 1] }, atStart: true, subject: 'notes',
-    },
-    'a first-party copy at start that moves another plugin from 0 to 4': {
-      install: { git: bundledGit([read, fetchOne]) }, seeded: { notes: [[{ type: 'ui.view' }, calls('git')], 0] }, atStart: true, subject: 'notes',
-    },
-    'a first-party copy at start that moves another plugin within 1 to 3': {
-      install: { git: bundledGit([fetchOne]) }, seeded: { notes: [[commit, calls('git')], 2] }, atStart: true, subject: 'notes',
     },
     'the pass at start, a move up': { seeded: { listener: [[fetchOne, listens], 3], reader: [[read], 1] }, atStart: true, subject: 'listener' },
     'the pass at start, a move from 0 to 4': { seeded: { listener: [[fetchOne, listens], 0], reader: [[read], 1] }, atStart: true, subject: 'listener' },
@@ -987,23 +916,9 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
     ['a reset that moves another plugin down', 'on', { class: 3, firstUse: [], confirmed: [fetchOne], raises: [], shows: 'nothing' }],
     ['a reset that moves another plugin down', 'off', { class: 4, firstUse: [listens], confirmed: [fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
     ['a reset that moves another plugin down', 'down', { class: null, firstUse: [fetchOne, listens], confirmed: [fetchOne], raises: [], shows: 'nothing' }],
-    ['a restore that moves its own plugin up', 'on', { class: 4, firstUse: [fetchOne], raises: raised('git', 'class 1, Reader', 'class 4, Powerful'), shows: 'class' }],
-    ['a restore that moves its own plugin up', 'off', { class: 1, firstUse: [read, fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
-    ['a restore that moves its own plugin up', 'down', { class: null, firstUse: [read, fetchOne], raises: [], shows: 'down' }],
     ['an update that moves nothing', 'on', { class: 4, firstUse: [], confirmed: [fetchOne], raises: [], shows: 'class' }],
     ['an update that moves nothing', 'off', { class: 4, firstUse: [read], confirmed: [fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
     ['an update that moves nothing', 'down', { class: null, firstUse: [read, fetchOne], confirmed: [fetchOne], raises: [], shows: 'down' }],
-    ['a first-party copy at start that moves another plugin up', 'on', { class: 4, firstUse: [calls('git')], alerted: alerted('notes', 'class 1, Reader', 'class 4, Powerful') }],
-    ['a first-party copy at start that moves another plugin up', 'off', { class: 1, firstUse: [read, calls('git')], unclassed: true }],
-    ['a first-party copy at start that moves another plugin up', 'down', { class: null, firstUse: [read, calls('git')] }],
-    ['a first-party copy at start that moves another plugin from 0 to 4', 'on', {
-      class: 4, firstUse: [calls('git')], alerted: alerted('notes', 'class 0, Contained', 'class 4, Powerful'),
-    }],
-    ['a first-party copy at start that moves another plugin from 0 to 4', 'off', { class: 0, firstUse: [{ type: 'ui.view' }, calls('git')], unclassed: true }],
-    ['a first-party copy at start that moves another plugin from 0 to 4', 'down', { class: null, firstUse: [{ type: 'ui.view' }, calls('git')] }],
-    ['a first-party copy at start that moves another plugin within 1 to 3', 'on', { class: 3, firstUse: [] }],
-    ['a first-party copy at start that moves another plugin within 1 to 3', 'off', { class: 2, firstUse: [commit, calls('git')], unclassed: true }],
-    ['a first-party copy at start that moves another plugin within 1 to 3', 'down', { class: null, firstUse: [commit, calls('git')] }],
     ['the pass at start, a move up', 'on', { class: 4, firstUse: [fetchOne, listens], alerted: alerted('listener', 'class 3, Network', 'class 4, Powerful') }],
     ['the pass at start, a move up', 'off', { class: 3, firstUse: [] }],
     ['the pass at start, a move up', 'down', { class: null, firstUse: [fetchOne, listens] }],
@@ -1023,19 +938,10 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
     const ids = [...new Set([...Object.keys(seeded), ...Object.keys(scenario.folder ?? {})])]
     const entries: Record<string, (root: string) => Promise<Plugin>> = Object.fromEntries(Object.entries(seeded).map(([id, [granted, n, firstUse]]) =>
       [id, (root: string) => entryFor(root, { granted, class: n, ...(firstUse === undefined ? {} : { firstUse }) })]))
-    const install: Record<string, Listing> = { ...coreInstall(), ...scenario.install }
     const folder: Record<string, Files> = Object.fromEntries(ids.map(id => [id, worker(id, scenario.folder?.[id] ?? seeded[id]?.[0] ?? [])]))
-    // A narrowed git: its entry holds read alone at class 1 while the install's copy asks for read and fetch
-    if (scenario.change?.kind === 'plugin.restore') {
-      const scratch = path.join(await tempBase(), 'git')
-      await writeFolder(scratch, install.git!.files)
-      const hash = await hashOf(scratch)
-      folder.git = install.git!.files
-      entries.git = async () => firstPartyEntry(hash, { granted: [read], class: 1 })
-    }
     if (policyJob === 'down' && scenario.atStart === true) role.broken = true
     const made = await harness({
-      install, folder, entries,
+      folder, entries,
       modules: { gate, grantRiskClassifier: role },
       switches: policyJob === 'off' && scenario.atStart === true ? { off: ['grant-risk-classifier'] } : {},
     })
@@ -1131,24 +1037,21 @@ describe('what the human confirmed, recorded in the entry', () => {
     expect(shape(await stored(made, 'sync'))).toEqual({ class: 4, firstUse: [fetchOne] })
   })
 
-  // A copy's new version names the same type with another scope: a new item, which asks
+  // A fetch whose hosts change is another item, which asks though the one it replaced was confirmed
   it('counts two items as one only when type and scope are the same, so a confirmed fetch whose hosts change asks again', async () => {
     const wider: Capability = { type: 'net.fetch', hosts: ['example.com', 'example.org'] }
-    const bundled = (version: string, capabilities: Capability[]) => ({ ...coreInstall(), git: { files: filesFor(workerManifest('git', { version, capabilities })), firstParty: true } })
-    const first = await harness({ install: bundled('1.0.0', [read, fetchOne]) })
-    await first.pluginsManager.start()
-    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
-    await closed(first)
-    const same = await harness({ base: first.base, install: bundled('1.1.0', [read, fetchOne, { type: 'storage' }]) })
-    await same.pluginsManager.start()
-    expect(await stored(same, 'git')).toMatchObject({ class: 4, confirmed: [fetchOne] })
-    expect((await stored(same, 'git')).firstUse ?? []).toEqual([])
-    await closed(same)
-    const changed = await harness({ base: first.base, install: bundled('1.2.0', [read, wider]) })
-    await changed.pluginsManager.start()
-    const entry = await stored(changed, 'git')
+    const made = await harness({ install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
+    await made.pluginsManager.start()
+    await approved(made, 'sync')
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'sync', capability: { type: 'storage' } })
+    expect(await stored(made, 'sync')).toMatchObject({ class: 4, confirmed: [fetchOne] })
+    expect((await stored(made, 'sync')).firstUse ?? []).toEqual([])
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'sync', capability: wider })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'sync', capability: fetchOne })
+    const entry = await stored(made, 'sync')
     expect(shape(entry)).toEqual({ class: 4, firstUse: [wider] })
-    expect(entry.confirmed).toBeUndefined()
+    expect(entry.confirmed ?? []).toEqual([])
   })
 
   // Five ways an item nobody confirmed read as confirmed at a start, each from an entry at class 4 or

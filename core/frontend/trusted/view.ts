@@ -13,7 +13,7 @@ export type Bridge = {
   listen(listener: (message: unknown) => void): void
 }
 
-export type PluginAction = 'approve' | 'switch-on' | 'switch-off' | 'stop' | 'restart' | 'reset' | 'restore' | 'remove'
+export type PluginAction = 'approve' | 'switch-on' | 'switch-off' | 'stop' | 'restart' | 'reset' | 'remove'
 export type Choice = 'retry' | 'switch-off' | 'quit'
 
 // A line and the change its button asks for, none for a line with no button
@@ -132,7 +132,6 @@ function actionsOf(plugin: ListedPlugin, locked: boolean): PluginAction[] {
     else if (plugin.state === 'stopped' || plugin.state === 'crashed' || plugin.state === 'failed') actions.push('restart')
   }
   actions.push('reset')
-  if (plugin.firstParty) actions.push('restore')
   if (plugin.from === 'folder') actions.push('remove')
   return actions
 }

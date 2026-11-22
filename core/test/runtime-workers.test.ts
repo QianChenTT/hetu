@@ -213,14 +213,14 @@ describe('a renderer per community plugin', () => {
 
   const later = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-  it('gives each community plugin a renderer of its own and the first-party plugins one between them', () => {
+  it('gives each plugin a renderer of its own, layout and git included', () => {
     const { router, made } = routed()
     for (const id of ['layout', 'git', 'hello', 'notes']) router.start(start(id).start)
-    expect(made.map(group => group.group)).toEqual(['first-party', 'hello', 'notes'])
-    expect(made.map(group => group.renderers.length)).toEqual([1, 1, 1])
+    expect(made.map(group => group.group)).toEqual(['layout', 'git', 'hello', 'notes'])
+    expect(made.map(group => group.renderers.length)).toEqual([1, 1, 1, 1])
   })
 
-  it('closes a community plugin\'s renderer a moment after it holds nothing, and keeps the first-party one', async () => {
+  it('closes a plugin\'s renderer a moment after it holds nothing, layout\'s too', async () => {
     const { router, made } = routed()
     router.start(start('hello').start)
     router.start(start('layout').start)
@@ -229,10 +229,10 @@ describe('a renderer per community plugin', () => {
     router.terminate('layout', 1)
     expect(made.map(group => group.renderers[0].destroyed)).toEqual([false, false])
     await later(40)
-    expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, false])
+    expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, true])
     // The next start of that plugin opens a new one
     router.start(start('hello', 2).start)
-    expect(made.map(group => group.group)).toEqual(['hello', 'first-party', 'hello'])
+    expect(made.map(group => group.group)).toEqual(['hello', 'layout', 'hello'])
   })
 
   it('records a renderer that died just as its last plugin ended, since the plugins manager ends the plugin when its port closes', async () => {

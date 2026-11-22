@@ -7,7 +7,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { Part } from '../api/ids.ts'
-import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
+import { INSTALL_LIST } from '../api/install.ts'
 import type { ClassTable, GrantRiskClassifier } from '../api/classes.ts'
 import type { ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
@@ -445,7 +445,7 @@ export async function plant(file: string, body: string): Promise<void> {
   await writeFile(file, `${body}\n${createHash('sha256').update(`${body}\n`).digest('hex')}\n`)
 }
 
-export type Listing = { files: Files, firstParty?: boolean, version?: string, hash?: string }
+export type Listing = { files: Files, version?: string, hash?: string }
 
 // Writes an install folder: each plugin under plugins/<id> and the install list with each one's version and hash, as
 // the Electron build is to. hash replaces the real one, for a list that doesn't match its files
@@ -455,9 +455,7 @@ export async function writeInstall(dir: string, plugins: Record<string, Listing>
     const root = path.join(dir, 'plugins', id)
     await writeFolder(root, plugin.files)
     const version = plugin.version ?? (JSON.parse(plugin.files['hetu-plugin.json']) as { version: string }).version
-    listed[id] = {
-      path: `plugins/${id}`, version, hash: plugin.hash ?? await hashOf(root), ...(plugin.firstParty ? { firstParty: true } : {}),
-    }
+    listed[id] = { path: `plugins/${id}`, version, hash: plugin.hash ?? await hashOf(root) }
   }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify({ format: 1, plugins: listed }, null, 2)}\n`)
 }
@@ -467,8 +465,9 @@ export async function entryFor(root: string, extra: Partial<Plugin> = {}): Promi
   return { version: '1.0.0', contentHash: await hashOf(root), signer: 'sigstore:someone', granted: [], class: 1, enabled: true, ...extra }
 }
 
-export const firstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
-  ({ version: '1.0.0', contentHash: hash, signer: FIRST_PARTY_SIGNER, granted: [], class: null, enabled: true, ...extra })
+// The entry an older build wrote for a first-party copy it shipped, which carried this signer
+export const oldFirstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
+  ({ version: '1.0.0', contentHash: hash, signer: 'hetu first-party', granted: [], class: null, enabled: true, ...extra })
 
 // The install the core needs to come up: nothing, the gate and the other core modules ship inside the core as the log
 // does
@@ -519,16 +518,14 @@ export async function tempBase(): Promise<string> {
 }
 
 // A plugins manager over a real StateStore, the core modules and a real router, with the fake runtime. state writes the
-// entries and switches the boot hands over. removedKnown stands in for what boot found. The gate allows everything
-// unless modules hands another, as the gate the install held did, and every other core module is the real one unless
-// modules hands a fake
+// entries and switches the boot hands over. The gate allows everything unless modules hands another, as the gate the
+// install held did, and every other core module is the real one unless modules hands a fake
 export async function harness(options: {
   base?: string
   install?: Record<string, Listing> | null
   folder?: Record<string, Files>
   entries?: Record<string, Plugin | ((root: string) => Promise<Plugin>)>
   switches?: Partial<Switches>
-  removedKnown?: boolean
   behave?: FakeRuntime['behave']
   modules?: ModuleFakes
   limits?: FakeLink['limits']
@@ -565,7 +562,7 @@ export async function harness(options: {
   // No guard expected unless a test names its own, the same list for the plugins manager and the router
   const guardsFor = options.pluginsManager?.guardsFor ?? (() => [])
   const pluginsManager = new PluginsManager({
-    booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir },
+    booted: { state: loaded.state, checks: loaded.checks, store, dataDir },
     installDir,
     link,
     // The link stands in for recording, so a test sees each record the plugins manager makes and decides how it lands

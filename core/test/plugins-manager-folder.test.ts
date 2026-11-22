@@ -1,20 +1,18 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FIRST_PARTY_SIGNER } from '../api/install.ts'
+import type { Plugin } from '../backend/boot/state.ts'
 import {
-  cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, manifest, plant, reasonOf, stateOf, workerManifest,
-  type Files,
+  cleanup, entryFor, filesFor, harness, hashOf, manifest, oldFirstPartyEntry, plant, reasonOf, stateOf, workerManifest,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 const outline = () => filesFor(workerManifest('outline'))
-const git = () => filesFor(workerManifest('git'))
-
-// The install with a bundled first-party copy of git beside the core
-const withGit = (files: Files = git()) => ({ ...coreInstall(), git: { files, firstParty: true } })
+// An entry for a folder that isn't there
+const noFolder = async (): Promise<Plugin> =>
+  ({ version: '1.0.0', contentHash: 'd'.repeat(64), signer: 'sigstore:someone', granted: [], class: null, enabled: true })
 
 describe('a plugin-folder plugin\'s bytes', () => {
   it('are refused tampered when they don\'t match the entry, and the plugin never starts', async () => {
@@ -40,7 +38,7 @@ describe('a plugin-folder plugin\'s bytes', () => {
   })
 
   it('are refused missing when the entry names a folder that is gone', async () => {
-    const made = await harness({ entries: { outline: firstPartyEntry('d'.repeat(64), { signer: 'sigstore:someone' }) } })
+    const made = await harness({ entries: { outline: noFolder } })
     await made.pluginsManager.start()
     expect(reasonOf(made.pluginsManager, 'outline')).toBe('missing')
   })
@@ -123,7 +121,7 @@ describe('where a plugin\'s code came from', () => {
 })
 
 describe('reserved ids in the plugin folder', () => {
-  it.each(['gate', 'luoshu', 'lock', 'hidden-marks', 'editor', 'cache', 'core', 'events'])('refuses %s with reserved-id and keeps it apart from the install', async id => {
+  it.each(['gate', 'luoshu', 'lock', 'editor', 'cache', 'core', 'events'])('refuses %s with reserved-id and keeps it apart from the install', async id => {
     const made = await harness({ folder: { [id]: filesFor(workerManifest(id)) }, entries: { [id]: signed() } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.list()).toContainEqual({ id, from: 'folder', place: 'sandboxed', state: 'refused', reason: 'reserved-id', incarnation: 0 })
@@ -135,55 +133,36 @@ describe('reserved ids in the plugin folder', () => {
   })
 
   it('refuses an entry for a core module\'s id with no folder, so it never stands in for the core\'s', async () => {
-    const made = await harness({ entries: { gate: firstPartyEntry('d'.repeat(64), { signer: 'sigstore:someone' }) } })
+    const made = await harness({ entries: { gate: noFolder } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.policyJob('gate')).toBe('on')
     expect(made.pluginsManager.list().filter(row => row.id === 'gate').map(row => [row.from, row.state])).toEqual([['folder', 'refused']])
     expect(made.runtime.order()).toEqual([])
   })
 
-  it('loads a first-party id only as the install\'s own copy, its entry carrying the first-party signer', async () => {
+  // The ids first party kept, the plugins that left the install among them
+  it.each(['git', 'artifacts', 'notify', 'layout', 'hidden-marks'])('loads %s from the plugin folder as any plugin there', async id => {
+    const made = await harness({ folder: { [id]: filesFor(workerManifest(id)) }, entries: { [id]: signed() } })
+    await made.pluginsManager.start()
+    expect(stateOf(made.pluginsManager, id)).toBe('ready')
+  })
+
+  // Refused for the signer whatever the id, so nothing an older build copied runs unapproved
+  it.each(['layout', 'hidden-marks', 'outline'])('refuses %s with signer when its entry carries the first-party signer an older build wrote', async id => {
+    const made = await harness({ folder: { [id]: filesFor(workerManifest(id)) }, entries: { [id]: async root => oldFirstPartyEntry(await hashOf(root)) } })
+    await made.pluginsManager.start()
+    expect(reasonOf(made.pluginsManager, id)).toBe('signer')
+    expect(made.runtime.order()).not.toContain(id)
+  })
+
+  it('refuses the first-party signer in dev mode too', async () => {
     const made = await harness({
-      install: withGit(),
-      folder: { git: git() },
-      entries: { git: async root => firstPartyEntry(await hashOf(root)) },
+      folder: { layout: filesFor(workerManifest('layout')) },
+      entries: { layout: async root => oldFirstPartyEntry(await hashOf(root)) },
+      switches: { devMode: ['layout'] },
     })
     await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'git')).toBe('ready')
-  })
-
-  it('refuses a first-party copy whose bytes no longer equal the install\'s, even when they match its entry', async () => {
-    const made = await harness({
-      install: withGit(filesFor(workerManifest('git'), { 'worker.js': 'the install has moved on()' })),
-      folder: { git: git() },
-      entries: { git: async root => firstPartyEntry(await hashOf(root)) },
-    })
-    await made.pluginsManager.start()
-    expect(reasonOf(made.pluginsManager, 'git')).toBe('reserved-id')
-  })
-
-  it('refuses a community plugin holding a first-party id and never overwrites it', async () => {
-    const made = await harness({
-      install: withGit(),
-      folder: { git: filesFor(workerManifest('git'), { 'worker.js': 'not hetu\'s git()' }) },
-      entries: { git: signed() },
-    })
-    await made.pluginsManager.start()
-    expect(reasonOf(made.pluginsManager, 'git')).toBe('reserved-id')
-    expect(await readFile(path.join(made.dataDir, 'plugins', 'git', 'worker.js'), 'utf8')).toBe('not hetu\'s git()')
-    expect(made.link.events('plugin.collision')).toEqual([{ plugin: 'git' }])
-  })
-
-  it('refuses a first-party copy when the install holds no copy of it', async () => {
-    const made = await harness({ folder: { git: git() }, entries: { git: async root => firstPartyEntry(await hashOf(root)) } })
-    await made.pluginsManager.start()
-    expect(reasonOf(made.pluginsManager, 'git')).toBe('reserved-id')
-  })
-
-  it('refuses the first-party signer on any other id with signer', async () => {
-    const made = await harness({ folder: { outline: outline() }, entries: { outline: async root => firstPartyEntry(await hashOf(root)) } })
-    await made.pluginsManager.start()
-    expect(reasonOf(made.pluginsManager, 'outline')).toBe('signer')
+    expect(reasonOf(made.pluginsManager, 'layout')).toBe('signer')
   })
 })
 
@@ -249,18 +228,6 @@ describe('the human\'s switches on folder plugins', () => {
     expect(reasonOf(made.pluginsManager, 'tagger')).toBe('tampered')
   })
 
-  it('dev mode lets a first-party copy differ from the install\'s, its entry still naming the first-party signer', async () => {
-    const made = await harness({
-      install: withGit(),
-      folder: { git: git() },
-      entries: { git: async root => firstPartyEntry(await hashOf(root)) },
-      switches: { devMode: ['git'] },
-    })
-    await writeFile(path.join(made.dataDir, 'plugins', 'git', 'worker.js'), 'hacking on git()')
-    await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'git')).toBe('ready')
-  })
-
   it('switched off, a plugin reads off whatever its check says and its dependents wait', async () => {
     const made = await harness({
       folder: { outline: outline(), tagger: filesFor(workerManifest('tagger', { requires: ['outline'] })) },
@@ -317,8 +284,36 @@ describe('the scan', () => {
     expect(made.link.events('plugin.checked')).toContainEqual({ plugin: null, from: 'folder', result: 'bad-name', count: 2 })
     expect(stateOf(made.pluginsManager, 'outline')).toBe('ready')
   })
+})
 
-  it('names the first-party signer the copies carry, which no community entry can borrow', () => {
-    expect(FIRST_PARTY_SIGNER).toBe('hetu first-party')
+describe('removing a plugin-folder plugin', () => {
+  const exists = (file: string) => stat(file).then(() => true, () => false)
+
+  it('removes the entry first, then the code, the storage and the cache, and leaves the switches as they were', async () => {
+    const made = await harness({
+      folder: { outline: outline() },
+      entries: { outline: signed() },
+      before: async ({ dataDir }) => {
+        for (const kind of ['storage', 'cache']) {
+          await mkdir(path.join(dataDir, kind, 'outline'), { recursive: true })
+          await writeFile(path.join(dataDir, kind, 'outline', 'kept'), 'x')
+        }
+        await mkdir(path.join(dataDir, 'storage', 'other'), { recursive: true })
+      },
+    })
+    await made.pluginsManager.start()
+    const before = await readFile(path.join(made.dataDir, 'state', 'switches.json'), 'utf8')
+    const order: string[] = []
+    const removePlugin = made.store.removePlugin.bind(made.store)
+    made.store.removePlugin = async id => {
+      order.push(`entry ${await exists(path.join(made.dataDir, 'plugins', id)) ? 'with code' : 'after code'}`)
+      return removePlugin(id)
+    }
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
+    expect(order).toEqual(['entry with code'])
+    expect(made.pluginsManager.plugin('outline')).toBe(null)
+    for (const kind of ['plugins', 'storage', 'cache']) expect(await exists(path.join(made.dataDir, kind, 'outline')), kind).toBe(false)
+    expect(await exists(path.join(made.dataDir, 'storage', 'other'))).toBe(true)
+    expect(await readFile(path.join(made.dataDir, 'state', 'switches.json'), 'utf8')).toBe(before)
   })
 })

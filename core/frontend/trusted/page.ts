@@ -212,15 +212,14 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
 
 const actionLabels: Record<PluginAction, string> = {
   approve: 'Approve', 'switch-on': 'Switch on', 'switch-off': 'Switch off', stop: 'Stop', restart: 'Restart',
-  reset: 'Reset', restore: 'Restore', remove: 'Remove',
+  reset: 'Reset', remove: 'Remove',
 }
 
 function act(page: TrustedPage, plugin: string, action: PluginAction): void {
   if (action === 'stop') return page.stop(plugin)
   if (action === 'restart') return page.restart(plugin)
   const kinds = {
-    approve: 'plugin.approve', 'switch-on': 'plugin.on', 'switch-off': 'plugin.off', reset: 'plugin.reset',
-    restore: 'plugin.restore', remove: 'plugin.remove',
+    approve: 'plugin.approve', 'switch-on': 'plugin.on', 'switch-off': 'plugin.off', reset: 'plugin.reset', remove: 'plugin.remove',
   } as const
   page.ask({ kind: kinds[action], plugin })
 }

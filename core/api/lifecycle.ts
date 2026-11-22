@@ -9,7 +9,7 @@ import { frozen } from './plain.ts'
 // on as lastStop. Fixed codes, so none carries another principal's id, path or lease
 export const stopReasons = frozen([
   // its check: files gone, a manifest outside the schema or naming another id, an api range outside this core, bytes
-  // that don't match, a null signer allowUnsigned doesn't name, the first-party signer on another id, a reserved id, a
+  // that don't match, a null signer allowUnsigned doesn't name, the first-party signer an older build wrote, a reserved id, a
   // requires list it may not have, a host entry the core runs nowhere, a requires cycle, a state entry that failed its
   // check or is in a newer format
   'missing', 'invalid', 'install-only', 'id', 'api', 'tampered', 'unsigned', 'signer', 'reserved-id', 'requires',

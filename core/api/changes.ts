@@ -16,8 +16,7 @@ const on = z.boolean()
 // plugin.reset is Recover's reset: the plugin's storage and cache cleared and a plugin-folder plugin's entry removed, so
 // it waits for approval again. A core module has none
 const pluginKinds = [
-  'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
-  'plugin.reset',
+  'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.clearStorage', 'plugin.reset',
 ] as const
 const grantKinds = ['grant.widen', 'grant.narrow', 'item.on', 'item.off'] as const
 const perPluginSwitches = ['devMode', 'exec.anyCommand'] as const
@@ -53,7 +52,8 @@ export const change = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('identity.revoke'), root: pluginId, field: label }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
-// and for the grant risk classifier switched on again
+// and for the grant risk classifier switched on again. copy and restore were the first-party copy at start and its
+// restore, which nothing causes any more. Kept, so a notice an older build owed still reads and is answered
 export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
 // A class as a state file or a notice holds it, from 0 to 4
 export const classNumber = z.int().min(0).max(4)
@@ -142,7 +142,6 @@ export function changeEffect(change: Change): ChangeEffect {
   switch (change.kind) {
     case 'plugin.approve':
     case 'plugin.update':
-    case 'plugin.restore':
     case 'grant.widen':
     case 'item.on':
     case 'luoshu.pick':

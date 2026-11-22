@@ -2,12 +2,11 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
-import { FIRST_PARTY_SIGNER } from '../api/install.ts'
 import { boot } from '../backend/boot/boot.ts'
-import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
+import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
 import {
-  coreInstall, entryFor, FakeRuntime, filesFor, firstPartyEntry, hashOf, plant, tempBase, until, workerManifest, writeFolder, writeInstall,
+  coreInstall, entryFor, FakeRuntime, filesFor, hashOf, oldFirstPartyEntry, plant, tempBase, until, workerManifest, writeFolder, writeInstall,
 } from './plugins-manager-fakes.ts'
 
 // Folder plugins on the joined core over a real boot, the core modules as they ship and the log on
@@ -67,32 +66,39 @@ const notesFolder = async (notes: Record<string, string>) => {
   return folder
 }
 
-// A data folder from before the file explorer left the first-party ids: its copy in the plugin folder, its entry with
-// the first-party signer and the grant the copy derived, and a switches file naming it in removed beside search, as a
-// remove that stopped between its two writes leaves it
-describe('an old data folder holding the file explorer as first-party', () => {
-  it('starts hetu, refuses the entry with signer, runs no worker for it and reads the switches with the ids dropped', async () => {
-    const granted = [listAll, readAll, writeAll, { type: 'ui.view' } as Capability]
+// A data folder an older build left: a first-party copy in the plugin folder, its entry with the first-party signer and
+// the grant the copy derived, and a switches file naming it in removed beside search, as a remove that stopped between
+// its two writes leaves it. The file explorer left the first-party ids before, layout and hidden marks left with the
+// rest. Layout's entry still owes the notice its copy at start raised
+const uiView = { type: 'ui.view' } as Capability
+const olderCopies: [string, Capability[], Partial<Plugin>][] = [
+  ['file-explorer', [listAll, readAll, writeAll, uiView], { class: 4, firstUse: [writeAll] }],
+  ['layout', [{ type: 'ui.layout' }, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
+  ['hidden-marks', [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }, uiView], { class: 1 }],
+]
+
+describe('an old data folder holding a first-party copy', () => {
+  it.each(olderCopies)('starts hetu, refuses %s with signer, runs no worker for it and reads the switches with removed dropped', async (id, granted, stored) => {
     const { booted, pluginsManager, runtime, records } = await joined(async (dataDir, store) => {
-      const root = path.join(dataDir, 'plugins', 'file-explorer')
-      await writeFolder(root, filesFor(workerManifest('file-explorer', { version: '0.1.0', capabilities: granted })))
-      await store.writePlugin('file-explorer', firstPartyEntry(await hashOf(root), { version: '0.1.0', granted, class: 4, firstUse: [writeAll] }))
-      await plant(path.join(dataDir, 'state', 'switches.json'), JSON.stringify({ format: 3, ...defaultSwitches(), removed: ['file-explorer', 'search'] }))
+      const root = path.join(dataDir, 'plugins', id)
+      await writeFolder(root, filesFor(workerManifest(id, { version: '0.1.0', capabilities: granted })))
+      await store.writePlugin(id, oldFirstPartyEntry(await hashOf(root), { version: '0.1.0', granted, ...stored }))
+      await plant(path.join(dataDir, 'state', 'switches.json'), JSON.stringify({ format: 3, ...defaultSwitches(), removed: [id, 'search'] }))
     }, await notesFolder({ 'a.md': 'alpha' }))
 
-    // Hetu starts on it: nothing suspect, the tombstones still known and the core ready
+    // Hetu starts on it: nothing suspect, the entry read, a notice it owes included, and the core ready
     expect(booted.suspect).toBe(false)
-    expect(booted.removedKnown).toBe(true)
-    expect(booted.state.switches.removed).toEqual([])
-    expect(booted.state.plugins['file-explorer']).toMatchObject({ signer: FIRST_PARTY_SIGNER, class: 4 })
+    expect(booted.checks).toContainEqual({ check: 'plugin-entry', id, result: 'ok' })
+    expect(booted.state.switches).toEqual(defaultSwitches())
+    expect(booted.state.plugins[id]).toMatchObject({ signer: 'hetu first-party' })
     const all = await records()
     expect(all.some(record => record.event === 'core.ready')).toBe(true)
 
     // The entry is refused with signer, never migrated, and no worker runs for it
-    expect(pluginsManager.list().find(row => row.id === 'file-explorer')).toMatchObject({ from: 'folder', state: 'refused', reason: 'signer' })
-    expect(all).toContainEqual(expect.objectContaining({ event: 'plugin.refused', plugin: 'file-explorer', reason: 'signer' }))
-    expect(runtime.order()).not.toContain('file-explorer')
-    expect(all.some(record => record.event === 'plugin.started' && record.plugin === 'file-explorer')).toBe(false)
+    expect(pluginsManager.list().find(row => row.id === id)).toMatchObject({ from: 'folder', state: 'refused', reason: 'signer' })
+    expect(all).toContainEqual(expect.objectContaining({ event: 'plugin.refused', plugin: id, reason: 'signer' }))
+    expect(runtime.order()).not.toContain(id)
+    expect(all.some(record => record.event === 'plugin.started' && record.plugin === id)).toBe(false)
   })
 })
 

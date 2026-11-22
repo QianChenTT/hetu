@@ -36,7 +36,6 @@ const noSwitches = {
   skipVerification: false,
   allowUnsigned: [],
   confirmOff: false,
-  removed: [],
   execAnyCommand: [],
   limits: { all: {}, plugins: {} },
 }
@@ -47,7 +46,6 @@ const switchesIn = {
   skipVerification: false,
   allowUnsigned: [HASH],
   confirmOff: true,
-  removed: ['git'],
   execAnyCommand: ['search'],
   limits: { all: { callsInFlight: 128 }, plugins: { search: { messagesPerSecond: 2000, readyMs: 20000 } } },
 }
@@ -322,7 +320,6 @@ describe('writing', () => {
       off: switchable,
       devMode: ids,
       execAnyCommand: ids,
-      removed: ['git', 'artifacts', 'notify', 'layout'],
       limits: { all: {}, plugins: Object.fromEntries(ids.map(id => [id, { heartbeatMs: 9000 }])) },
     }
     await store.writeSwitches(switches)
@@ -505,9 +502,7 @@ describe('writing', () => {
       ['more ids in execAnyCommand than a list holds', switches({ execAnyCommand: tooMany })],
       ['an allowlist entry that is not a hash', switches({ allowUnsigned: ['abc'] })],
       ['an uppercase allowlist hash', switches({ allowUnsigned: ['A'.repeat(64)] })],
-      ['an install id in removed', switches({ removed: ['luoshu'] })],
-      ['a community plugin in removed', switches({ removed: ['my-plugin'] })],
-      ['an id twice in removed', switches({ removed: ['git', 'git'] })],
+      ['the tombstones an older build kept', switches({ removed: ['git'] })],
       ['an unknown constant for all plugins', limits({ all: { callsPerSecond: 10 } })],
       ['an unknown constant for one plugin', forPlugin({ callsPerSecond: 10 })],
       ['a limit of zero', limits({ all: { callsInFlight: 0 } })],
@@ -680,7 +675,7 @@ const kinds: Kind[] = [
       ['an id outside the grammar in dev mode', switchesText({ devMode: ['Search'] })],
       ['an id twice in execAnyCommand', switchesText({ execAnyCommand: ['search', 'search'] })],
       ['more ids in execAnyCommand than a list holds', switchesText({ execAnyCommand: many(MAX_LISTED + 1, i => `p${i}`) })],
-      ['an install id in removed', switchesText({ removed: ['gate'] })],
+      ['tombstones past what a list holds', switchesText({ removed: many(MAX_LISTED + 1, i => `p${i}`) })],
       ['an allowlist entry that is not a hash', switchesText({ allowUnsigned: ['abc'] })],
       ['an uppercase allowlist hash', switchesText({ allowUnsigned: ['A'.repeat(64)] })],
       ['an unknown constant', switchesText({ limits: { all: { messagesPerMinute: 5 }, plugins: {} } })],
@@ -1009,31 +1004,36 @@ describe('hidden marks off from when it ran in the page', () => {
   })
 })
 
-// The file explorer and search, first-party before they became community plugins, may still be removed in a file: read
-// with the ids dropped
-describe('the retired first-party ids', () => {
-  it('reads a file naming them in removed with the ids dropped and the rest of removed kept, then writes the switches back without it', async () => {
+// The tombstones an older build kept for the first-party plugins it removed, the file explorer, search and mcp
+// among them: every id read and dropped with removed itself, never a suspect file, and the switches written back
+// without it
+describe('the retired tombstones', () => {
+  it.each([
+    ['the plugins that left the install', ['layout', 'hidden-marks']],
+    ['the ids first party reserved', ['git', 'artifacts', 'notify']],
+    ['the first-party plugins that became community plugins', ['file-explorer', 'search', 'mcp']],
+    ['an id no first-party plugin held', ['luoshu', 'my-plugin']],
+    ['nothing', []],
+  ])('reads removed naming %s with it dropped and every other switch kept', async (_name, removed) => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, removed: ['git', 'file-explorer', 'search'] }))
-    const loaded = await store.load()
-    expect(loaded.suspect).toBe(false)
-    expect(loaded.removedKnown).toBe(true)
-    expect(loaded.state.switches.removed).toEqual(['git'])
-    await store.writeSwitches(loaded.state.switches)
-    expect(await readFile(switchesPath(), 'utf8')).not.toMatch(/file-explorer|search/)
-  })
-
-  // mcp was first party until a user installed it in the plugin folder
-  it('reads mcp in removed with the id dropped and every other switch kept, then writes the switches back without it', async () => {
-    await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 3, ...switchesIn, removed: ['mcp', 'git'] }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...switchesIn, removed }))
     const loaded = await store.load()
     expect(loaded.checks).toContainEqual({ check: 'switches', result: 'ok' })
     expect(loaded.suspect).toBe(false)
-    expect(loaded.removedKnown).toBe(true)
     expect(loaded.state.switches).toEqual(switchesIn)
     await store.writeSwitches(loaded.state.switches)
-    expect(await readFile(switchesPath(), 'utf8')).not.toMatch(/"mcp"/)
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('removed')
+  })
+
+  it('reads removed in a format 2 file with it dropped', async () => {
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...switchesIn, removed: ['layout'] }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.switches).toEqual(switchesIn)
+  })
+
+  it('writes no removed', async () => {
+    await expect(store.writeSwitches({ ...switchesIn, removed: ['layout'] })).rejects.toThrow()
   })
 })
 
@@ -1210,35 +1210,6 @@ describe('a failed check and a switch-off', () => {
   })
 })
 
-// removed lives in the switches, so a switches file that didn't check out has lost the tombstones
-describe('the tombstones', () => {
-  it('are known when the switches file checked out', async () => {
-    await store.writeSwitches(switchesIn)
-    const loaded = await store.load()
-    expect(loaded.removedKnown).toBe(true)
-    expect(loaded.state.switches.removed).toEqual(['git'])
-  })
-
-  it('are known with nothing removed, when the file says so', async () => {
-    await store.writeSwitches(noSwitches)
-    expect((await store.load()).removedKnown).toBe(true)
-  })
-
-  it.each([
-    ['missing, which only boot can tell from a first run', () => rm(switchesPath())],
-    ['edited', () => writeFile(switchesPath(), 'tampered')],
-    ['invalid', () => plant(switchesPath(), switchesText({ removed: ['luoshu'] }))],
-    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 4, removed: ['git'] }))],
-    ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
-  ])('are not known when the switches file is %s', async (_name, spoil) => {
-    await store.writeSwitches(switchesIn)
-    await spoil()
-    const loaded = await store.load()
-    expect(loaded.removedKnown).toBe(false)
-    expect(loaded.state.switches.removed).toEqual([])
-  })
-})
-
 describe('the luoshu folder', () => {
   const folders: [string, string, boolean][] = [
     ['win32', 'C:\\Users\\han\\notes', true],
@@ -1396,7 +1367,6 @@ describe('loading', () => {
     const loaded = await store.load()
     expect(loaded.state).toEqual(defaultState())
     expect(loaded.suspect).toBe(false)
-    expect(loaded.removedKnown).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'absent' },
       { check: 'luoshu', result: 'absent' },

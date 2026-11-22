@@ -4,10 +4,9 @@ import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
-import { firstPartyIds } from '../../api/ids.ts'
 import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 // Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
@@ -44,8 +43,7 @@ export default definePlugin({
 // entry is what the human's approval left beside the grant, such as the class and the items asking at their first use
 type Fixture = { granted: Capability[], manifest?: object, files?: Record<string, string>, entry?: Partial<Plugin> }
 
-// install holds first-party plugins by the grant each manifest asks for
-type Setup = { notes?: Record<string, string>, plugins?: Record<string, Fixture>, install?: Record<string, Capability[]> }
+type Setup = { notes?: Record<string, string>, plugins?: Record<string, Fixture> }
 
 async function started(setup: Setup): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, folder: string }> {
   const folder = await temp()
@@ -65,25 +63,16 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built!.text, ...plugin.files }))
     await store.writePlugin(id, await entryFor(root, { granted: plugin.granted, ...plugin.entry }))
   }
-  // The install plugins in an install of the test's own, which the first start copies in with no entry seeded, so the
-  // copy derives the class and the items asking at first use itself
-  const extra: Record<string, string> = {}
-  if (setup.install !== undefined) {
-    const installDir = await temp()
-    await writeInstall(installDir, Object.fromEntries(Object.entries(setup.install).map(([id, granted]) =>
-      [id, { files: filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }), firstParty: true }])))
-    extra.HETU_INSTALL_DIR = installDir
-  }
-  const app = await launch(dataDir, extra)
+  const app = await launch(dataDir)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'core.ready'))
-  for (const id of [...Object.keys(setup.plugins ?? {}), ...Object.keys(setup.install ?? {})]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  for (const id of Object.keys(setup.plugins ?? {})) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor, dataDir, folder }
 }
 
-// A plugin's worker. The first-party plugins share one host page, which holds only the one plugin a test installs
+// A plugin's worker, in the host page of its own
 async function pluginWorker(app: ElectronApplication, id: string): Promise<Worker> {
-  const page = await workersPage(app, (firstPartyIds as readonly string[]).includes(id) ? 'first-party' : id)
+  const page = await workersPage(app, id)
   await until(() => page.workers().length === 1)
   return page.workers()[0] as Worker
 }
@@ -419,18 +408,15 @@ async function putBack(folder: string): Promise<void> {
   execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
 }
 
-// The first-party id the writer is installed under
-const WRITER = 'git'
+const WRITER = 'writer'
 
 describe('a plugin writing notes', () => {
-  // Write on every note is class 4 and asks at its first use. Carried in the install as first-party under an id hetu
-  // doesn't build yet, so its first start copies it in and derives the class and the first use from its grant
+  // Write on every note is class 4 and asks at its first use, as its approval classed it
   it('asks once in the trusted window before its first write, writing nothing before the Confirm, then moves and removes unasked', async () => {
     const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta' }
     const granted = [listAll, readAll, writeAll]
-    const { app, editor, dataDir, folder } = await started({ notes, install: { [WRITER]: granted } })
+    const { app, editor, dataDir, folder } = await started({ notes, plugins: { [WRITER]: { granted, entry: { class: 4, firstUse: [writeAll] } } } })
     try {
-      expect(await logged(dataDir, 'plugin.copied', { plugin: WRITER })).toBe(true)
       expect((await new StateStore(dataDir).load()).state.plugins[WRITER]).toMatchObject({ class: 4, granted, firstUse: [writeAll] })
       const writer = await pluginWorker(app, WRITER)
 

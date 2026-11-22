@@ -6,10 +6,10 @@
         "core/api/actions.ts",
         "core/api/install.ts"
       ],
-      "hash": "099639d525ccaab7",
+      "hash": "c6b31a58ef769d91",
       "at": [
-        "core/api/actions.ts:32-36",
-        "core/api/install.ts:37-43"
+        "core/api/actions.ts:29-33",
+        "core/api/install.ts:32-37"
       ],
       "judged": "not yet"
     },
@@ -91,10 +91,10 @@
         "core/api/install.ts",
         "core/backend/plugins-manager/base.ts"
       ],
-      "hash": "bbcb827062805cf9",
+      "hash": "07a6652503db10c1",
       "at": [
-        "core/api/install.ts:51-56",
-        "core/backend/plugins-manager/base.ts:126-127"
+        "core/api/install.ts:44-48",
+        "core/backend/plugins-manager/base.ts:127-128"
       ],
       "judged": "not yet"
     },
@@ -319,10 +319,10 @@
         "core/backend/plugins-manager/base.ts",
         "core/backend/plugins-manager/base.ts"
       ],
-      "hash": "86eab647647beac4",
+      "hash": "8ceba03b473eb6ec",
       "at": [
-        "core/backend/plugins-manager/base.ts:398-405",
-        "core/backend/plugins-manager/base.ts:433-437"
+        "core/backend/plugins-manager/base.ts:396-403",
+        "core/backend/plugins-manager/base.ts:423-427"
       ],
       "judged": "not yet"
     },
@@ -335,18 +335,6 @@
       "at": [
         "core/backend/plugins-manager/changes.ts:154-158",
         "core/backend/plugins-manager/changes.ts:464-468"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/backend/plugins-manager/changes.ts",
-        "core/backend/plugins-manager/changes.ts"
-      ],
-      "hash": "91353fb6522643e5",
-      "at": [
-        "core/backend/plugins-manager/changes.ts:154-158",
-        "core/backend/plugins-manager/changes.ts:376-380"
       ],
       "judged": "not yet"
     },
@@ -559,10 +547,10 @@
         "core/backend/runtime/workers.ts",
         "core/backend/runtime/workers.ts"
       ],
-      "hash": "21cb365801b17a76",
+      "hash": "68896b4242bd1aa6",
       "at": [
-        "core/backend/runtime/workers.ts:84-90",
-        "core/backend/runtime/workers.ts:267-271"
+        "core/backend/runtime/workers.ts:83-89",
+        "core/backend/runtime/workers.ts:261-265"
       ],
       "judged": "not yet"
     },
@@ -655,7 +643,7 @@
         "core/frontend/editor/link.ts",
         "core/frontend/trusted/view.ts"
       ],
-      "hash": "accb4916cb40abcd",
+      "hash": "93706e48cf1c1cb9",
       "at": [
         "core/frontend/editor/link.ts:5-10",
         "core/frontend/trusted/view.ts:11-16"
