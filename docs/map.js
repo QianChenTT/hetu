@@ -115,8 +115,8 @@ function renderIntro(){
   panel.replaceChildren();
   panel.appendChild(h("span","eyebrow","How to read it"));
   panel.appendChild(h("h2",null,"Pick a box, an arrow or a scenario"));
-  var p=h("p",null,"The core in the middle-left is the one path every call takes: the carrier names the caller, asks the gate and routes. The core plugins below it hold the real power and come only from the install. Everything in teal is sandboxed and holds one channel, to the carrier. The security state on the right keeps you in the loop: only hetu writes it, only after a Confirm click you make in the trusted window and it checks each file's hash at every start.");p.style.color="var(--muted)";panel.appendChild(p);
-  var ul=h("ul");["Hover a box to light up every flow it has","Click to pin it and read its role, checks and threats","Choose a scenario above to step through a sequence","Every flow is also listed in the table below the map"].forEach(function(s){ul.appendChild(h("li",null,s))});panel.appendChild(ul);
+  var p=h("p",null,"The core in the middle-left is the one path every call takes: the router names the caller, asks the gate and routes. The core modules below it hold the real power and ship bundled into main, each with its own switch. Everything in teal is sandboxed and holds one channel, to the router. The security state on the right keeps you in the loop: only hetu writes it, only after a Confirm click you make in the trusted window and it checks each file's hash at every start.");p.style.color="var(--muted)";panel.appendChild(p);
+  var ul=h("ul");["Hover a box to light up every flow it has","Click to pin it and read its role, checks and threats","Choose a scenario above to step through a sequence","Every flow is also listed in the table below the map","Pieces marked planned are designed and not built"].forEach(function(s){ul.appendChild(h("li",null,s))});panel.appendChild(ul);
   panel.appendChild(h("span","eyebrow","Counts"));
   var m=h("p",null,N.length+" components · "+E.length+" flows · "+S.length+" scenarios");m.className="mono";panel.appendChild(m);
 }
