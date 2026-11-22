@@ -3,7 +3,7 @@ import type { Capability } from '../api/capabilities.ts'
 import { definePlugin, type PluginContext, run } from '../sdk/plugin.ts'
 import { Refused } from '../sdk/refused.ts'
 import type { IncomingCall } from '../sdk/serving.ts'
-import { cleanup, code, harness, tick, worker } from './router-fakes.ts'
+import { cleanup, code, harness, host, tick, worker } from './router-fakes.ts'
 import { sdkTransport } from './sdk-fakes.ts'
 
 afterEach(() => {
@@ -120,5 +120,52 @@ describe('a plugin serving its actions through the SDK', () => {
       [{ type: 'luoshu.read', paths: ['public/**'] }],
     )
     expect(await tester.ask('search.query', {})).toMatchObject({ ok: true, result: ['public/a.md'] })
+  })
+})
+
+// A role is served under its own action, which the router delivers to the one plugin holding it
+describe('a plugin serving a role through the SDK', () => {
+  async function holder(start: (ctx: PluginContext) => void) {
+    const parts = harness()
+    parts.pluginsManager.utility('mcp-http-handler')
+    parts.pluginsManager.sandboxed('mcp')
+    parts.pluginsManager.roles['door.handle'] = 'mcp'
+    run(definePlugin({ start }), sdkTransport(parts.router, worker('mcp')))
+    parts.router.send(worker('mcp'), { v: 1, kind: 'init', id: 'mcp', incarnation: 1, api: 5, deps: {}, lastStop: null, previousVersion: null })
+    await until(() => parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
+    return { ...parts, http: parts.connect(host('mcp-http-handler')) }
+  }
+
+  it('answers the door\'s call to door.handle with the handler provided under the role\'s action', async () => {
+    let seen: IncomingCall | null = null
+    const { http } = await holder(ctx => {
+      ctx.provide('door.handle', (call, args) => {
+        seen = call
+        return { status: 200, body: JSON.stringify(args) }
+      })
+    })
+    const request = { body: '{}', headers: {} }
+    expect(await http.ask('door.handle', request, { onBehalf: 'claude-code#1' })).toMatchObject({ ok: true, result: { status: 200, body: JSON.stringify(request) } })
+    expect(seen).toMatchObject({ action: 'door.handle', caller: host('mcp-http-handler'), onBehalf: 'claude-code#1', root: host('mcp-http-handler') })
+  })
+
+  it('serves no role under a plugin\'s own action of the same name', async () => {
+    const { http } = await holder(ctx => { ctx.provide('handle', () => ({ status: 200, body: '' })) })
+    expect(code(await http.ask('door.handle', { body: '', headers: {} }))).toBe('failed')
+  })
+
+  it('refuses a name with a dot that is no role, so a plugin names no other plugin\'s action', async () => {
+    const errors: unknown[] = []
+    await holder(ctx => {
+      for (const name of ['search.query', 'door.other', 'luoshu.read', 'door.handle.x', '.handle']) {
+        try {
+          ctx.provide(name, () => null)
+        } catch (err) {
+          errors.push(err)
+        }
+      }
+    })
+    expect(errors).toHaveLength(5)
+    for (const err of errors) expect(err).toBeInstanceOf(TypeError)
   })
 })
