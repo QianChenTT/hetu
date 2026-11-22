@@ -2,7 +2,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, entryFor, filesFor, harness, hashOf, stateOf, workerManifest } from './plugins-manager-fakes.ts'
 
-// What removing a plugin-folder plugin takes with it
+// What removing a plugin-folder plugin takes with it, and a remove whose folder can't be cleared
 
 // A remove of the plugin folder named here fails as a held folder would
 const fake: { held: string | null } = { held: null }
@@ -45,5 +45,36 @@ describe('removing a plugin-folder plugin', () => {
     const hash = await hashOf(path.join(made.dataDir, 'plugins', 'outline'))
     await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
     expect((await made.store.load()).state.switches.allowUnsigned).toContain(hash)
+  })
+
+  // The entry and the build's allow are gone, so the folder left can't run. Its row stays as the next start would find
+  // it, waiting for approval, so the human sees it and removes it again
+  it('keeps the row waiting for approval when the folder can\'t be cleared, and clears it on a second remove', async () => {
+    const made = await harness({ folder: { outline: outline() }, entries: { outline: root => entryFor(root) } })
+    await made.pluginsManager.start()
+    fake.held = path.resolve(made.dataDir, 'plugins', 'outline')
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'outline', step: 'remove' })
+    expect(made.pluginsManager.list().find(row => row.id === 'outline')).toMatchObject({ from: 'folder', state: 'found', reason: 'new' })
+    expect((await made.store.load()).state.plugins.outline).toBeUndefined()
+    fake.held = null
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
+    expect(made.pluginsManager.plugin('outline')).toBe(null)
+    expect(made.pluginsManager.list().some(row => row.id === 'outline')).toBe(false)
+    const again = await harness({ base: made.base, install: undefined })
+    await again.pluginsManager.start()
+    expect(again.pluginsManager.plugin('outline')).toBe(null)
+  })
+
+  it('reads a folder left from a remove whose clear failed as found at the next start, never running it', async () => {
+    const made = await harness({ folder: { outline: outline() }, entries: { outline: root => entryFor(root) } })
+    await made.pluginsManager.start()
+    fake.held = path.resolve(made.dataDir, 'plugins', 'outline')
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
+    fake.held = null
+    const again = await harness({ base: made.base, install: undefined })
+    await again.pluginsManager.start()
+    expect(stateOf(again.pluginsManager, 'outline')).toBe('found')
+    expect(again.runtime.order()).not.toContain('outline')
   })
 })

@@ -342,9 +342,14 @@ export abstract class PluginsChanges extends PluginsInstall {
     this.bump()
     this.replan()
     await this.pumped()
-    await clear(folders.plugins(this.dataDir, id)).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
+    const cleared = await clear(folders.plugins(this.dataDir, id)).then(() => true, () => {
+      this.note('fault', { plugin: id, step: 'remove' })
+      return false
+    })
     for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
-    this.known.delete(id)
+    // A folder that can't be cleared keeps its row for the human to remove again. With its entry and its build's allow
+    // gone it can't run, and it waits for approval as a start finds it
+    if (cleared) this.known.delete(id)
     this.replan()
   }
 
