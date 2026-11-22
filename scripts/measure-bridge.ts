@@ -87,7 +87,7 @@ const what: Record<RunName, string> = {
   quiet: 'no other traffic',
   view: "a plugin's view of 100 rows redrawn ten times a second beside the note",
   flood: 'a second plugin sending decorations of 2,500 marks back to back, past the 20,000 marks a second the drawer takes',
-  search: 'the 469 notes of the folder rewritten in turn and indexed again by search',
+  search: 'the 469 notes of the folder rewritten in turn and each read again by a plugin indexing them, as search does',
 }
 
 // One sitting's section: each run's 95th percentile and median in ms, key to text and key to mark, with the ratio
