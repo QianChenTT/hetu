@@ -1,13 +1,26 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { doorNode } from '../../api/ids.ts'
+import { doorId, doorNode } from '../../api/ids.ts'
+import { installManifest } from '../../api/manifest.ts'
+import { DOOR_FILE, doorRead } from '../../backend/plugins-manager/verify.ts'
 import { buildHost } from '../../sdk/build/esbuild.ts'
 
 const core = path.join(import.meta.dirname, '..', '..')
 const source = path.join(core, 'backend', 'door')
 
 describe('the door as it ships', () => {
+  // Its powers are the contract's, so the core's own record of it asks for nothing, requires nothing and provides nothing
+  it('has a record in the core that the manifest schema takes, one host entry and nothing asked, required or provided', () => {
+    const read = doorRead(Buffer.from('// door'))
+    expect(read.problem).toBeNull()
+    expect(installManifest.parse(read.manifest)).toEqual(read.manifest)
+    expect(Object.keys(read.manifest!).sort()).toEqual(['api', 'entries', 'id', 'name', 'version'])
+    expect(read.manifest).toMatchObject({ id: doorId, entries: { host: DOOR_FILE } })
+    expect(Object.keys(read.manifest!.entries)).toEqual(['host'])
+    expect(read.files.map(file => file.path)).toEqual([DOOR_FILE])
+  })
+
   it('builds into one ES module importing only the built-ins core/api names for it and holding the plugin alone', async () => {
     const built = await buildHost(core, 'backend/door/host.ts', doorNode)
     expect(built.imports).toEqual(['node:fs/promises', 'node:http', 'node:net', 'node:os'])
