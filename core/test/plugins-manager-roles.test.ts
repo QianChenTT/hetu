@@ -1,8 +1,9 @@
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import {
-  cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, type Listing,
+  cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Listing,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
@@ -123,6 +124,32 @@ describe('a second plugin asking for a role', () => {
     await expect(made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: role })).rejects.toThrow()
     expect((await made.store.load()).state.plugins.tool?.granted).toEqual([])
     expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+  })
+
+  // An update keeps the entry's grants, so a new version asking for the role gets no item and no second holder comes of
+  // it. The role comes only by an approval or a widen, each refused while another entry holds it
+  it('gets no item from an update whose new version asks for the role, the holder kept and neither refused', async () => {
+    const made = await harness({ folder: { mcp: holder('mcp'), tool: filesFor(workerManifest('tool')) }, entries: { mcp: holds(), tool: entryFor } })
+    await made.pluginsManager.start()
+    const dir = path.join(made.dataDir, 'staging', 'tool-next')
+    await writeFolder(dir, filesFor(workerManifest('tool', { version: '1.1.0', capabilities: [role] })))
+    expect(await made.pluginsManager.update('tool', dir)).toMatchObject({ outcome: 'confirm' })
+    await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'tool' })
+    await until(() => stateOf(made.pluginsManager, 'tool') === 'ready')
+    expect((await made.store.load()).state.plugins.tool).toMatchObject({ version: '1.1.0', granted: [] })
+    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(reasonOf(made.pluginsManager, 'mcp')).toBeNull()
+  })
+
+  it('gets no item from such an update with the role free either', async () => {
+    const made = await harness({ folder: { tool: filesFor(workerManifest('tool')) }, entries: { tool: entryFor } })
+    await made.pluginsManager.start()
+    const dir = path.join(made.dataDir, 'staging', 'tool-next')
+    await writeFolder(dir, filesFor(workerManifest('tool', { version: '1.1.0', capabilities: [role] })))
+    await made.pluginsManager.update('tool', dir)
+    await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'tool' })
+    await until(() => stateOf(made.pluginsManager, 'tool') === 'ready')
+    expect(made.pluginsManager.role('door.handle')).toBeNull()
   })
 
   it('is let widen to the role when no other entry holds it', async () => {

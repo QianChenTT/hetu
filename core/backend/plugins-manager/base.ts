@@ -325,8 +325,9 @@ ${capabilityKey(change.capability)}`)
       const verdict = this.verdictOf(k).kind
       return held.some(item => !off.has(capabilityKey(item))) && verdict !== 'refused' && verdict !== 'off'
     })
-    // The checks never leave two: a second plugin asking for a held role is refused role-taken and two entries holding
-    // one are both refused. Were two to serve, neither is named, so no plugin takes the role because it came first
+    // The checks never leave two: a second plugin asking for a held role is refused role-taken before approval, a widen
+    // to it is refused, an update keeps the entry's grants so it adds no item and two entries holding one are both
+    // refused. Were two to serve, neither is named, so no plugin takes the role because it came first
     return serving.length === 1 ? serving[0].id : null
   }
 
