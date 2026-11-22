@@ -135,14 +135,24 @@ function redirectedTo(response: Response, from: string): string {
 const rateLimited = (response: Response) => response.status === 429
   || (response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.get('retry-after') !== null))
 
-// The answer's body, refused past the cap by its Content-Length before any byte is read
-async function answered(response: Response, cap: number, signal: AbortSignal, stopped: Promise<never>): Promise<Buffer> {
-  if (response.status === 404) throw new FetchRefused('no-release')
-  if (rateLimited(response)) throw new FetchRefused('rate-limited')
-  if (response.status !== 200) throw new FetchRefused('bad-answer')
+// Why an answer is refused before its body is read, past the cap by its Content-Length among them, or null
+function refusal(response: Response, cap: number): FetchProblem | null {
+  if (response.status === 404) return 'no-release'
+  if (rateLimited(response)) return 'rate-limited'
+  if (response.status !== 200) return 'bad-answer'
   const length = Number(response.headers.get('content-length') ?? Number.NaN)
-  if (Number.isFinite(length) && length > cap) throw new FetchRefused('too-big')
-  return bodyOf(response, cap, signal, stopped)
+  return Number.isFinite(length) && length > cap ? 'too-big' : null
+}
+
+// Frees the connection under a body never read. A cancel that fails has nothing more to free
+const unread = (response: Response) => response.body?.cancel().catch(() => undefined)
+
+// The answer's body, or its refusal with the body left unread
+async function answered(response: Response, cap: number, signal: AbortSignal, stopped: Promise<never>): Promise<Buffer> {
+  const problem = refusal(response, cap)
+  if (problem === null) return bodyOf(response, cap, signal, stopped)
+  void unread(response)
+  throw new FetchRefused(problem)
 }
 
 // What a request asks for: the type and, of the API, its version
@@ -156,8 +166,7 @@ async function throughRedirects(url: string, wanted: Wanted, signal: AbortSignal
   for (let hops = 0; ; hops++) {
     const response = await connected(fetcher(at, init), signal, stopped)
     if (!REDIRECTS.includes(response.status)) return response
-    // A redirect's own body is never read and a cancel that fails has nothing more to free
-    response.body?.cancel().catch(() => undefined)
+    void unread(response)
     if (hops === MOST_REDIRECTS) throw new FetchRefused('bad-answer')
     at = redirectedTo(response, at)
   }

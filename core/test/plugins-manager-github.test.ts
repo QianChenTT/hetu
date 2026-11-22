@@ -105,6 +105,21 @@ describe('every request', () => {
     }
   })
 
+  it('frees the body of an answer refused before it is read', async () => {
+    for (const [status, headers] of [[404, {}], [429, {}], [500, {}], [200, { 'content-length': '5000' }]] as const) {
+      let cancelled = false
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true
+        },
+      })
+      const { fetch } = routes({ [ASSET]: () => new Response(body, { status, headers }) })
+      await problemOf(getFromGitHub(ASSET, want, limits, { fetch }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(cancelled, String(status)).toBe(true)
+    }
+  })
+
   it('to the API names the API version it reads', async () => {
     const { fetch, calls } = routes({
       'https://api.github.com/repos/o/r/releases/latest': () => new Response(JSON.stringify({ tag_name: 'v1', assets: [] }), { status: 200 }),
