@@ -999,6 +999,34 @@ describe('the door through the joined core', () => {
     expect(() => runtime.half('mcp')).toThrow()
   })
 
+  // The human's own changes as the trusted window hands them to the plugins manager: mcp switched off, and its hash
+  // taken off allowUnsigned, which refuses it unsigned
+  const trusted = { kind: 'window' as const, role: 'trusted' as const, n: 1 }
+  it.each([
+    ['switched off', 'off', async () => ({ kind: 'plugin.off' as const, plugin: 'mcp' })],
+    ['refused once its hash leaves allowUnsigned', 'refused', async (dataDir: string) => ({
+      kind: 'allowUnsigned' as const, hash: await hashOf(path.join(dataDir, 'plugins', 'mcp')), on: false,
+    })],
+  ] as const)('closes the open door once the folder mcp is %s', async (_what, state, change) => {
+    const { pluginsManager, port, dataDir } = await door()
+    await until(() => pluginsManager.plugin('mcp')?.state === 'ready')
+    let open = false
+    for (let waited = 0; !open && waited < 2000; waited += 20) {
+      open = await canConnect(port)
+      if (!open) await tick(20)
+    }
+    expect(open).toBe(true)
+    expect(await pluginsManager.request(await change(dataDir), trusted)).toEqual({ applied: true })
+    await pluginsManager.settled()
+    expect(pluginsManager.plugin('mcp')).toMatchObject({ state })
+    let shut = false
+    for (let waited = 0; !shut && waited < 2000; waited += 20) {
+      shut = !(await canConnect(port))
+      if (!shut) await tick(20)
+    }
+    expect(shut).toBe(true)
+  })
+
   it('refuses another plugin\'s worker holding plugin.call on mcp at mcp.handle\'s from list, after the gate allowed it', async () => {
     const { runtime, decisions } = await door()
     const reply = await runtime.half('beta').ask('mcp.handle', { body: '{}', headers: {} })
