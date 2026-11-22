@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { allowed, NONCE_MARK, partition, ROLES, serve } from '../backend/runtime/sessions.ts'
+import type { Session } from 'electron'
+import { allowed, lockDown, NONCE_MARK, partition, ROLES, serve } from '../backend/runtime/sessions.ts'
 
 let root = ''
 
@@ -165,5 +166,54 @@ describe('the sessions', () => {
     const head = await serve('editor', get('hetu://editor/', 'HEAD'), root)
     expect(head.status).toBe(200)
     expect(await head.text()).toBe('')
+  })
+})
+
+// A session as lockDown sets it up, keeping the proxies it is given and answering each with the promise in answer
+class FakeSession {
+  proxies: object[] = []
+  answer: Promise<void> = Promise.resolve()
+  readonly webRequest = { onBeforeRequest() {} }
+  readonly protocol = { handle() {} }
+  setPermissionRequestHandler() {}
+  setPermissionCheckHandler() {}
+  setDevicePermissionHandler() {}
+  setSpellCheckerEnabled() {}
+  on() {}
+  setProxy(config: object): Promise<void> {
+    this.proxies.push(config)
+    return this.answer
+  }
+}
+
+const locked = (fake: FakeSession, role: keyof typeof ROLES | null) => lockDown(fake as unknown as Session, role, root)
+
+describe('the sessions\' proxy', () => {
+  it('puts every session behind one proxy on loopback port 1, with no direct way and loopback not bypassed', async () => {
+    for (const role of [null, ...Object.keys(ROLES)] as (keyof typeof ROLES | null)[]) {
+      const fake = new FakeSession()
+      await locked(fake, role)
+      expect(fake.proxies, String(role)).toEqual([{ mode: 'fixed_servers', proxyRules: 'socks5://127.0.0.1:1', proxyBypassRules: '<-loopback>' }])
+    }
+  })
+
+  it('is done only once the proxy is set, and fails when it can\'t be set', async () => {
+    const fake = new FakeSession()
+    let set = () => {}
+    fake.answer = new Promise(resolve => {
+      set = resolve
+    })
+    let done = false
+    const locking = locked(fake, 'editor').then(() => {
+      done = true
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(done).toBe(false)
+    set()
+    await locking
+    expect(done).toBe(true)
+    const refused = new FakeSession()
+    refused.answer = Promise.reject(new Error('no proxy'))
+    await expect(locked(refused, 'workers')).rejects.toThrow('no proxy')
   })
 })

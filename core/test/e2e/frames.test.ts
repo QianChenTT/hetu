@@ -1,10 +1,12 @@
 import { createSocket } from 'node:dgram'
 import { appendFile, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
+import { partition, ROLES, type Role } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
@@ -259,6 +261,29 @@ describe('WebRTC from a view frame', () => {
       expect(new Set(policies)).toEqual(new Set(['disable_non_proxied_udp']))
     } finally {
       stun.close()
+    }
+  })
+
+  it('opens no TURN connection over TCP to a server on loopback, with every session behind a proxy that leads nowhere', async () => {
+    let connections = 0
+    const turn = createServer(socket => {
+      connections++
+      socket.destroy()
+    })
+    await new Promise<void>(resolve => turn.listen(0, '127.0.0.1', resolve))
+    try {
+      const { app, worker } = await started({ html: page('rtc.js'), files: { 'rtc.js': rtc } })
+      const { port } = turn.address() as { port: number }
+      const report = await rtcReport(worker, [{ urls: `turn:127.0.0.1:${port}?transport=tcp`, username: 'note text', credential: 'x' }])
+      expect(report).toEqual({ tried: [expect.any(String)] })
+      expect(connections).toBe(0)
+      const partitions = (Object.keys(ROLES) as Role[]).map(partition)
+      const proxies = await app.evaluate(({ session }, names) => Promise.all([session.defaultSession, ...names.map(name => session.fromPartition(name))]
+        .flatMap(each => ['http://127.0.0.1/', 'https://example.com/'].map(url => each.resolveProxy(url)))), partitions)
+      expect(proxies).toHaveLength(8)
+      expect(new Set(proxies)).toEqual(new Set(['SOCKS5 127.0.0.1:1']))
+    } finally {
+      turn.close()
     }
   })
 })
