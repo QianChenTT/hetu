@@ -86,6 +86,14 @@ export function installBox(flow: InstallFlow | null): InstallBox | null {
   return { step: 'found', staged: flow.staged, source: sourceLine(flow.source), unsigned: UNSIGNED, plugins, ready: plugins.some(row => row.picked), busy: flow.busy }
 }
 
+// What the page's status line says aloud when the box changes, null with no box
+export function installSay(box: InstallBox | null): string | null {
+  if (box === null) return null
+  if (box.step === 'assets') return box.heading
+  const count = `${box.plugins.length} plugin${box.plugins.length === 1 ? '' : 's'} found`
+  return `${count}. ${box.source}. Tick the ones to install, then Install`
+}
+
 // The core's answer as the page hears it
 type Reply = { ok?: unknown, result?: unknown, refusal?: { code?: unknown } }
 

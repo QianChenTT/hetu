@@ -1,7 +1,8 @@
 import type { Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { Arming } from './arming.ts'
-import type { InstallBox } from './install.ts'
+import { controlKey, sameControl } from './focus.ts'
+import { installSay, type InstallBox } from './install.ts'
 import type { Startup } from './startup.ts'
 import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, TrustedPage } from './view.ts'
 
@@ -67,6 +68,7 @@ function installControls(page: TrustedPage, field: string, words: string, sugges
   link.autocomplete = 'off'
   link.spellcheck = false
   link.value = typedLinks.get(field) ?? suggested
+  link.dataset.key = `link:${field}`
   link.addEventListener('input', () => typedLinks.set(field, link.value))
   label.append(link)
   controls.append(
@@ -99,6 +101,7 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
     const label = element('label')
     const tick = element('input')
     tick.type = 'checkbox'
+    tick.dataset.key = `tick:${row.id}`
     tick.checked = row.picked
     tick.disabled = row.problem !== null || box.busy
     tick.addEventListener('change', () => page.installer.tick(row.id, tick.checked))
@@ -323,8 +326,41 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     parts.push(button('Quit', () => page.quit()))
   }
 
+  const focused = focusedIn(root)
   root.replaceChildren(...parts)
+  if (focused !== null) refocus(root, focused)
+  say(note ?? installSay(shown.installing))
   arm()
+}
+
+const CONTROLS = 'button, input, select, summary'
+type Focused = { key: string, nth: number, start: number | null, end: number | null }
+
+// The control that has focus in the page, by its key and its place among its namesakes, with the caret of a field
+function focusedIn(root: HTMLElement): Focused | null {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || !root.contains(active)) return null
+  const key = controlKey(active)
+  const controls = [...root.querySelectorAll<HTMLElement>(CONTROLS)]
+  const nth = controls.filter(control => controlKey(control) === key).indexOf(active)
+  const field = active instanceof HTMLInputElement && active.type !== 'checkbox' ? active : null
+  return { key, nth, start: field?.selectionStart ?? null, end: field?.selectionEnd ?? null }
+}
+
+function refocus(root: HTMLElement, focused: Focused): void {
+  const again = sameControl([...root.querySelectorAll<HTMLElement>(CONTROLS)], focused.key, focused.nth)
+  if (again === null) return
+  again.focus({ preventScroll: true })
+  if (again instanceof HTMLInputElement && focused.start !== null) again.setSelectionRange(focused.start, focused.end)
+}
+
+// The status line a screen reader reads out, set only when what it says changes so a redraw says nothing again
+let said: string | null = null
+function say(text: string | null): void {
+  const status = document.getElementById('status')
+  if (status === null || text === said) return
+  said = text
+  if (text !== null) status.textContent = text
 }
 
 const actionLabels: Record<PluginAction, string> = {

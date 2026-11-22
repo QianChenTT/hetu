@@ -138,3 +138,13 @@ label {
 .why {
   color: #5a3b00;
 }
+
+/* Read out by a screen reader and not drawn */
+.status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
