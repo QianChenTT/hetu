@@ -1,11 +1,13 @@
-import { lstat, mkdir, open, readdir } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, mkdir, open, opendir, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { fromBufferPromise, type Entry, type ZipFile } from 'yauzl'
 import { withoutIgnorable } from '../../api/names.ts'
 import { clear } from './folders.ts'
 
-// The most one plugin zip may unpack to: entries, every folder a name implies among them, and bytes as written to disk
+// The most one plugin zip or picked folder may stage: entries, every folder a name implies among them, and bytes as
+// written to disk
 export type UnpackLimits = { entries: number, bytes: number }
 export const unpackLimits: UnpackLimits = Object.freeze({ entries: 2000, bytes: 64 * 1024 * 1024 })
 
@@ -15,10 +17,10 @@ const NAME_CAP = 1024
 const SEGMENT_CAP = 255
 const DEPTH_CAP = 32
 
-// Why a zip was refused. invalid: no zip the reader takes, a name the reader refuses, data that won't inflate or a size
-// it declares that its data doesn't have. special: a link, a device, a pipe or a socket, or a type that disagrees with
-// the name
-export type UnpackProblem = 'invalid' | 'name' | 'duplicate' | 'special' | 'encrypted' | 'too-many' | 'too-big'
+// Why a zip or a picked folder was refused. invalid: no zip the reader takes, a name the reader refuses, data that won't
+// inflate or a size it declares that its data doesn't have. special: a link, a device, a pipe or a socket, or a type
+// that disagrees with the name. not-a-folder: a picked folder that is missing, a file or a link
+export type UnpackProblem = 'invalid' | 'name' | 'duplicate' | 'special' | 'encrypted' | 'too-many' | 'too-big' | 'not-a-folder'
 
 class Refused extends Error {
   readonly problem: UnpackProblem
@@ -87,10 +89,48 @@ class Taken {
   }
 }
 
-function special(entry: Entry, folder: boolean): boolean {
-  const type = (entry.externalFileAttributes >>> 16) & TYPE
-  if (type !== 0 && type !== (folder ? FOLDER : FILE)) return true
-  return (entry.externalFileAttributes & REPARSE_POINT) !== 0
+// Every entry from either source passes through here: its name checked and claimed, every new name counted toward the
+// entry cap and every byte toward the byte cap as it is written, each file opened as new. The bytes are counted as they
+// come out of the source and checked before each chunk is written, so the folder never holds more than the cap
+class Writer {
+  readonly #into: string
+  readonly #limits: UnpackLimits
+  readonly #taken = new Taken()
+  #count = 0
+  #written = 0
+
+  constructor(into: string, limits: UnpackLimits) {
+    this.#into = into
+    this.#limits = limits
+  }
+
+  #claim(name: string, folder: boolean): string {
+    if (nameProblem(name) !== null) throw new Refused('name')
+    const added = this.#taken.claim(name, folder)
+    if (added === null) throw new Refused('duplicate')
+    this.#count += added
+    if (this.#count > this.#limits.entries) throw new Refused('too-many')
+    return path.join(this.#into, ...name.split('/'))
+  }
+
+  async folder(name: string): Promise<void> {
+    await mkdir(this.#claim(name, true), { recursive: true })
+  }
+
+  async file(name: string, data: () => Promise<AsyncIterable<Buffer>>): Promise<void> {
+    const target = this.#claim(name, false)
+    await mkdir(path.dirname(target), { recursive: true })
+    const file = await open(target, 'wx')
+    try {
+      for await (const chunk of await data()) {
+        this.#written += chunk.length
+        if (this.#written > this.#limits.bytes) throw new Refused('too-big')
+        await file.write(chunk)
+      }
+    } finally {
+      await file.close()
+    }
+  }
 }
 
 // The reader's own failures, each a zip refused as invalid
@@ -110,51 +150,28 @@ async function* chunksOf(data: Readable): AsyncGenerator<Buffer> {
   }
 }
 
-// Writes one entry's data to a new file and answers the bytes written so far. The count is of the bytes that come out
-// of the reader, checked before each chunk is written, so the folder never holds more than the cap
-async function writeEntry(zipfile: ZipFile, entry: Entry, target: string, written: number, cap: number): Promise<number> {
-  const file = await open(target, 'wx')
-  try {
-    for await (const chunk of chunksOf(await fromZip(zipfile.openReadStreamPromise(entry)))) {
-      written += chunk.length
-      if (written > cap) throw new Refused('too-big')
-      await file.write(chunk)
-    }
-  } finally {
-    await file.close()
-  }
-  return written
+function special(entry: Entry, folder: boolean): boolean {
+  const type = (entry.externalFileAttributes >>> 16) & TYPE
+  if (type !== 0 && type !== (folder ? FOLDER : FILE)) return true
+  return (entry.externalFileAttributes & REPARSE_POINT) !== 0
 }
 
-async function unpack(zip: Buffer, into: string, limits: UnpackLimits): Promise<void> {
-  const zipfile = await fromZip(fromBufferPromise(zip, READER))
+async function zipInto(zip: Buffer, writer: Writer, limits: UnpackLimits): Promise<void> {
+  const zipfile: ZipFile = await fromZip(fromBufferPromise(zip, READER))
   const entries = zipfile.eachEntry()
   try {
-    // The reader reads exactly the count the zip declares
+    // The reader reads exactly the count the zip declares, so a zip past the cap is refused before any entry is read
     if (zipfile.entryCount > limits.entries) throw new Refused('too-many')
-    const taken = new Taken()
-    let count = 0
-    let written = 0
     for (;;) {
       const next = await fromZip(entries.next())
       if (next.done === true) return
       const entry = next.value
       const folder = entry.fileName.endsWith('/')
       const name = folder ? entry.fileName.slice(0, -1) : entry.fileName
-      if (nameProblem(name) !== null) throw new Refused('name')
       if (special(entry, folder)) throw new Refused('special')
       if ((entry.generalPurposeBitFlag & ENCRYPTED) !== 0) throw new Refused('encrypted')
-      const added = taken.claim(name, folder)
-      if (added === null) throw new Refused('duplicate')
-      count += added
-      if (count > limits.entries) throw new Refused('too-many')
-      const target = path.join(into, ...name.split('/'))
-      if (folder) {
-        await mkdir(target, { recursive: true })
-        continue
-      }
-      await mkdir(path.dirname(target), { recursive: true })
-      written = await writeEntry(zipfile, entry, target, written, limits.bytes)
+      if (folder) await writer.folder(name)
+      else await writer.file(name, async () => chunksOf(await fromZip(zipfile.openReadStreamPromise(entry))))
     }
   } finally {
     await entries.return?.()
@@ -162,17 +179,64 @@ async function unpack(zip: Buffer, into: string, limits: UnpackLimits): Promise<
   }
 }
 
-// Unpacks a plugin zip into an empty staging folder, read once from the bytes handed in. Every name is checked before
-// anything is written for it and every file is opened as new, so nothing is overwritten and nothing lands outside the
-// folder. A refusal or a failure leaves the folder empty. A folder that isn't empty is the caller's mistake and throws
-export async function unpackZip(zip: Buffer, into: string, limits: UnpackLimits = unpackLimits): Promise<UnpackProblem | null> {
-  if (!(await lstat(into)).isDirectory() || (await readdir(into)).length > 0) throw new Error('unpack takes an empty folder')
+// O_NOFOLLOW where the platform has one, so a file swapped for a link after the listing isn't read through the link
+const READ_ONLY = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+
+async function* readFrom(file: string): AsyncGenerator<Buffer> {
+  const handle = await open(file, READ_ONLY)
   try {
-    await unpack(zip, into, limits)
+    for await (const chunk of handle.createReadStream({ autoClose: false })) yield chunk
+  } finally {
+    await handle.close()
+  }
+}
+
+// Each entry of a picked folder as its listing names it, a link or anything else neither file nor folder refused. The
+// depth cap in nameProblem bounds the recursion
+async function folderInto(dir: string, prefix: string, writer: Writer): Promise<void> {
+  for await (const entry of await opendir(dir)) {
+    const name = prefix + entry.name
+    const from = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await writer.folder(name)
+      await folderInto(from, `${name}/`, writer)
+    } else if (entry.isFile()) {
+      await writer.file(name, async () => readFrom(from))
+    } else {
+      throw new Refused('special')
+    }
+  }
+}
+
+// Whether the path is a folder and no link to one. One that can't be looked at, a missing one among them, is not
+export const isRealFolder = (dir: string) => lstat(dir).then(stat => stat.isDirectory(), () => false)
+
+// Fills an empty staging folder from one source. A folder that isn't empty is the caller's mistake and throws. A
+// refusal or a failure leaves the folder empty
+async function staged(into: string, limits: UnpackLimits, fill: (writer: Writer) => Promise<void>): Promise<UnpackProblem | null> {
+  if (!(await lstat(into)).isDirectory() || (await readdir(into)).length > 0) throw new Error('staging takes an empty folder')
+  try {
+    await fill(new Writer(into, limits))
     return null
   } catch (err) {
     for (const name of await readdir(into)) await clear(path.join(into, name))
     if (err instanceof Refused) return err.problem
     throw err
   }
+}
+
+// Unpacks a plugin zip into an empty staging folder, read once from the bytes handed in. Every name is checked before
+// anything is written for it and every file is opened as new, so nothing is overwritten and nothing lands outside the
+// folder
+export async function unpackZip(zip: Buffer, into: string, limits: UnpackLimits = unpackLimits): Promise<UnpackProblem | null> {
+  return staged(into, limits, writer => zipInto(zip, writer, limits))
+}
+
+// Copies a folder the human picked into an empty staging folder under the same checks and caps as a zip, so what is
+// read and hashed after is only ever the copy. A picked folder that is missing, a file or a link is refused
+export async function stageFolder(from: string, into: string, limits: UnpackLimits = unpackLimits): Promise<UnpackProblem | null> {
+  return staged(into, limits, async writer => {
+    if (!(await isRealFolder(from))) throw new Refused('not-a-folder')
+    await folderInto(from, '', writer)
+  })
 }

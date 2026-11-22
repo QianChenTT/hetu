@@ -18,15 +18,16 @@ async function temp(): Promise<string> {
 }
 
 const plugin = (id: string, version = '1.0.0') => filesFor(workerManifest(id, { version }))
-const summary = (found: Awaited<ReturnType<typeof findPlugins>>) =>
-  found.map(each => ({ folder: path.basename(each.folder), id: each.id, version: each.version, problem: each.read.problem }))
+const summary = (finding: Awaited<ReturnType<typeof findPlugins>>) =>
+  finding.plugins.map(each => ({ folder: path.basename(each.folder), id: each.id, version: each.version, problem: each.read.problem }))
 
 describe('plugins found in an unpacked or picked folder', () => {
   it('finds the one plugin whose manifest is at the top, with the bytes read and their hash', async () => {
     const root = path.join(await temp(), 'notes-x')
     await writeFolder(root, plugin('notes-x', '2.1.0'))
-    const found = await findPlugins(root)
-    expect(summary(found)).toEqual([{ folder: 'notes-x', id: 'notes-x', version: '2.1.0', problem: null }])
+    const finding = await findPlugins(root)
+    const found = finding.plugins
+    expect(summary(finding)).toEqual([{ folder: 'notes-x', id: 'notes-x', version: '2.1.0', problem: null }])
     expect(found[0].folder).toBe(root)
     expect(found[0].read.hash).toBe(await hashOf(root))
     expect(found[0].read.files.map(file => file.path)).toEqual(['hetu-plugin.json', 'worker.js'])
@@ -53,7 +54,7 @@ describe('plugins found in an unpacked or picked folder', () => {
   it('looks no deeper than one level', async () => {
     const root = await temp()
     await writeFolder(path.join(root, 'release', 'alpha'), plugin('alpha'))
-    expect(await findPlugins(root)).toEqual([])
+    expect(await findPlugins(root)).toEqual({ problem: null, plugins: [] })
   })
 
   it('takes a manifest at the top as the one plugin, its own folders never read as more', async () => {
@@ -81,13 +82,17 @@ describe('plugins found in an unpacked or picked folder', () => {
     await mkdir(path.join(root, 'plugins'))
     await symlink(outside, path.join(root, 'plugins', 'linked'), 'junction')
     await mkdir(path.join(root, 'plugins', 'odd', 'hetu-plugin.json'), { recursive: true })
-    expect(await findPlugins(path.join(root, 'plugins'))).toEqual([])
-    expect(await findPlugins(path.join(root, 'plugins', 'linked'))).toEqual([])
+    expect(await findPlugins(path.join(root, 'plugins'))).toEqual({ problem: null, plugins: [] })
   })
 
-  it('finds nothing in a file', async () => {
+  it('refuses a root that is missing, a file or a link the same way', async () => {
     const root = await temp()
+    const outside = path.join(await temp(), 'outside')
+    await writeFolder(outside, plugin('outside'))
     await writeFile(path.join(root, 'a.zip'), 'x')
-    expect(await findPlugins(path.join(root, 'a.zip'))).toEqual([])
+    await symlink(outside, path.join(root, 'linked'), 'junction')
+    for (const name of ['none', 'a.zip', 'linked']) {
+      expect(await findPlugins(path.join(root, name)), name).toEqual({ problem: 'not-a-folder', plugins: [] })
+    }
   })
 })

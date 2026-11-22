@@ -43,7 +43,7 @@ describe('a release zip of built plugins', () => {
     const { into } = await staging()
     const zip = makeZip([...pluginEntries('alpha', 'alpha', '1.2.0'), ...pluginEntries('beta', 'beta')])
     expect(await unpackZip(zip, into)).toBeNull()
-    const found = await findPlugins(into)
+    const found = (await findPlugins(into)).plugins
     expect(found.map(each => [each.id, each.version, each.read.problem])).toEqual([['alpha', '1.2.0', null], ['beta', '1.0.0', null]])
     expect(found[0].read.hash).toBe(await hashOf(path.join(into, 'alpha')))
   })
@@ -107,7 +107,7 @@ describe('two readers, two answers', () => {
     const zip = makeZip([...pluginEntries('alpha', 'alpha'), { name: 'alpha/extra.js', localName: 'alpha/../../evil.js', data: 'extra' }])
     expect(await unpackZip(zip, into)).toBeNull()
     expect(await everything(into)).toEqual(['alpha', 'alpha/extra.js', 'alpha/hetu-plugin.json', 'alpha/worker.js'])
-    const [found] = await findPlugins(into)
+    const [found] = (await findPlugins(into)).plugins
     expect(found.read.files.find(file => file.path === 'extra.js')?.bytes.toString()).toBe('extra')
     expect(found.read.hash).toBe(await hashOf(path.join(into, 'alpha')))
   })
