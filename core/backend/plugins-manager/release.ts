@@ -112,6 +112,7 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
       .map(asset => ({ name: asset.name, size: asset.size, url: asset.browser_download_url }))
     // An answer that points a download off GitHub's hosts would steer main elsewhere, so none of it is offered
     if (zips.some(zip => !onGitHub(zip.url))) throw new FetchRefused('off-github')
+    if (zips.length === 0) throw new FetchRefused('no-zip')
     return { problem: null, tag: release.tag_name, zips }
   })
 }

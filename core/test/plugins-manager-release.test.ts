@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Fetch } from '../backend/plugins-manager/github.ts'
+import { fetchProblems, fetchProblemWords, type Fetch } from '../backend/plugins-manager/github.ts'
 import { downloadZip, githubLink, releaseZips, type ReleaseZip } from '../backend/plugins-manager/release.ts'
 
 type Call = { url: string, init: RequestInit }
@@ -148,5 +148,60 @@ describe('a picked zip', () => {
     expect(await downloadZip(zip, { fetch: hanging, limits: { ms: 20 } })).toEqual({ problem: 'timed-out' })
     const { fetch } = fake(() => new Response(stalled(), { status: 200 }))
     expect(await downloadZip(zip, { fetch, limits: { ms: 20 } })).toEqual({ problem: 'timed-out' })
+  })
+})
+
+describe('a failed fetch', () => {
+  const failing = (answer: () => Response | Promise<Response>) => fake(answer).fetch
+  const zip: ReleaseZip = { name: 'a.zip', size: 1, url: download('a.zip') }
+  const status = (code: number, headers: Record<string, string> = {}) => () => new Response('{"message":"x"}', { status: code, headers })
+
+  it('answers no-release for a repo or a tag GitHub doesn\'t have, and for a file gone since', async () => {
+    expect(await releaseZips('https://github.com/o/r', { fetch: failing(status(404)) })).toEqual({ problem: 'no-release' })
+    expect(await releaseZips('https://github.com/o/r/releases/tag/v9', { fetch: failing(status(404)) })).toEqual({ problem: 'no-release' })
+    expect(await downloadZip(zip, { fetch: failing(status(404)) })).toEqual({ problem: 'no-release' })
+  })
+
+  it('answers no-zip for a release with no uploaded .zip', async () => {
+    const assets = [asset('source.tar.gz'), asset('half.zip', 5, { state: 'starter' })]
+    expect(await releaseZips('https://github.com/o/r', { fetch: failing(() => json(release(assets))) })).toEqual({ problem: 'no-zip' })
+  })
+
+  it('answers rate-limited for a 429, or a 403 with no requests left or a time to wait', async () => {
+    for (const answer of [
+      status(429), status(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1767225600' }), status(403, { 'retry-after': '60' }),
+      status(429, { 'retry-after': '60' }),
+    ]) {
+      expect(await releaseZips('https://github.com/o/r', { fetch: failing(answer) })).toEqual({ problem: 'rate-limited' })
+      expect(await downloadZip(zip, { fetch: failing(answer) })).toEqual({ problem: 'rate-limited' })
+    }
+  })
+
+  it('answers bad-answer for a 403 that isn\'t the rate limit and any other status', async () => {
+    for (const answer of [status(403), status(403, { 'x-ratelimit-remaining': '12' }), status(500), status(401), status(202), status(410)]) {
+      expect(await releaseZips('https://github.com/o/r', { fetch: failing(answer) })).toEqual({ problem: 'bad-answer' })
+    }
+  })
+
+  it('answers offline when no connection is made or one breaks mid-body', async () => {
+    const refused: Fetch = async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.github.com'), { code: 'ENOTFOUND' }) })
+    }
+    expect(await releaseZips('https://github.com/o/r', { fetch: refused })).toEqual({ problem: 'offline' })
+    expect(await downloadZip(zip, { fetch: refused })).toEqual({ problem: 'offline' })
+    const broken = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(4))
+        controller.error(new TypeError('terminated'))
+      },
+    }), { status: 200 })
+    expect(await downloadZip({ ...zip, size: 8 }, { fetch: failing(broken) })).toEqual({ problem: 'offline' })
+  })
+
+  it('has plain words for every problem the trusted window shows', () => {
+    expect(Object.keys(fetchProblemWords).sort()).toEqual([...fetchProblems].sort())
+    for (const problem of fetchProblems) {
+      expect(fetchProblemWords[problem], problem).toMatch(/^[A-Z][^\n]{9,}[^.]$/)
+    }
   })
 })
