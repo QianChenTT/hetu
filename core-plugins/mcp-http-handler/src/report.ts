@@ -22,6 +22,7 @@ export function refusalCounter(report: Report, everyMs = 1000): RefusalCounter {
       const sent = Math.min(count, MAX_REPORT_COUNT)
       if (count > sent) counts.set(reason, count - sent)
       else counts.delete(reason)
+      // A count core.refused can't take is lost, it only feeds the core's record of refusals
       void report(reason, sent).catch(() => {})
     }
     if (counts.size > 0 && !closed) arm()

@@ -740,6 +740,35 @@ describe('a listing', () => {
     clock.now += 1000
     expect((await search.ask('luoshu.list', {})).ok).toBe(true)
   })
+
+  // A count that crashed in use refuses all, by the judging-controls rule (D-645)
+  it('answers policy-down with a fault when the gate-time count throws, and the luoshu is never asked', async () => {
+    const { search, luoshu, router, log } = listing({ gateTime: { spent: () => { throw new Error('broken') }, charge() {} } })
+    expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
+    expect(luoshu.performed).toEqual([])
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'spent', count: 1 }])
+  })
+
+  // Only a yes or a no is an answer, as with the gate's own allow
+  it.each([['null', null], ['nothing', undefined], ['text', 'yes'], ['a number', 0]])('answers policy-down with a fault when the gate-time count answers %s, and the luoshu is never asked', async (_name, answer) => {
+    const { search, luoshu, router, log } = listing({ gateTime: { spent: () => answer as unknown as boolean, charge() {} } })
+    expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
+    expect(luoshu.performed).toEqual([])
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'spent', count: 1 }])
+  })
+
+  // Whether a charge that throws should refuse too isn't decided, so the listing still answers
+  it('records a fault when charging the gate\'s time throws and still answers the listing', async () => {
+    const { search, router, log } = listing({ gateTime: { spent: () => false, charge: () => { throw new Error('broken') } } })
+    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md'], next: null })
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'charge', count: 1 }])
+  })
 })
 
 describe('a crash', () => {

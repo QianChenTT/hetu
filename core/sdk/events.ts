@@ -79,6 +79,7 @@ export class Events {
       const made = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? outcome.value : [])
       this.entries.delete(entry)
       for (const topic of made) this.subscribed.delete(topic)
+      // Topics the router still holds send events no entry here takes, the subscribe's own failure goes up
       if (made.length > 0) await this.request('events.unsubscribe', { topics: made }).catch(() => {})
       throw failed.reason
     }

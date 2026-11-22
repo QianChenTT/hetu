@@ -69,7 +69,9 @@ export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUti
         // among it, is ever followed by a recursive delete
         try {
           rmdirSync(cwd)
-        } catch {}
+        } catch {
+          // rmdir refuses a folder the child wrote into, the one meant to stay
+        }
         start.exited({ killed: own.killed })
       })
       child.postMessage({ v: VERSION, kind: 'start', code: start.code.toString('base64'), limits: options.limits(start.id) }, [start.port])
@@ -79,7 +81,9 @@ export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUti
         if (own.id !== id || own.over) continue
         try {
           own.child.postMessage({ v: VERSION, kind: 'limits', limits: options.limits(id) })
-        } catch {}
+        } catch {
+          // A child that misses its new limits paces itself to the old ones, the router counts it against the new
+        }
       }
     },
     kill(id, incarnation) {

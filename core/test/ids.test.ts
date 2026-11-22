@@ -108,7 +108,7 @@ describe('policy jobs, providers and guards', () => {
   })
 
   it('lists the core plugins, with CodeMirror in the drawer and no editor-core', () => {
-    expect(corePluginIds).toEqual(['mcp-http-handler', 'net'])
+    expect(corePluginIds).toEqual(['net', 'mcp-http-handler'])
   })
 
   it('lists the core modules main holds apart from the core plugins', () => {

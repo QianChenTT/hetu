@@ -105,18 +105,23 @@ export abstract class PluginsLifecycle extends PluginsBase {
   protected tell(failure: Failure): void {
     try {
       this.onFailure?.(failure)
-    } catch {}
+    } catch {
+      // A throw is the runtime's own fault. A stop already in place loses only its box or window, a relaunch is lost
+      // and hetu runs on with the log failing
+    }
   }
 
   // The human quit hetu: nothing failed, so the next failure restarts hetu again
   async cleanQuit(): Promise<void> {
     while (this.markerWork.size > 0) await Promise.all(this.markerWork)
+    // A failed-once marker that stays only stops the next failure in the stopped mode, the safe side of a clean quit
     await clearFailedOnce(this.dataDir).catch(() => {})
   }
 
   // The human chose Try again: every start marker goes, so the next launch starts as usual and a start that hangs again
   // leaves a new one
   async triedAgain(): Promise<void> {
+    // A marker that stays holds hetu in the fail-safe at the next launch again, the safe side of a Try again
     for (const id of failSafeControls(action => this.guardsFor(action))) await this.marking(clearStartMarker(this.dataDir, id)).catch(() => {})
   }
 
@@ -136,7 +141,9 @@ export abstract class PluginsLifecycle extends PluginsBase {
       this.closing = true
       try {
         this.link.stopping()
-      } catch {}
+      } catch {
+        // A router not told answers down instead of stopped for what shutdown stops, the shutdown goes on the same
+      }
       this.note('core.stopping', {})
       this.replan()
     }
@@ -226,7 +233,16 @@ export abstract class PluginsLifecycle extends PluginsBase {
     }
     try {
       this.link.changed()
-    } catch {}
+    } catch {
+      // No open call with power was judged again on this change, so the router ends each one rather than keep a grant
+      // that may be gone (D-646)
+      this.note('fault', { plugin: 'router', step: 'changed' })
+      try {
+        this.link.revokeAll()
+      } catch {
+        this.note('fault', { plugin: 'router', step: 'revokeAll' })
+      }
+    }
     this.sendDeps()
     this.checkIdle()
   }
@@ -291,7 +307,10 @@ export abstract class PluginsLifecycle extends PluginsBase {
           if (k?.live && !this.runs(k)) await this.halt(k)
         }
         this.startAll()
-      } catch {}
+      } catch {
+        // A throw ends this pass with the plan half applied, a plugin to stop may run on and one to start waits, until
+        // the next switch, stop, crash or install replans
+      }
     } while (this.again)
   }
 
@@ -520,17 +539,23 @@ export abstract class PluginsLifecycle extends PluginsBase {
     for (const run of live.halves.values()) {
       try {
         this.link.end(run.caller, code)
-      } catch {}
+      } catch {
+        // Its way left the router before the end could throw, a call it held that isn't stopped ends at its deadline
+      }
     }
     if (live.halves.has('worker')) {
       try {
         this.runtime.terminate(k.id, live.n)
-      } catch {}
+      } catch {
+        // A worker that can't be ended runs on unheard, its ways were ended above
+      }
     }
     if (k.place === 'utility' && live.halves.has('host')) {
       try {
         this.runtime.kill(k.id, live.n)
-      } catch {}
+      } catch {
+        // A child that can't be killed runs on unheard, its ways were ended above
+      }
     }
   }
 

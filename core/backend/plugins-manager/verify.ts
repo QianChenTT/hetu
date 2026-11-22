@@ -39,7 +39,9 @@ function manifestOf(files: readonly PluginFile[], id: string, from: 'install' | 
       try {
         parseStrict(file.bytes, installManifest)
         return { manifest: null, problem: 'install-only' }
-      } catch {}
+      } catch {
+        // A manifest neither schema takes is invalid, answered below
+      }
     }
     return { manifest: null, problem: 'invalid' }
   }

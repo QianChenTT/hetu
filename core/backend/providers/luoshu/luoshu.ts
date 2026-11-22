@@ -295,6 +295,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         await retried(() => rename(temp, target.absolute), target.absolute)
       }
     } catch (err) {
+      // A temp file left here is removed by the walk at open once it is old, the write's own error goes up
       await rm(temp, { force: true }).catch(() => {})
       throw err
     }
@@ -347,6 +348,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     try {
       await act()
     } catch (err) {
+      // A claim that can't be taken back stays as an empty file at the note's name, the act's error still goes up
       if (await holds(target, mine)) await retried(() => unlink(target), target).catch(() => {})
       throw err
     }
@@ -753,6 +755,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     clearTimeout(settling.get(relative))
     const timer = setTimeout(() => {
       settling.delete(relative)
+      // A look that throws publishes nothing, as settled itself does for a note it can't read
       void settled(relative).catch(() => {})
     }, settleMs)
     timer.unref?.()
@@ -804,6 +807,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     for (const file of left) {
       if (opening !== walked) return
       const found = await lstat(file).catch(() => null)
+      // Stays until the next open tries again, a second name keeping old note bytes in the human's own folder
       if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => {})
     }
   }

@@ -46,6 +46,7 @@ export async function stage(dataDir: string, id: string, files: readonly PluginF
     for (const folder of made) await syncDir(folder)
     await syncDir(folders.staging(dataDir))
   } catch (err) {
+    // A half-written copy left in staging is never read or run, the stage's own error goes up
     await rm(dir, { recursive: true, force: true }).catch(() => {})
     throw err
   }
@@ -70,11 +71,13 @@ export async function swapIn(dataDir: string, id: string, staged: string): Promi
     await retried(() => rename(staged, target))
   } catch (err) {
     // The old version back where it was, so a failed swap changes nothing
+    // A restore that fails as well leaves no folder at plugins/<id> rather than a mix, the swap's error still goes up
     if (moved) await retried(() => rename(old, target)).catch(() => {})
     throw err
   }
   await syncDir(path.dirname(target))
   await syncDir(folders.staging(dataDir))
+  // The old version left in staging is never read or run, the swap already landed
   if (moved) await rm(old, { recursive: true, force: true }).catch(() => {})
 }
 

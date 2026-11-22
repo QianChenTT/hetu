@@ -11,7 +11,11 @@ const repo = path.join(import.meta.dirname, '..', '..')
 const roots = ['core/api', 'core/lib', 'core/sdk', 'core/frontend', 'core/backend']
 const posix = (file: string) => file.split(path.sep).join('/')
 
-export function shippedFiles({ kinds, plugins, from }: { kinds: readonly Kind[], plugins?: 'src', from?: 'core' }): string[] {
+// Paths from core/ take no plugins, whose paths start core-plugins/
+type Options = { kinds: readonly Kind[] } & ({ plugins?: undefined, from?: 'core' } | { plugins: 'src', from?: undefined })
+
+export function shippedFiles({ kinds, plugins, from }: Options): string[] {
+  if (plugins === 'src' && from === 'core') throw new Error("plugins: 'src' takes paths from the repo, not from: 'core'")
   const kind = new RegExp(`\\.(${kinds.join('|')})$`)
   const files: string[] = []
   const walk = (dir: string) => {

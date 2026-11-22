@@ -91,7 +91,10 @@ async function lock(dataDir: string): Promise<() => Promise<void>> {
     try {
       await handle.writeFile(String(process.pid))
     } catch (err) {
+      // The write's error is the one that goes up, a handle that won't close is held until hetu quits
       await handle.close().catch(() => {})
+      // A lock left here is empty or holds a pid the write cut short. The next start takes it over once it is old or
+      // its pid is gone, while a cut pid that reads as live fails closed with the file to remove
       await rm(file, { force: true }).catch(() => {})
       throw err
     }

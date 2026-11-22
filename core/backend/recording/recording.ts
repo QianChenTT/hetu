@@ -132,7 +132,9 @@ class Recorder implements Recording {
     if (this.told || !this.failing()) return
     try {
       if (this.options.failed?.() !== false) this.told = true
-    } catch {}
+    } catch {
+      // told stays false, so the look a second later tells again
+    }
   }
 
   // Once a second, so windows hear when the log's health changed through an audit write, which the lane doesn't see
@@ -144,6 +146,8 @@ class Recorder implements Recording {
     this.healthy = healthy
     try {
       this.options.noticed?.()
-    } catch {}
+    } catch {
+      // Windows miss hearing this health change, core.status still answers it when they read
+    }
   }
 }

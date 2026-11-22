@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Call, Prepared, Provider } from '../api/policy-jobs.ts'
-import { cleanup, code, harness, tick, worker, type HarnessOptions } from './router-fakes.ts'
+import { cleanup, code, harness, tick, windowWay, worker, type HarnessOptions } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -91,6 +91,28 @@ describe('open calls judged again on a new grants snapshot', () => {
     snapshot()
     expect(code(await scribe.reply(id))).toBe('stale')
     await counter.waitFor(message => message.kind === 'cancel' && message.callId === got.callId)
+  })
+
+  // What deliver let on is what the new grants snapshot judges: the same capability and target at the canonical stage
+  it('judges a delivered call again on what the gate let on at delivery, then answers it stale', async () => {
+    const { pluginsManager, gate, connect, snapshot } = made()
+    pluginsManager.sandboxed('word-count', { count: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const id = scribe.call('word-count.count', {})
+    await counter.delivered('word-count.count')
+    const asked = () => gate.asked.filter(access => access.caller.kind === 'plugin' && access.caller.id === 'scribe')
+    const [raw, delivered] = asked()
+    expect([raw.stage, delivered.stage, delivered.capability, delivered.scope]).toEqual(['raw', 'canonical', 'plugin.call', { target: 'word-count' }])
+    gate.grants.scribe = [...gate.grants.scribe, { type: 'luoshu.read', paths: ['**'] }]
+    snapshot()
+    expect(asked()).toEqual([raw, delivered, delivered])
+    expect(scribe.repliesTo(id)).toEqual([])
+    gate.grants.scribe = []
+    snapshot()
+    expect(asked()).toEqual([raw, delivered, delivered, delivered])
+    expect(code(await scribe.reply(id))).toBe('stale')
   })
 
   it('stops nothing when the new grants snapshot widens a grant', async () => {
@@ -332,5 +354,141 @@ describe('the calls under a call a new grants snapshot no longer covers', () => 
     open()
     await tick(20)
     expect([luoshu.performed, luoshu.files.has('notes/a.md')]).toEqual([[], false])
+  })
+})
+
+// The plugins manager's change threw, so no open call was judged again on its grants snapshot (D-646)
+describe('every open call a plugin holds with power ended when the router could not judge them again', () => {
+  it('ends each one policy-down whatever its grant, its callee told cancel, while a call with no power and a window\'s call run on', async () => {
+    const { exec, luoshu, search, pluginsManager, gate, connect, router } = made()
+    pluginsManager.sandboxed('word-count', { count: {}, tally: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const run = search.call('exec.run', { command: build })
+    const count = scribe.call('word-count.count', {})
+    const delivered = await counter.delivered('word-count.count')
+    // word-count's call to its own action holds no power
+    const tally = counter.call('word-count.tally', {})
+    const own = await counter.delivered('word-count.tally')
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const editor = windowWay(router, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const saving = editor.ask('editor', 'luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await tick(20)
+    expect([exec.signals.length, luoshu.performed.length]).toEqual([1, 1])
+    router.revokeAll()
+    expect(code(await search.reply(run))).toBe('policy-down')
+    expect(exec.signals[0].aborted).toBe(true)
+    expect(code(await scribe.reply(count))).toBe('policy-down')
+    await counter.waitFor(message => message.kind === 'cancel' && message.callId === delivered.callId)
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(false)
+    open()
+    expect((await saving).ok).toBe(true)
+    expect(counter.inbox.some(message => message.kind === 'cancel' && message.callId === own.callId)).toBe(false)
+    counter.answer(own.callId, 3)
+    expect((await counter.reply(tally)).result).toBe(3)
+  })
+
+  // A control that crashed in use refuses all, so one call whose end throws can't keep the rest live. The router's
+  // clock for records throws once, inside the first call's end
+  it('goes on past a call whose end throws, with a fault for it, and still ends the live subscriptions', async () => {
+    let breaks = 0
+    const now = () => {
+      if (breaks > 0) {
+        breaks--
+        throw new Error('broken')
+      }
+      return Date.now()
+    }
+    const { exec, pluginsManager, gate, connect, router, log } = made({ now })
+    pluginsManager.sandboxed('word-count', { count: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    gate.grants.git = [{ type: 'exec', commands: [build], env: [] }, { type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const git = connect(worker('git'))
+    expect((await git.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
+    const count = scribe.call('word-count.count', {})
+    await counter.delivered('word-count.count')
+    const run = git.call('exec.run', { command: build })
+    await tick(20)
+    expect(exec.signals).toHaveLength(1)
+    breaks = 1
+    expect(() => router.revokeAll()).not.toThrow()
+    expect(breaks).toBe(0)
+    expect(code(await scribe.reply(count))).toBe('policy-down')
+    expect(code(await git.reply(run))).toBe('policy-down')
+    await git.waitFor(message => message.kind === 'event' && message.topic === 'events.ended')
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toContainEqual({ plugin: 'router', step: 'revokeAll', count: 1 })
+  })
+
+  it('ends nothing while the human has the gate off', async () => {
+    const { exec, search, pluginsManager, router } = made()
+    pluginsManager.policyJobs.gate = 'off'
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    router.revokeAll()
+    await tick(10)
+    expect(exec.signals[0].aborted).toBe(false)
+    exec.finish()
+    expect((await search.reply(id)).ok).toBe(true)
+  })
+})
+
+// A window's grants are fixed, so only the gate's own state can end its calls. When the gate isn't on revokeAll ends
+// them as rejudge would on a new grants snapshot (D-649)
+describe('a window\'s open call with power when the router could not judge it again', () => {
+  // The editor's write held in perform, as it waits on the disk
+  async function saving(over: HarnessOptions = {}) {
+    const parts = made(over)
+    let open!: () => void
+    parts.luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const editor = windowWay(parts.router, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const reply = editor.ask('editor', 'luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await tick(20)
+    expect(parts.luoshu.performed).toHaveLength(1)
+    return { ...parts, open, reply, signal: () => parts.luoshu.performed[0].call.signal?.aborted }
+  }
+
+  it.each([
+    ['failed', 'policy-down'],
+    ['absent', 'policy-down'],
+    ['starting', 'stale'],
+  ] as const)('ends it with the gate %s, answered %s as rejudge answers it', async (state, answer) => {
+    const ended = await saving()
+    ended.pluginsManager.policyJobs.gate = state
+    ended.router.revokeAll()
+    expect(ended.signal()).toBe(true)
+    ended.open()
+    expect(code(await ended.reply)).toBe(answer)
+
+    const judged = await saving()
+    judged.pluginsManager.policyJobs.gate = state
+    judged.snapshot()
+    expect(judged.signal()).toBe(true)
+    judged.open()
+    expect(code(await judged.reply)).toBe(answer)
+  })
+
+  it('leaves it running with the gate on, since its grants can\'t be revoked', async () => {
+    const { router, open, reply, signal } = await saving()
+    router.revokeAll()
+    await tick(10)
+    expect(signal()).toBe(false)
+    open()
+    expect((await reply).ok).toBe(true)
+  })
+
+  it('ends nothing once the human switched the gate off while it ran', async () => {
+    const { router, pluginsManager, open, reply, signal } = await saving()
+    pluginsManager.policyJobs.gate = 'off'
+    router.revokeAll()
+    await tick(10)
+    expect(signal()).toBe(false)
+    open()
+    expect((await reply).ok).toBe(true)
   })
 })

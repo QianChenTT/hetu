@@ -59,8 +59,12 @@ export class Editor implements EditorClient {
     transport.listen(message => {
       if (this.transport === transport) this.heard(message)
     })
+    // Rejected when this page goes too or refuses them, so it runs without the bindings until the next connect sends
+    // them again
     if (this.bindings !== null) this.send('editor.bind', { bindings: this.bindings }).catch(() => {})
+    // Rejected when this page goes too or refuses it, so it sends no keys until the next connect asks again
     if (this.stream) this.send('editor.keys', { on: true }).catch(() => {})
+    // Rejected when this page goes too or refuses it, so it sends no viewport ranges until the next connect asks again
     if (this.ranges) this.send('editor.viewports', { on: true }).catch(() => {})
     for (const hook of this.connected) hook()
   }

@@ -39,7 +39,8 @@ export function httpPlugin(options: HttpOptions): Plugin {
           } catch (error) {
             failed = true
             const reason = door === null && (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE' ? 'port-taken' : 'bind-failed'
-            // The core ends this half before it answers, so the call never settles
+            // A rejection is this half's calls ending as the core ends it, or a reason the core never took, which
+            // leaves the half running with no door until it is restarted
             void ctx.bindFailed(reason).catch(() => {})
           }
         } else if (!wanted && door !== null) {
@@ -57,6 +58,8 @@ export function httpPlugin(options: HttpOptions): Plugin {
       ctx.onDeps(() => sync())
       ctx.onStop(async () => {
         stopping = true
+        // A step that failed has already let go of its door, so the stop goes on and the kill that ends this half takes
+        // a door whose close failed with it
         await turn.catch(() => {})
         for (const one of [door, pipe]) await one?.close()
         door = null

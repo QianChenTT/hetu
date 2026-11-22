@@ -293,6 +293,7 @@ export class StateStore {
   // Overlapping calls would land in any order, and a load could read between them
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const run = this.tail.then(work)
+    // The caller gets run and its error, the tail only waits for it so a failed write never stops the next state write
     this.tail = run.catch(() => {})
     return run
   }

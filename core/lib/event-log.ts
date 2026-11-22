@@ -253,6 +253,7 @@ export class EventLog {
   // Overlapping appends would take the same seq and the same prev
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const run = this.tail.then(work)
+    // The caller gets run and its error, the tail only waits for it so a failed append never holds back the next
     this.tail = run.catch(() => {})
     return run
   }
@@ -397,7 +398,9 @@ export class EventLog {
       // A new segment whose first line never landed is removed, or each failed retry on a full disk leaves another
       // empty segment behind and the next open blames the wrong one
       const empty = firstSeq === into.first && (await handle.stat().catch(() => null))?.size === 0
+      // The append's error is the one that goes up, a handle that won't close stays open until hetu quits
       await handle.close().catch(() => {})
+      // An empty segment that can't be removed stays and the next open reads it as the newest
       if (empty) await rm(file, { force: true }).catch(() => {})
       throw err
     }

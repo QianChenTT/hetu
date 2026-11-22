@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
 import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
+import { Bus } from '../backend/router/bus.ts'
 import type { RouterOptions } from '../backend/router/header.ts'
 import type { Router } from '../backend/router/router.ts'
 import {
@@ -294,6 +295,22 @@ describe('asking again', () => {
     // The other subscription and the other subscriber stay
     expect(paths(search.events())).toEqual(['notes/b.md'])
     expect(signals(scribe.events(), 'events.ended')).toEqual([])
+  })
+
+  // The plugins manager's change threw, so no subscription was asked about again on its grants snapshot (D-646)
+  it('ends every live subscription of a plugin the gate holds when the router could not judge them again, a free one and a window\'s running on', async () => {
+    const { router, search, scribe, way, edited, indexed } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed', 'search.indexed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
+    router.revokeAll()
+    await edited('notes/a.md')
+    await indexed()
+    await until(() => paths(way.events()).length === 1 && heard(search.events(), 'search.indexed').length === 1)
+    await settle()
+    expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
+    expect(signals(scribe.events(), 'events.ended')).toEqual([['luoshu.changed']])
+    expect([paths(search.events()), paths(scribe.events())]).toEqual([[], []])
   })
 
   it('asks the gate nothing again while neither its state nor the grants snapshot moved', async () => {
@@ -1721,5 +1738,42 @@ describe('records', () => {
     router.close()
     await recording.flush()
     expect(log.records).toEqual([])
+  })
+})
+
+// Nothing the router hands the bus throws today, but a sync that stopped midway has already taken the new key, so a
+// subscription it never reached would wait until the key moved again (D-646)
+describe('a sync that threw midway', () => {
+  it('asks again about what waits once the router ended what the gate holds, though the key didn\'t move', () => {
+    let key = 'one'
+    const answers: Record<string, () => 'allow' | 'down'> = { search: () => 'allow', scribe: () => 'down' }
+    const asked: string[] = []
+    const bus = new Bus({
+      state: () => ({ key, paths: 'ask', view: 1 }),
+      canList: () => true,
+      recheck: caller => {
+        const id = caller.kind === 'plugin' ? caller.id : ''
+        asked.push(id)
+        return answers[id]()
+      },
+      limit: () => 100,
+      dropped: () => {},
+      changed: () => {},
+    })
+    for (const id of ['search', 'scribe']) {
+      bus.subscribe({ owner: {}, caller: worker(id), plugin: id, push: () => {}, alive: () => true }, ['luoshu.changed'], new Set(), false)
+    }
+    // scribe's waits for the gate
+    bus.sync()
+    key = 'two'
+    answers.search = () => { throw new Error('broken') }
+    expect(() => bus.sync()).toThrow('broken')
+    answers.scribe = () => 'allow'
+    asked.length = 0
+    bus.sync()
+    expect(asked).toEqual([])
+    bus.endGated(caller => caller.kind === 'plugin')
+    bus.sync()
+    expect(asked).toEqual(['scribe'])
   })
 })

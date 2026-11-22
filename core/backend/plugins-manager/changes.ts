@@ -54,12 +54,14 @@ export abstract class PluginsChanges extends PluginsInstall {
   // confirm is whether the human clicked the change's Confirm, false for one Confirm-off or its narrowing applied at once
   protected async applyNow(change: Change, confirm: boolean): Promise<void | 'unchanged'> {
     // The human chose in the stopped mode, so the next failure restarts hetu again
+    // A marker that can't be cleared stops the next failure in the stopped mode as this one did
     if (this.phase === 'stopped') await clearFailedOnce(this.dataDir).catch(() => {})
     switch (change.kind) {
       case 'plugin.on':
       case 'plugin.off':
         await this.switchPlugin(change.plugin, change.kind === 'plugin.on')
         // Started with it switched off, the control's start marker holds nothing back any more
+        // One that can't be cleared holds nothing back while the control is off
         if (change.kind === 'plugin.off' && this.phase === 'stopped') await this.marking(clearStartMarker(this.dataDir, change.plugin)).catch(() => {})
         return
       case 'plugin.approve':
@@ -449,6 +451,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     // changed while the Confirm waited. That folder goes once applied, when it sits in hetu's own staging
     await swapIn(this.dataDir, id, await stage(this.dataDir, id, read.files))
     const relative = path.relative(folders.staging(this.dataDir), staged.dir)
+    // A staged folder that can't be cleared stays in staging, which nothing reads or runs
     if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) await clear(staged.dir).catch(() => {})
     const change = this.classes('update', id, { ...old, version: to, contentHash: read.hash! }, confirm)
     const entry = change.own!.entry!

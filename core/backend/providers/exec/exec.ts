@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { commandKey, envNameProblem, EXEC_OUTPUT_BYTES, EXEC_RUNNING } from '../../../api/exec.ts'
 import type { Call, ExecRole, ExecView, Opening, Prepared, Provider, ProviderRefusal } from '../../../api/policy-jobs.ts'
 import { asOpened, baseEnv, findProgram, inside, runClean, throughShare, withDeclared } from '../../../lib/clean-env.ts'
@@ -77,20 +78,21 @@ async function resolvedDeep(file: string): Promise<string> {
   }
 }
 
-// What an argument could name as a file: the argument itself, what follows an equals sign in it and a file URL's path.
-// A URL parser drops spaces and control characters before a URL, so they don't hide one. A file URL naming a host is
-// a share
-function namedBy(arg: string): string[] {
+// What an argument could name as a file: the argument itself, what follows an equals sign in it and a file URL's path
+// as node reads it, decoded before the slash ahead of a drive letter is dropped. A URL parser drops spaces and control
+// characters before a URL, so they don't hide one. A file URL naming a host is a share on Windows. null for a file URL
+// that won't parse, decode or turn into a path, which can't be judged (D-640)
+function namedBy(arg: string): string[] | null {
   const found = [arg]
   const equals = arg.indexOf('=')
   if (equals !== -1 && equals < arg.length - 1) found.push(arg.slice(equals + 1))
   for (const text of [...found]) {
     if (!/^[\x00-\x20]*file:/i.test(text)) continue
     try {
-      const url = new URL(text)
-      const local = decodeURIComponent(process.platform === 'win32' ? url.pathname.replace(/^\/(?=[A-Za-z]:)/, '') : url.pathname)
-      found.push(url.hostname === '' ? path.normalize(local) : `//${url.hostname}${url.pathname}`)
-    } catch {}
+      found.push(fileURLToPath(new URL(text)))
+    } catch {
+      return null
+    }
   }
   return found
 }
@@ -124,9 +126,12 @@ export function createExec(options: ExecOptions = {}): Exec {
   // Whether an argument names a file in one of those folders, read the way Windows opens it. An absolute path counts
   // wherever it leads, by the real path of as much of it as exists. A relative one names a file in the working folder,
   // which is new and empty, unless it climbs out of it, and then it counts as an absolute one does, whether or not the
-  // file is there yet, since a plugin can write it between prepare and the run. A path through a share always counts
+  // file is there yet, since a plugin can write it between prepare and the run. A path through a share and a file URL
+  // that won't parse or decode always count
   async function reaches(arg: string, roots: readonly string[], cwd: string): Promise<boolean> {
-    for (const named of namedBy(arg)) {
+    const names = namedBy(arg)
+    if (names === null) return true
+    for (const named of names) {
       if (named === '' || named.includes('\0')) continue
       if (throughShare(named)) return true
       // A name of dots and spaces alone other than . and .. could climb any number of folders on some Windows paths
@@ -203,6 +208,7 @@ export function createExec(options: ExecOptions = {}): Exec {
         const left = (running.get(id) ?? 1) - 1
         if (left <= 0) running.delete(id)
         else running.set(id, left)
+        // A working folder that can't go now is swept with the other run- folders at the next start
         await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
       }
     },
@@ -227,6 +233,7 @@ export function createExec(options: ExecOptions = {}): Exec {
       await mkdir(dir, { recursive: true })
       // Working folders a crash left mid-run
       for (const name of await readdir(dir)) {
+        // A folder that can't go now is tried again at the next start, each run makes a new one
         if (name.startsWith('run-')) await rm(path.join(dir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
       }
       stopping = new AbortController()

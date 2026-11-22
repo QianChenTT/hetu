@@ -41,7 +41,9 @@ export abstract class PluginsInstall extends PluginsClasses {
       let root: string | null = null
       try {
         root = firstPartyPath(this.installDir, listed.path, this.platform)
-      } catch {}
+      } catch {
+        // A path the install list can't place inside the install reads as unread, which checked records as missing
+      }
       const read = root === null ? unread : await readPlugin(root, id, listed.firstParty ? 'folder' : 'install')
       if (listed.firstParty) {
         this.bundled.set(id, read)
@@ -127,10 +129,13 @@ export abstract class PluginsInstall extends PluginsClasses {
     const dir = await stage(this.dataDir, id, read.files)
     const landing = await this.landing(id, cause === 'restore' ? 'plugin.restored' : 'plugin.copied', { plugin: id, version: listed.version })
     if (landing === 'lost') {
+      // The staged copy left in staging is never read or run, copy answers false for the lost record
       await clear(dir).catch(() => {})
       return false
     }
     await swapIn(this.dataDir, id, dir)
+    // A cache that can't be cleared stays for the new version with no fault recorded. It holds only what this plugin
+    // wrote and the new version hears the version it replaced, so the copy goes on
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
     await this.writeClassed(id, this.classes(cause, id, this.copied(id, read, listed, enabled), confirm))
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
@@ -165,7 +170,9 @@ export abstract class PluginsInstall extends PluginsClasses {
         if (dirent.isDirectory() && pluginId.safeParse(dirent.name).success) found.add(dirent.name)
         else bad++
       }
-    } catch {}
+    } catch {
+      // A plugins folder that can't be read gives no folders, so each entry reads as missing and none starts
+    }
     if (bad > 0) this.note('plugin.checked', { plugin: null, from: 'folder', result: 'bad-name', count: bad })
     const ids = new Set([...found, ...Object.keys(this.state.plugins)])
     for (const [id, result] of this.entryChecks) if (result !== 'ok' && result !== 'absent') ids.add(id)

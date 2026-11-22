@@ -6,7 +6,7 @@ import { frozen } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
 import type { Paths } from './bus.ts'
-import { no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
+import { no, isOne, field, refusalIn, type Context, type Pending, type Writable, type Kind, type No, type Outcome, type Asker } from './context.ts'
 import { stop, result, thrown, finish, callOf, revoke } from './open-calls.ts'
 
 // 5 precheck to 10 perform: the gate's answers, the guards and a provider's sequence from prepare to perform, with what
@@ -49,8 +49,16 @@ function gateOpen(c: Context): 'decide' | 'pass' | RefusalCode {
 // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
 // needs-confirm with the request the prompt holds, or not-granted with no prompt raised when prompt is false
 export function judge(c: Context, pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-  if (stage === 'raw') pending.gate = c.policyJob('gate')
+  if (stage === 'raw') setGate(pending, c.policyJob('gate'))
   return decideFor(c, pending, stage, capability, scope, prompt)
+}
+
+// 8 decide for a call delivered to a plugin, which no guard judges, recording what the gate let on so a new grants
+// snapshot judges it again
+export function judgeDelivery(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'power' }>): No | null {
+  const refused = judge(c, pending, 'canonical', kind.capability, kind.scope)
+  if (refused === null) setJudged(pending, { kind, scope: kind.scope })
+  return refused
 }
 
 // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
@@ -195,11 +203,14 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     if (prepared === null) return
     try {
       provider.release?.(call, prepared)
-    } catch {}
+    } catch {
+      // What prepare set aside stays the provider's to clean up. The call won't perform and its answer doesn't wait on
+      // release
+    }
   }
   if (pending.done) return release()
   if (prepared === null) return finish(c, pending, { ok: false, ...(refusalIn(given) ?? { code: 'failed' }) })
-  pending.scope = prepared.scope
+  setScope(pending, prepared.scope)
 
   // Nothing awaits from here to perform. Perform gets the frozen copy the gate and the guards judge, never the object
   // prepare gave, which could answer another path when read again
@@ -209,7 +220,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     return finish(c, pending, { ok: false, ...refused })
   }
   cleared = prepared
-  if (kind.kind === 'power') pending.judged = { kind, scope: prepared.scope }
+  if (kind.kind === 'power') setJudged(pending, { kind, scope: prepared.scope })
   // A gate or a guard that ran past the deadline leaves the call no time to act in
   if (c.clock() >= pending.due) {
     release()
@@ -217,7 +228,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   }
 
   let performed: unknown
-  pending.performing = true
+  setPerforming(pending, true)
   try {
     performed = await provider.perform(call, prepared)
   } catch (err) {
@@ -260,12 +271,12 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
   const now: Prepared = frozen({ ...prepared, scope: { ...prepared.scope, paths: [...paths] } })
   const refused = judged(c, pending, kind, now, false)
   if (refused !== null) {
-    pending.refusedScope = now.scope
+    setRefusedScope(pending, now.scope)
     return refused
   }
-  pending.scope = now.scope
-  pending.refusedScope = undefined
-  pending.judged = { kind, scope: now.scope }
+  setScope(pending, now.scope)
+  setRefusedScope(pending, undefined)
+  setJudged(pending, { kind, scope: now.scope })
   return null
 }
 
@@ -276,11 +287,48 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
 // so every open call runs to its end
 export function rejudge(c: Context): void {
   if (c.policyJob('gate') === 'off') return
+  for (const pending of withPower(c)) {
+    const refused = judgeAll(c, pending, 'canonical', pending.judged.kind, pending.judged.scope, false)
+    if (refused !== null) revoke(c, pending, revokedAs(refused.code))
+  }
+}
+
+// What a call judged again is revoked as: policy-down when the gate can't judge it, stale for every other refusal
+function revokedAs(code: RefusalCode): RefusalCode {
+  return code === 'policy-down' ? 'policy-down' : 'stale'
+}
+
+// When the plugins manager's change threw, no open call was judged again on its grants snapshot. So every open call
+// with power a plugin holds is revoked as policy-down and every live subscription of a plugin the gate holds ends,
+// whether or not its own grant changed, as a control that crashed in use refuses all (D-646). A window's grants are
+// fixed, so its calls end only when the gate isn't on, answered as rejudge answers them then (D-649). A window's
+// subscriptions are left to the bus's next sync, as rejudge leaves them, and anything with no power runs on. With the
+// gate off by the human nothing is judged, so nothing ends. A call whose end throws is recorded and the rest still end,
+// the subscriptions included
+export function revokeAll(c: Context): void {
+  const open = gateOpen(c)
+  if (open === 'pass') return
+  const windows = open === 'decide' ? null : revokedAs(open)
+  try {
+    for (const pending of withPower(c)) {
+      const code = pending.caller.kind === 'plugin' ? c.down('policy-down') : windows
+      if (code === null) continue
+      try {
+        revoke(c, pending, code)
+      } catch {
+        c.fault('router', 'revokeAll')
+      }
+    }
+  } finally {
+    c.bus.endGated(caller => caller.kind === 'plugin')
+  }
+}
+
+// Every open call with power the gate let on, read as it goes, so one a revoke before it ended is passed by
+function* withPower(c: Context): Generator<Pending & { readonly judged: NonNullable<Pending['judged']> }> {
   for (const way of [...c.ways.values()]) {
     for (const pending of [...way.made.values()]) {
-      if (pending.done || pending.judged === null) continue
-      const refused = judgeAll(c, pending, 'canonical', pending.judged.kind, pending.judged.scope, false)
-      if (refused !== null) revoke(c, pending, refused.code === 'policy-down' ? 'policy-down' : 'stale')
+      if (!pending.done && pending.judged !== null) yield pending as Pending & { readonly judged: NonNullable<Pending['judged']> }
     }
   }
 }
@@ -356,7 +404,7 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
     charge: () => {
       if (charged) return
       charged = true
-      c.gateTime()?.charge(pending.way.principal, c.clock() - started)
+      c.gateCharge(pending.way.principal, c.clock() - started)
     },
   }
 }
@@ -377,11 +425,32 @@ function listed(c: Context, lister: { canList: (path: string) => boolean, threw:
   return { ok: true, result: { paths: [...paths], next } }
 }
 
-// Before a listing is made: refused while the gate can't be asked, throttled once the caller spent its second. So a
-// flood of listings costs main at most one listing past the budget each second
+// Before a listing is made: refused while the gate can't be asked or its count of the gate's time throws, throttled
+// once the caller spent its second. So a flood of listings costs main at most one listing past the budget each second
 function listingRefused(c: Context, pending: Pending): RefusalCode | null {
   if (c.policyJob('gate') === 'off') return null
   if (!askable(c)) return c.down('policy-down')
-  return c.gateTime()?.spent(pending.way.principal, pending.way.plugin) === true ? 'throttled' : null
+  return c.gateSpent(pending.way.principal, pending.way.plugin)
 }
 
+// The fields of an open call this file owns, written only here but scope, which route.ts sets on a subscribe (D-632)
+function setGate(pending: Pending, gate: Pending['gate']): void {
+  (pending as Writable<Pending>).gate = gate
+}
+
+// What the call is recorded as covering
+export function setScope(pending: Pending, scope: Pending['scope']): void {
+  (pending as Writable<Pending>).scope = scope
+}
+
+function setRefusedScope(pending: Pending, refusedScope: Pending['refusedScope']): void {
+  (pending as Writable<Pending>).refusedScope = refusedScope
+}
+
+function setJudged(pending: Pending, judged: Pending['judged']): void {
+  (pending as Writable<Pending>).judged = judged
+}
+
+function setPerforming(pending: Pending, performing: boolean): void {
+  (pending as Writable<Pending>).performing = performing
+}
