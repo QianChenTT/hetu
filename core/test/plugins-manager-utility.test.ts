@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
+import type { SecurityList } from '../api/actions.ts'
 import {
   allowAll, cleanup, DOOR_CODE, entryFor, filesFor, harness, reasonOf, stateOf, tick, until, workerManifest,
 } from './plugins-manager-fakes.ts'
@@ -29,6 +30,19 @@ describe('the door\'s powers', () => {
     expect(inside.grantsOf('mcp-http-handler')).toEqual([])
     expect(gate.seen.length).toBeGreaterThan(0)
     for (const snapshot of gate.seen) expect(Object.keys(snapshot.plugins)).not.toContain('mcp-http-handler')
+  })
+})
+
+describe('the door in the trusted window\'s list', () => {
+  // The window draws a core row as a core module's, its switch alone. The door's row ships with hetu, runs in its utility
+  // process and stops and restarts there, which the contract's install row says
+  it('is a row of its own that ships with hetu, apart from the core modules, with its switch on', async () => {
+    const made = await harness({ door })
+    await made.pluginsManager.start()
+    const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
+    const list = await made.pluginsManager.serve({ callId: 'c', caller: trusted, root: trusted, action: 'security.list', args: {}, deadline: Date.now() + 1000 }) as SecurityList
+    expect(list.plugins.find(row => row.id === 'mcp-http-handler')).toMatchObject({ from: 'install', place: 'utility', state: 'ready', on: true, items: [] })
+    expect(list.plugins.filter(row => row.from === 'core').map(row => row.id)).not.toContain('mcp-http-handler')
   })
 })
 

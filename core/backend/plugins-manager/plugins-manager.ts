@@ -120,7 +120,8 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const off = new Set((entry?.off ?? []).map(capabilityKey))
       const asking = new Set((entry?.firstUse ?? []).map(capabilityKey))
       return {
-        id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
+        // The door ships with hetu and runs apart from the core modules, the contract's install row
+        id: row.id, from: row.from === 'core' ? 'install' : row.from, place: row.place, state: row.state, reason: row.reason,
         security: row.from === 'core' && isSecurityControl(row.id),
         on: row.from === 'core' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
         items: (entry?.granted ?? []).map(capability => ({
