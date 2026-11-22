@@ -613,6 +613,13 @@ describe('the drawer', () => {
     await until(async () => (await ranges()) > 0)
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+End')
+    // The real hidden-marks plugin marked the big note: each list line drawn shows a dot, its bold text and its link's
+    // text, none of their markers or the link's target
+    const marked = async () => {
+      const drawn = (await editor.locator('.editor:not([hidden]) .cm-line').allInnerTexts()).filter(line => line.includes('line '))
+      return drawn.length > 0 && drawn.every(line => /^• line \d+ with some text and a link$/.test(line))
+    }
+    await until(marked)
     // For each key: when its event was made, when the character itself is on screen, then when the worker's mark on it is.
     // The event's own time counts what the key waited behind other work on the page
     await editor.evaluate(() => {
@@ -711,10 +718,128 @@ describe('the drawer', () => {
     await tick(2000)
     sitting.search.load = { reads: readsTyped - readsBefore }
     expect(sitting.search.load.reads).toBeGreaterThan(0)
+    expect(await marked()).toBe(true)
 
     const measured = process.env.HETU_MEASURE
     if (measured !== undefined) await writeFile(measured, JSON.stringify(sitting))
     // Each load within twice the quiet run of this app by the 95th percentile from a key to its text
     expect(held(sitting as Sitting)).toMatchObject({ view: { within: true }, flood: { within: true }, search: { within: true } })
   }, 300_000)
+})
+
+// The answers of 2026-11-09 that only the window shows, against the real hidden-marks plugin: the mouse with Alt and
+// without it, where Chromium puts typed text at a run's end, the system clipboard and the plugin's settings popover.
+// The rest are proved against the real plugin in hidden-marks-joined.test.ts
+describe('hidden marks in the window', () => {
+  it('reveals on Alt+click only, keeps typing in a run until its key, copies the markdown and hides by its settings', async () => {
+    const text = 'x **bold** y\nx **bold text** y\nx [link](https://e.com) y'
+    const { app, editor, folder } = await started({ notes: { 'a.md': text } })
+    await open(editor, 'a.md')
+    const lines = () => editor.locator('.editor:not([hidden]) .cm-line').allInnerTexts()
+    await until(async () => (await lines()).join('\n') === 'x bold y\nx bold text y\nx link y')
+    const saved = async () => {
+      await editor.keyboard.press('ControlOrMeta+s')
+      await until(async () => (await editor.locator('#title').innerText()) === 'a.md')
+      return readFile(path.join(folder, 'a.md'), 'utf8')
+    }
+    // Where a word the human sees is drawn on a line, outside any hidden text
+    type Box = { x: number, y: number, width: number, height: number }
+    const boxOf = async (line: number, word: string): Promise<Box> => (await editor.evaluate(([line, word]) => {
+      const walker = document.createTreeWalker(document.querySelectorAll('.editor:not([hidden]) .cm-line')[line], NodeFilter.SHOW_TEXT)
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const at = node.textContent!.indexOf(word)
+        if (at < 0 || node.parentElement!.closest('.cm-hetu-hidden') !== null) continue
+        const range = document.createRange()
+        range.setStart(node, at)
+        range.setEnd(node, at + word.length)
+        const { x, y, width, height } = range.getBoundingClientRect()
+        return { x, y, width, height }
+      }
+      return null
+    }, [line, word] as const))!
+    const bold = () => boxOf(0, 'bold')
+    const click = async (x: number, y: number, modifier?: 'Alt' | 'Control' | 'Meta' | 'Shift') => {
+      if (modifier !== undefined) await editor.keyboard.down(modifier)
+      await editor.mouse.click(x, y)
+      if (modifier !== undefined) await editor.keyboard.up(modifier)
+    }
+    // The cursor in the shown note's editor, read from its view as CodeMirror's EditorView.findFromDOM reaches it
+    const head = () => editor.evaluate(() => {
+      type Found = { cmTile: { root: { view: { state: { selection: { main: { head: number } } } } } } }
+      const content = document.querySelector('.editor:not([hidden]) .cm-content') as unknown as Found
+      return content.cmTile.root.view.state.selection.main.head
+    })
+    // A frame drawn, by which the editor's settle has run too, as it runs in a microtask after each update
+    const frame = () => editor.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    const third = (await editor.locator('.editor:not([hidden]) .cm-line').nth(2).boundingBox())!
+    const away = async () => {
+      await click(third.x + third.width - 2, third.y + third.height / 2)
+      await until(async () => (await head()) === text.length)
+    }
+
+    // Answer 10: a plain, Ctrl or Shift click on the bold word shows nothing, an Alt+click shows its markers. Each
+    // click starts away from the word, so the cursor in the word says the editor took the click before "nothing shown"
+    // is checked
+    const word = await bold()
+    // On macOS a Control+click is a right-click that moves no cursor, the Ctrl click of Windows is a Cmd click there
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+    for (const modifier of [undefined, mod, 'Shift'] as const) {
+      await away()
+      await click(word.x + word.width / 2, word.y + word.height / 2, modifier)
+      await until(async () => (await head()) > 4 && (await head()) < 8)
+      await frame()
+      expect((await lines())[0], modifier ?? 'plain').toBe('x bold y')
+    }
+    await click(word.x + word.width / 2, word.y + word.height / 2, 'Alt')
+    await until(async () => (await lines())[0] === 'x **bold** y')
+    // Hidden again once the cursor leaves it
+    await away()
+    await until(async () => (await lines())[0] === 'x bold y')
+
+    // Answer 4: a click at the end of the word and the bold key, then the text after it is plain, where Chromium alone
+    // would put it before the hidden closer. The "er" typed first proves nothing, as plain Chromium also puts it inside
+    // the run. The " next" after the key is the proof
+    const end = await bold()
+    await click(end.x + end.width - 1, end.y + end.height / 2)
+    await editor.keyboard.type('er')
+    expect((await saved()).split('\n')[0]).toBe('x **bolder** y')
+    await editor.keyboard.press('ControlOrMeta+b')
+    // The plugin's answer puts the cursor past the closer at 12
+    await until(async () => (await head()) === 12)
+    await frame()
+    await editor.keyboard.type(' next')
+    expect((await saved()).split('\n')[0]).toBe('x **bolder** next y')
+    expect((await lines())[0]).toBe('x bolder next y')
+
+    // Answer 8 on the system clipboard: the element whole copies its markdown, a part of one what was selected (Y16).
+    // Only the clipboard's text is put back after, an image or any other format on it is lost
+    const before = await app.evaluate(({ clipboard }) => clipboard.readText())
+    try {
+      const copied = async (box: Box) => {
+        await app.evaluate(({ clipboard }) => clipboard.writeText(''))
+        await editor.mouse.dblclick(box.x + box.width / 4, box.y + box.height / 2)
+        await editor.keyboard.press('ControlOrMeta+c')
+        let got = ''
+        await until(async () => (got = await app.evaluate(({ clipboard }) => clipboard.readText())) !== '')
+        return got
+      }
+      expect(await copied(await boxOf(0, 'bolder'))).toBe('**bolder**')
+      expect(await copied(await boxOf(1, 'bold'))).toBe('bold')
+    } finally {
+      await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), before)
+    }
+
+    // Answer 9: the plugin's settings, an item whose popover holds a box for each element. Bold unticked shows bold's
+    // markers and no other element's, ticked again hides them
+    await editor.getByRole('button', { name: 'Marks' }).click()
+    const box = editor.locator('#overlay .hetu-popover label', { hasText: 'Bold' })
+    await until(async () => (await box.count()) === 1)
+    expect(await box.locator('input').isChecked()).toBe(true)
+    await box.click()
+    await until(async () => (await lines())[0] === 'x **bolder** next y')
+    expect((await lines())[1]).toBe('x **bold text** y')
+    expect((await lines())[2]).toBe('x link y')
+    await box.click()
+    await until(async () => (await lines())[0] === 'x bolder next y')
+  })
 })
