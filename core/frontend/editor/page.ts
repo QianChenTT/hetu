@@ -362,7 +362,7 @@ function start(bridge: Bridge): void {
         }
       })),
       conflicts: theDrawer.conflicts().map(conflict => ({
-        key: conflict.key, plugins: conflict.plugins.map(id => ({ id, name: `${name(id)} (${id})` })), owner: settings.value.keys[conflict.key] ?? null,
+        key: conflict.key, plugins: conflict.plugins.map(id => ({ id, name: `${name(id)} (${id})` })), owner: settings.value.keyOwners[conflict.key] ?? null,
       })),
     }
   }

@@ -62,7 +62,7 @@ export const NODES_PER_SECOND = 200_000
 export const ANSWER_MS = 1000
 
 const noHooks: UiHooks = { drawn() {}, changed() {}, post: () => 'unavailable', open: async () => {} }
-const noSettings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+const noSettings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
 
 type Connection = {
   readonly plugin: string
@@ -230,7 +230,7 @@ export class Drawer {
     const open = instance === null ? undefined : this.find(instance)
     for (const conn of this.connections.values()) conn.answering = null
     const bound = [...this.connections.values()].filter(conn => conn.bindings.has(key))
-    const picked = this.settings().keys[key]
+    const picked = this.settings().keyOwners[key]
     const owner = bound.length === 1 ? bound[0] : bound.find(conn => conn.plugin === picked)
     if (owner !== undefined) {
       const conn = owner

@@ -48,7 +48,7 @@ export class Editor implements EditorClient {
   private held: unknown[] | null = null
   // What a new port is told again: the last bindings, the key stream and the ask for ranges
   private bindings: { key: string, command: string }[] | null = null
-  private stream = false
+  private keystreamOn = false
   private ranges = false
 
   // A port to a new editor page load. Calls in flight on the last one fail unavailable
@@ -64,7 +64,7 @@ export class Editor implements EditorClient {
     // them again
     if (this.bindings !== null) this.send('editor.bind', { bindings: this.bindings }).catch(() => {})
     // Rejected when this page goes too or refuses it, so it sends no keys until the next connect asks again
-    if (this.stream) this.send('editor.keystream', { on: true }).catch(() => {})
+    if (this.keystreamOn) this.send('editor.keystream', { on: true }).catch(() => {})
     // Rejected when this page goes too or refuses it, so it sends no viewport ranges until the next connect asks again
     if (this.ranges) this.send('editor.viewports', { on: true }).catch(() => {})
     for (const hook of this.connected) hook()
@@ -126,7 +126,7 @@ export class Editor implements EditorClient {
   }
 
   async keystream(on: boolean): Promise<void> {
-    this.stream = on
+    this.keystreamOn = on
     await this.send('editor.keystream', { on })
   }
 
