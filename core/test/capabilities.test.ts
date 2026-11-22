@@ -40,6 +40,12 @@ describe('the fixed list', () => {
     ])
   })
 
+  it('refuses ui.keys, the old name of the key stream, in a grant as any unknown type', () => {
+    expect(capability.safeParse({ type: 'ui.keys' }).success).toBe(false)
+    expect(capabilities.safeParse([{ type: 'ui.keys' }]).success).toBe(false)
+    expect(capability.safeParse({ type: 'ui.keystream' }).success).toBe(true)
+  })
+
   it('has a schema for every listed type and no other', () => {
     expect([...new Set(everyType.map(granted => granted.type))]).toEqual(capabilityTypes)
   })
