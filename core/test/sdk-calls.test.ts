@@ -72,10 +72,9 @@ describe('a call through the SDK', () => {
   it('sends an action with no arguments an empty object', async () => {
     const { client, transport } = setup()
     await client.storage.get({ key: 'a' })
-    // No leases provider in the harness, so the call answers unavailable
-    await client.leases.list().catch(() => {})
+    await client.luoshu.list().catch(() => {})
     const sent = transport.sent as { action: string, args: unknown }[]
-    expect(sent.find(message => message.action === 'leases.list')?.args).toEqual({})
+    expect(sent.find(message => message.action === 'luoshu.list')?.args).toEqual({})
   })
 })
 

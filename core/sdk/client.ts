@@ -5,7 +5,7 @@ import type { CallOptions, RequestOptions } from './calls.ts'
 // Kept here as strings, so a plugin bundles none of core/api's schemas
 export const providerActionNames = [
   'luoshu.read', 'luoshu.write', 'luoshu.remove', 'luoshu.move', 'luoshu.list',
-  'leases.acquire', 'leases.renew', 'leases.release', 'leases.list',
+  'lock.set', 'lock.clear', 'lock.held',
   'storage.get', 'storage.set', 'storage.delete',
   'cache.get', 'cache.set', 'cache.delete',
   'history.commit', 'history.log', 'history.read',
