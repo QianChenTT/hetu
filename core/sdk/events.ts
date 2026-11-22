@@ -7,7 +7,8 @@ import { Refused } from './refused.ts'
 export type PathEvent = { readonly topic: string, readonly path?: string }
 // A note locked, its lock renewed with a new end, cleared or expired: whether it is locked now and when its lock ends in
 // milliseconds since the epoch, null once it isn't. Never who holds it. Only a plugin that reads the note hears it, and
-// an expiry only once the core noticed it, which may be late, so a plugin that must act at the end times it from until
+// an expiry only once the core noticed it, which may be late, so a plugin that must act at the end times it from until.
+// After onResync names lock.changed, lock.held answers the notes the plugin follows with each end, to rebuild from
 export type LockChangedEvent = { readonly topic: 'lock.changed', readonly path: string } & (
   | { readonly locked: true, readonly until: number }
   | { readonly locked: false, readonly until: null }

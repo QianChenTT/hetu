@@ -134,7 +134,7 @@ describe('the lock module through the joined core', () => {
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('as it was')
     expect(refusal(await write(alpha, folder, 'alpha'))).toBe('ok')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('alpha')
-    expect((await ask(beta, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toEqual({ paths: ['a.md'] })
+    expect((await ask(beta, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toMatchObject({ paths: ['a.md'] })
     expect(refusal(await ask(alpha, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
     expect(refusal(await write(beta, folder, 'beta'))).toBe('ok')
   })
@@ -160,7 +160,11 @@ describe('the lock module through the joined core', () => {
     expect(refusal(await windowAsk(router, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
     expect(refusal(await save())).toBe('ok')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('human')
-    expect((await windowAsk(router, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toEqual({ paths: ['b.md'] })
+    const before = Date.now()
+    const held = (await windowAsk(router, 'lock.held', { paths: ['a.md', 'b.md'] })).result as { paths: string[], until: number[] }
+    expect(held.paths).toEqual(['b.md'])
+    expect(held.until[0]).toBeGreaterThan(before + 50_000)
+    expect(held.until[0]).toBeLessThanOrEqual(Date.now() + 60_000 + 1)
   })
 
   // The module's own publish as wireCore wires it, the gate here letting every plugin read every note

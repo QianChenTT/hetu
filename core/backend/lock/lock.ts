@@ -114,11 +114,21 @@ export function createLock(options: LockOptions): Lock {
     return null
   }
 
-  // The caller's spellings of the paths any holder locks. The router let only a caller that reads them all ask
-  function held(call: Call, keys: readonly string[]): { paths: string[] } {
+  // The caller's spellings of the paths any holder locks, each with when its lock ends in wall time read now, so a
+  // plugin that missed lock.changed events rebuilds its locks and timers. The router let only a caller that reads them
+  // all ask
+  function held(call: Call, keys: readonly string[]): { paths: string[], until: number[] } {
     const spelled = (call.args as { paths: string[] }).paths
     const now = options.clock()
-    return { paths: spelled.filter((_, i) => live(keys[i], now) !== undefined) }
+    const at = wall()
+    const answer: { paths: string[], until: number[] } = { paths: [], until: [] }
+    for (const [i, path] of spelled.entries()) {
+      const entry = live(keys[i], now)
+      if (entry === undefined) continue
+      answer.paths.push(path)
+      answer.until.push(Math.round(at + entry.endsAt - now))
+    }
+    return answer
   }
 
   // A name spelled with no dot that leads to a dot name is a missing one for a clear or a look, so the answer tells no

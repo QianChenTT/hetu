@@ -310,14 +310,15 @@ describe('lock.clear', () => {
 })
 
 describe('lock.held', () => {
-  it('names the paths asked about that any holder locks, as the caller spelled them with no holder named', async () => {
+  it('names the paths asked about that any holder locks, as the caller spelled them, each with its end and no holder named', async () => {
     const { lock, pass } = made()
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
     await ask(lock, 'lock.set', { paths: ['b.md'], ms: 5000 }, { root: leases })
     const asked = { paths: ['Projects/Plan.md', 'b.md', 'free.md'] }
-    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toEqual({ paths: ['Projects/Plan.md', 'b.md'] })
+    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') }))
+      .toEqual({ paths: ['Projects/Plan.md', 'b.md'], until: [WALL + 1_001_000, WALL + 1_005_000] })
     pass(1000)
-    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toEqual({ paths: ['b.md'] })
+    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toEqual({ paths: ['b.md'], until: [WALL + 1_005_000] })
   })
 })
 

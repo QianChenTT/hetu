@@ -429,8 +429,9 @@ export type ActionResults = {
   // ms is the time the lock was set for, after the cap
   'lock.set': { ms: number }
   'lock.clear': null
-  // The paths of the ones asked about that are locked, as the caller spelled them
-  'lock.held': { paths: string[] }
+  // The paths of the ones asked about that are locked, as the caller spelled them, and when each lock ends in
+  // milliseconds since the epoch, until[i] for paths[i]
+  'lock.held': { paths: string[], until: number[] }
   'app.pickFolder': string | null
   'gate.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
   'core.views': { plugins: CoreViewsPlugin[] }

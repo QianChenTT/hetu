@@ -75,9 +75,10 @@ describe('the fake core\'s lock', () => {
     const { ctx } = await started()
     expect(await by(ctx, 'lock.set', { paths: ['notes/a.md', 'notes/b.md'], ms: 60_000 })).toEqual({ ok: true, result: { ms: 60_000 } })
     expect(await by(ctx, 'lock.held', { paths: ['notes/A.md', 'notes/c.md', 'notes/b.md'] }))
-      .toEqual({ ok: true, result: { paths: ['notes/A.md', 'notes/b.md'] } })
+      .toEqual({ ok: true, result: { paths: ['notes/A.md', 'notes/b.md'], until: [60_000, 60_000] } })
     expect(await by(ctx, 'lock.clear', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: null })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md', 'notes/b.md'] })).toEqual({ ok: true, result: { paths: ['notes/b.md'] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md', 'notes/b.md'] }))
+      .toEqual({ ok: true, result: { paths: ['notes/b.md'], until: [60_000] } })
   })
 
   it('refuses a second holder locked with nobody named and sets none of its paths', async () => {
@@ -85,7 +86,7 @@ describe('the fake core\'s lock', () => {
     await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 })
     const reply = await fake.call('lock.set', { paths: ['notes/c.md', 'notes/a.md'], ms: 60_000 }, { as: 'other', grants: OTHER })
     expect(reply).toEqual({ ok: false, refusal: { code: 'locked', action: 'lock.set' } })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/c.md'] })).toEqual({ ok: true, result: { paths: [] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/c.md'] })).toEqual({ ok: true, result: { paths: [], until: [] } })
   })
 
   it('renews a lock set again and cuts a longer time to MAX_LOCK_MS', async () => {
@@ -94,7 +95,7 @@ describe('the fake core\'s lock', () => {
     clock.now = 900
     expect(await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 1000 })).toEqual({ ok: true, result: { ms: 1000 } })
     clock.now = 1500
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: ['notes/a.md'] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: ['notes/a.md'], until: [1900] } })
     expect(await by(ctx, 'lock.set', { paths: ['notes/b.md'], ms: MAX_LOCK_MS + 5 })).toEqual({ ok: true, result: { ms: MAX_LOCK_MS } })
   })
 
@@ -104,7 +105,7 @@ describe('the fake core\'s lock', () => {
     clock.now = 999
     expect(await byOther(fake, 'lock.set', { paths: ['notes/a.md'], ms: 1000 })).toEqual({ ok: false, code: 'locked' })
     clock.now = 1000
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: [] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: [], until: [] } })
     expect(await byOther(fake, 'lock.set', { paths: ['notes/a.md'], ms: 1000 })).toEqual({ ok: true, result: { ms: 1000 } })
   })
 
@@ -149,10 +150,10 @@ describe('the fake core\'s lock', () => {
     expect(await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 })).toEqual({ ok: false, code: 'locked' })
     expect(await by(ctx, 'luoshu.write', { path: 'notes/a.md', text: 'x' }, 'session#2')).toEqual({ ok: false, code: 'locked' })
     expect(await by(ctx, 'lock.clear', { paths: ['notes/a.md'] }, 'session#2')).toEqual({ ok: true, result: null })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: ['notes/a.md'] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: ['notes/a.md'], until: [60_000] } })
     expect(await by(ctx, 'luoshu.write', { path: 'notes/a.md', text: 'x', baseVersion: versionOf('a') }, 'session#1')).toMatchObject({ ok: true })
     expect(await by(ctx, 'lock.clear', { paths: ['notes/a.md'] }, 'session#1')).toEqual({ ok: true, result: null })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: [] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: [], until: [] } })
   })
 
   it('judges lock.set by the paths its grant names, as the gate does', async () => {
@@ -302,5 +303,31 @@ describe('the fake core\'s lock.changed', () => {
     await until(() => heard.length === 2)
     await settle()
     expect(heard.map(event => `${event.path} ${event.locked}`)).toEqual(['notes/c.md true', 'notes/c.md false'])
+  })
+})
+
+// events.dropped says lock.changed events were missed, so a plugin asks lock.held again for the notes it follows and
+// rebuilds each lock and its timer from the ends it answers
+describe('the fake core\'s lock.changed past a plugin\'s credits', () => {
+  it('drops what the plugin can\'t take, tells it to resync and lets lock.held rebuild every lock with its end', async () => {
+    const { fake, ctx } = await started({ manifest: manifest([...manifest().capabilities, SUBSCRIBES]), limits: { eventCredits: 2 } })
+    let release = () => {}
+    const busy = new Promise<void>(resolve => { release = resolve })
+    const heard: string[] = []
+    const resynced: string[][] = []
+    await ctx.events.on('lock.changed', async event => {
+      heard.push(event.path)
+      await busy
+    }, { onResync: topics => { resynced.push(topics) } })
+    const paths = ['notes/a.md', 'notes/b.md', 'notes/c.md', 'notes/d.md']
+    for (const [i, path] of paths.entries()) {
+      expect(await byOther(fake, 'lock.set', { paths: [path], ms: 1000 * (i + 1) })).toMatchObject({ ok: true })
+    }
+    await settle()
+    release()
+    await until(() => resynced.length === 1)
+    expect(resynced).toEqual([['lock.changed']])
+    expect(heard).toEqual(['notes/a.md', 'notes/b.md'])
+    expect(await by(ctx, 'lock.held', { paths })).toEqual({ ok: true, result: { paths, until: [1000, 2000, 3000, 4000] } })
   })
 })
