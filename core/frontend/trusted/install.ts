@@ -1,22 +1,22 @@
 // The Install button's flow, kept apart from the DOM: a zip or a folder picked in main's dialog or a link's release,
 // staged by the core, then the plugins found with the ones that can install ticked and one Confirm that installs and
 // approves them. Every word is this file's, a plugin's own text only quoted
-import type { InstallProblem, InstallSource, ReleaseAsset, StagedPlugin, StagedProblem, StagedSource } from '../../api/actions.ts'
+import { MAX_LINK_LENGTH, type InstallProblem, type InstallSource, type ReleaseAsset, type StagedPlugin, type StagedProblem, type StagedSource } from '../../api/actions.ts'
 import { classNames } from '../../api/policy-jobs.ts'
 import { grantSentence } from '../../api/trusted.ts'
 
 export type InstallFlow =
   | { step: 'assets', link: string, tag: string, assets: ReleaseAsset[] }
-  | { step: 'found', staged: string, source: StagedSource, plugins: StagedPlugin[], picked: ReadonlySet<string> }
+  | { step: 'found', staged: string, source: StagedSource, plugins: StagedPlugin[], picked: ReadonlySet<string>, busy: boolean }
 
 // high marks class 3 and 4 and a class not known. lines are the grant risk classifier's on why
 export type FoundRow = { id: string, label: string, line: string, high: boolean, lines: string[], grants: string[], problem: string | null, picked: boolean }
 
 // What the box over the plugin list draws: a release's zips to pick from, or the plugins found under their Confirm,
-// ready once one is ticked
+// ready once one is ticked and busy while it is on its way
 export type InstallBox =
   | { step: 'assets', heading: string, assets: { name: string, line: string }[] }
-  | { step: 'found', staged: string, source: string, unsigned: string, plugins: FoundRow[], ready: boolean }
+  | { step: 'found', staged: string, source: string, unsigned: string, plugins: FoundRow[], ready: boolean, busy: boolean }
 
 const quoted = (value: string) => JSON.stringify(value)
 
@@ -83,7 +83,7 @@ export function installBox(flow: InstallFlow | null): InstallBox | null {
     }
   }
   const plugins = flow.plugins.map(plugin => rowOf(plugin, flow.picked))
-  return { step: 'found', staged: flow.staged, source: sourceLine(flow.source), unsigned: UNSIGNED, plugins, ready: plugins.some(row => row.picked) }
+  return { step: 'found', staged: flow.staged, source: sourceLine(flow.source), unsigned: UNSIGNED, plugins, ready: plugins.some(row => row.picked), busy: flow.busy }
 }
 
 // The core's answer as the page hears it
@@ -99,9 +99,16 @@ export type InstallHost = {
 
 const problemOf = (result: unknown) => (result as { problem?: InstallProblem } | null)?.problem
 
+// A GitHub repository or release by its link, which the core resolves. Anything else isn't asked for
+const GITHUB_LINK = /^https:\/\/github\.com\/[^\s/]+\/[^\s/]+/
+
+// Each start (a pick, a link, a zip of a release) is numbered and only the latest one's answers apply. An older one's
+// staging is dropped. The box shown stays until a newer staging is there to replace it, so a source that fails leaves
+// the box the human was reading
 export class Installer {
   flow: InstallFlow | null = null
   private readonly host: InstallHost
+  private latest = 0
 
   constructor(host: InstallHost) {
     this.host = host
@@ -109,7 +116,9 @@ export class Installer {
 
   // main's dialog for a zip or a folder. A cancelled dialog asks for nothing
   pick(source: 'zip' | 'folder'): void {
+    const mine = ++this.latest
     this.host.call('app.pickPlugins', { source }, reply => {
+      if (mine !== this.latest) return
       if (reply.ok !== true) this.host.settle(reply)
       else if (typeof reply.result === 'string') this.stage({ kind: source, path: reply.result })
     })
@@ -119,12 +128,15 @@ export class Installer {
   find(typed: string): void {
     const link = typed.trim()
     if (link === '') return this.host.settle({ ok: true }, 'Paste a link to a GitHub repository or release')
+    if (link.length > MAX_LINK_LENGTH || !GITHUB_LINK.test(link)) return this.host.settle({ ok: true }, problems['not-github'])
+    const mine = ++this.latest
     this.host.call('core.findRelease', { link }, reply => {
+      if (mine !== this.latest) return
       const problem = problemOf(reply.result)
       if (reply.ok !== true || problem !== undefined) return this.host.settle(reply, problem === undefined ? undefined : problems[problem])
       const { tag, assets } = reply.result as { tag: string, assets: ReleaseAsset[] }
       if (assets.length === 1) return this.stage({ kind: 'link', link, asset: assets[0].name })
-      this.flow = { step: 'assets', link, tag, assets }
+      this.replace({ step: 'assets', link, tag, assets })
       this.host.settle(reply)
     })
   }
@@ -134,7 +146,7 @@ export class Installer {
   }
 
   tick(id: string, on: boolean): void {
-    if (this.flow?.step !== 'found') return
+    if (this.flow?.step !== 'found' || this.flow.busy) return
     const picked = new Set(this.flow.picked)
     if (on) picked.add(id)
     else picked.delete(id)
@@ -142,39 +154,54 @@ export class Installer {
     this.host.redraw()
   }
 
-  // The Confirm. A staging gone drops the box, any other refusal keeps it to confirm again
-  install(): void {
+  // The Confirm for the staging the human saw, once. A click on a staging no longer shown, or while one Confirm is on
+  // its way, sends nothing. An answer clears only the box it was for: a staging gone drops it, another refusal keeps it
+  // to confirm again
+  install(shown: string): void {
     const flow = this.flow
-    if (flow?.step !== 'found') return
+    if (flow?.step !== 'found' || flow.staged !== shown || flow.busy) return
     const plugins = flow.plugins.filter(plugin => plugin.problem === null && flow.picked.has(plugin.id)).map(({ id, digest }) => ({ id, digest }))
     if (plugins.length === 0) return
+    this.flow = { ...flow, busy: true }
+    this.host.redraw()
     this.host.call('core.install', { staged: flow.staged, plugins }, reply => {
       const code = reply.ok === true ? null : reply.refusal?.code
-      if (reply.ok === true || code === 'not-found') this.flow = null
+      const current = this.flow?.step === 'found' && this.flow.staged === shown ? this.flow : null
+      if (current !== null) this.flow = reply.ok === true || code === 'not-found' ? null : { ...current, busy: false }
       const installed = (reply.result as { installed?: string[] } | null)?.installed
       this.host.settle(reply, reply.ok === true && installed !== undefined ? `Installed ${installed.join(', ')}` : undefined)
     })
   }
 
+  // Answers still on their way are dropped with the box
   cancel(): void {
-    this.drop()
+    this.latest++
+    this.replace(null)
     this.host.redraw()
   }
 
-  // A staging the core holds is dropped, with no answer waited for
-  private drop(): void {
-    if (this.flow?.step === 'found') this.host.call('core.unstage', { staged: this.flow.staged })
-    this.flow = null
+  // A staging the core holds is dropped as the box moves on, with no answer waited for. One whose Confirm is on its
+  // way is the core's to drop
+  private replace(next: InstallFlow | null): void {
+    const old = this.flow
+    if (old?.step === 'found' && !old.busy) this.host.call('core.unstage', { staged: old.staged })
+    this.flow = next
   }
 
   private stage(source: InstallSource): void {
-    this.drop()
+    const mine = ++this.latest
     this.host.call('core.stage', { source }, reply => {
       const problem = problemOf(reply.result)
-      if (reply.ok !== true || problem !== undefined) return this.host.settle(reply, problem === undefined ? undefined : problems[problem])
-      const { staged, source: from, plugins } = reply.result as { staged: string, source: StagedSource, plugins: StagedPlugin[] }
-      const picked = new Set(plugins.filter(plugin => plugin.problem === null).map(plugin => plugin.id))
-      this.flow = { step: 'found', staged, source: from, plugins, picked }
+      const result = reply.result as { staged?: string, source: StagedSource, plugins: StagedPlugin[] } | null
+      if (mine !== this.latest) {
+        if (reply.ok === true && typeof result?.staged === 'string') this.host.call('core.unstage', { staged: result.staged })
+        return
+      }
+      if (reply.ok !== true || problem !== undefined || result === null || result.staged === undefined) {
+        return this.host.settle(reply, problem === undefined ? undefined : problems[problem])
+      }
+      const picked = new Set(result.plugins.filter(plugin => plugin.problem === null).map(plugin => plugin.id))
+      this.replace({ step: 'found', staged: result.staged, source: result.source, plugins: result.plugins, picked, busy: false })
       this.host.settle(reply)
     })
   }

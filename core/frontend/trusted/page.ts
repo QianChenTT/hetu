@@ -1,5 +1,6 @@
 import type { Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
+import { Arming } from './arming.ts'
 import type { InstallBox } from './install.ts'
 import type { Startup } from './startup.ts'
 import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, TrustedPage } from './view.ts'
@@ -38,23 +39,20 @@ function switchLine(page: TrustedPage, row: Switch, className?: string): HTMLPar
   return line
 }
 
-// Confirm stays disabled for the input delay after the window shows or gains focus. Main drops the input anyway, this
-// only shows it
-let armedAt = performance.now() + INPUT_DELAY_MS
+// Confirm stays disabled for the input delay after the window shows or gains focus and after something new is drawn
+// under it, and while what it confirms isn't ready
+const arming = new Arming(() => performance.now(), INPUT_DELAY_MS)
 const confirms = new Set<HTMLButtonElement>()
-const typedOk = new WeakMap<HTMLButtonElement, () => boolean>()
+const ready = new WeakMap<HTMLButtonElement, () => boolean>()
 function arm(): void {
-  const armed = performance.now() >= armedAt
-  for (const confirm of confirms) confirm.disabled = !armed || !(typedOk.get(confirm)?.() ?? true)
-  if (!armed) setTimeout(arm, armedAt - performance.now() + 10)
+  const wait = arming.wait()
+  for (const confirm of confirms) confirm.disabled = wait > 0 || !(ready.get(confirm)?.() ?? true)
+  if (wait > 0) setTimeout(arm, wait + 10)
 }
 window.addEventListener('focus', () => {
-  armedAt = performance.now() + INPUT_DELAY_MS
+  arming.focused()
   arm()
 })
-// A new request drawn under Confirm waits the delay too, as the core does, so a click aimed at the one before can't land
-let drawnRequest: string | null = null
-let drawnStaging: string | null = null
 
 // What was typed in each link field, kept across draws
 const typedLinks = new Map<string, string>()
@@ -92,8 +90,6 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
     section.append(button('Cancel', () => page.installer.cancel()))
     return section
   }
-  if (box.staged !== drawnStaging) armedAt = Math.max(armedAt, performance.now() + INPUT_DELAY_MS)
-  drawnStaging = box.staged
   const unsigned = element('p', box.unsigned)
   unsigned.className = 'unsigned'
   section.append(element('p', box.source), unsigned)
@@ -104,7 +100,7 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
     const tick = element('input')
     tick.type = 'checkbox'
     tick.checked = row.picked
-    tick.disabled = row.problem !== null
+    tick.disabled = row.problem !== null || box.busy
     tick.addEventListener('change', () => page.installer.tick(row.id, tick.checked))
     label.append(tick, document.createTextNode(` ${row.label}`))
     legend.append(label)
@@ -129,9 +125,10 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
     section.append(group)
   }
   section.append(element('p', 'Install copies each plugin ticked into the plugin folder and approves it with what it asks for'))
-  const confirm = button('Install', () => page.installer.install())
+  // The staging drawn goes with the click, so a newer one never installs from a click on this one
+  const confirm = button(box.busy ? 'Installing' : 'Install', () => page.installer.install(box.staged))
   confirms.add(confirm)
-  typedOk.set(confirm, () => box.ready)
+  ready.set(confirm, () => box.ready && !box.busy)
   section.append(confirm, button('Cancel', () => page.installer.cancel()))
   return section
 }
@@ -172,6 +169,8 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   const root = document.getElementById('root')
   if (root === null) return
   confirms.clear()
+  arming.show('request', shown.request?.id ?? null)
+  arming.show('staging', shown.installing?.step === 'found' ? shown.installing.staged : null)
   const parts: HTMLElement[] = []
 
   if (shown.stopped === null) parts.push(menu(page))
@@ -196,8 +195,6 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
 
   if (shown.request !== null) {
     const request = shown.request
-    if (request.id !== drawnRequest) armedAt = Math.max(armedAt, performance.now() + INPUT_DELAY_MS)
-    drawnRequest = request.id
     const section = element('section')
     section.className = 'request'
     const heading = element('h1')
@@ -218,7 +215,7 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     }
     const confirm = button('Confirm', () => page.confirm(request.id, typed?.value))
     confirms.add(confirm)
-    if (typed !== null) typedOk.set(confirm, () => typed.value === request.type)
+    if (typed !== null) ready.set(confirm, () => typed.value === request.type)
     section.append(confirm, button('Cancel', () => page.cancel(request.id)))
     // A revoke narrows, so it applies at once with no delay: the ask goes and the label never asks again
     const { revoke } = request
@@ -228,7 +225,6 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   }
 
   if (shown.installing !== null) parts.push(installSection(page, shown.installing))
-  else drawnStaging = null
 
   if (note !== null) {
     const shownNote = element('p', note)
