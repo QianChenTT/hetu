@@ -52,8 +52,8 @@ export abstract class PluginsChanges extends PluginsInstall {
   }
 
   // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
-  confirm(id: string, options: { typed?: string }): Promise<void> {
-    return this.requests.confirm(id, options)
+  confirm(...args: Parameters<Requests['confirm']>): Promise<void> {
+    return this.requests.confirm(...args)
   }
 
   cancel(id: string): Promise<void> {
