@@ -52,8 +52,8 @@ export const change = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('identity.revoke'), root: pluginId, field: label }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
-// and for the grant risk classifier switched on again. copy and restore were the first-party copy at start and its
-// restore, which nothing causes any more. Kept, so a notice an older build owed still reads and is answered
+// and for the grant risk classifier switched on again. Retired: copy and restore, the first-party copy at start and its
+// restore, which nothing causes any more. Read only, so a notice an older build owed still reads and is answered
 export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
 // A class as a state file or a notice holds it, from 0 to 4
 export const classNumber = z.int().min(0).max(4)

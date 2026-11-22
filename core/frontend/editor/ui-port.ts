@@ -62,8 +62,8 @@ export class UiPort {
     this.views = new ViewList((owner, body) => options.send(owner, body))
   }
 
-  // The layout drawing the window: the human's pick, else hetu's own, while it is connected holding ui.layout. Null
-  // means the drawer's plain layout
+  // The layout drawing the window: the picked one while it is connected holding ui.layout. Null means the drawer's
+  // plain layout
   layout(): string | null {
     return this.current
   }

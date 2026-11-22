@@ -3,7 +3,7 @@ import type { Caller } from '../../api/envelope.ts'
 import { scopeMatches } from '../../api/scope.ts'
 import type { Access, Decision, Gate, Pair } from '../../api/policy-jobs.ts'
 
-// manifest grants the plugin its manifest's capabilities, as a real hetu grants a first-party plugin. allow-all and
+// manifest grants the plugin its manifest's capabilities, as a real hetu's approval grants them. allow-all and
 // deny-all grant it everything or nothing. gate-failed fails the gate policy job, so every call with power answers
 // policy-down. dependency-missing holds back the plugin's requires until the test restores them
 export type FakeMode = 'manifest' | 'allow-all' | 'deny-all' | 'gate-failed' | 'dependency-missing'

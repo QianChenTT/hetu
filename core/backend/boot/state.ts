@@ -68,7 +68,7 @@ const limits = z.strictObject({
 const switches = z.strictObject({
   off: list(coreId), // a core module or core plugin not named here is on, so a lost entry can't read as off
   devMode: list(anyPlugin), // load unhashed with live reload
-  skipVerification: z.boolean(),
+  skipVerification: z.boolean(), // core plugins only: allowUnsigned pins a folder plugin's build by its hash
   allowUnsigned: z.array(sha256Hex), // builds pinned by content hash
   confirmOff: z.boolean(), // only for changes made in the trusted window's own plugin list
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
@@ -78,7 +78,7 @@ const switches = z.strictObject({
 const plugin = z.strictObject({
   version: text,
   contentHash: sha256Hex,
-  signer: text.nullable(), // null only for a plugin on allowUnsigned
+  signer: text.nullable(), // null when written. Until provenance lands an entry naming one is refused
   granted: folderCapabilities, // entries are for folder plugins only, which never hold an install-only type
   class: classNumber.nullable(), // null until classified, which counts as 4
   enabled: z.boolean(), // the human's switch, which no check changes
