@@ -11,10 +11,12 @@ const pair = (group: string, from: number, to: number, width = 2): Mark[] => [
   { kind: 'hide', from: to - width, to, group, edge: 'close' },
 ]
 
-function note(...owners: [string, Mark[]][]): EditorState {
-  const state = EditorState.create({ doc: text, extensions: [pluginMarks] })
+function noteOf(doc: string, ...owners: [string, Mark[]][]): EditorState {
+  const state = EditorState.create({ doc, extensions: [pluginMarks] })
   return state.update({ effects: owners.map(([owner, marks]) => setMarks.of({ owner, set: 's', marks })) }).state
 }
+
+const note = (...owners: [string, Mark[]][]) => noteOf(text, ...owners)
 
 function hidden(state: EditorState): [number, number][] {
   const out: [number, number][] = []
@@ -63,6 +65,35 @@ describe('an Alt+click on hidden text', () => {
   it("shows each plugin's own element at a place two plugins hide text in", () => {
     const state = altClick(note(['alpha', pair('a', 0, 8)], ['beta', pair('b', 0, 8, 1)]), 4)
     expect(hidden(state)).toEqual([])
+  })
+})
+
+// # Title at 0-7, its marker at 0-2. - item at 8-14, its bullet at 8-9. A quote at 15-22 over two lines, its markers
+// at 15-17 and 19-21
+const lines = '# Title\n- item\n> a\n> b'
+const heading: Mark[] = [{ kind: 'hide', from: 0, to: 2, group: 'h' }, { kind: 'line', from: 0, style: 'h1', group: 'h' }]
+
+describe('an Alt+click on the part of an element the human sees', () => {
+  it("shows a heading's marker on a click on its text, its line the element's span", () => {
+    const state = altClick(noteOf(lines, ['marks', heading]), 5)
+    expect(hidden(state)).toEqual([])
+    expect(hidden(moveTo(state, 7))).toEqual([])
+    expect(hidden(moveTo(state, 9))).toEqual([[0, 2]])
+  })
+
+  it("shows a quote's markers on every line from a click on any line's text", () => {
+    const quote: Mark[] = [
+      { kind: 'hide', from: 15, to: 17, group: 'q' }, { kind: 'line', from: 15, style: 'quote', group: 'q' },
+      { kind: 'hide', from: 19, to: 21, group: 'q' }, { kind: 'line', from: 19, style: 'quote', group: 'q' },
+    ]
+    expect(hidden(altClick(noteOf(lines, ['marks', quote]), 22))).toEqual([])
+  })
+
+  it('shows the text a widget in the group stands for and a styled range in it counts as the element', () => {
+    const item: Mark[] = [{ kind: 'widget', from: 8, to: 9, text: '•', group: 'li' }, { kind: 'mark', from: 10, to: 14, style: 'em', group: 'li' }]
+    const state = altClick(noteOf(lines, ['marks', [...heading, ...item]]), 12)
+    expect(hidden(state)).toEqual([[0, 2]])
+    expect(state.selection.main.head).toBe(12)
   })
 })
 

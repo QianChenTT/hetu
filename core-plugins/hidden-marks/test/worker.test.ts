@@ -1,8 +1,9 @@
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { type FakeCore, fakeCore, FakeDrawer } from '@hetu/sdk/testing'
 import { MAX_MARKS as BRIDGE_MAX_MARKS } from 'hetu-core/api/editor.ts'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Mark } from '../src/marks.ts'
+import { elementKinds, type Mark } from '../src/marks.ts'
 import hiddenMarks, { heldNotes, MARGIN, MAX_HEARD, MAX_MARKS } from '../src/worker.ts'
 
 const manifest = path.join(import.meta.dirname, '..', 'hetu-plugin.json')
@@ -71,7 +72,7 @@ describe('hidden marks behind the bridge', () => {
     await until(() => has(drawer, instance, strong(7, 12)))
     drawer.type(instance, { from: 0, insert: '# ' })
     await until(() => has(drawer, instance, strong(9, 14)))
-    expect(marksOn(drawer, instance)).toContainEqual({ kind: 'line', from: 0, style: 'h1' })
+    expect(marksOn(drawer, instance)).toContainEqual(expect.objectContaining({ kind: 'line', from: 0, style: 'h1' }))
   })
 
   it('reads the note again when a change never reached it, where applying the next would leave its copy wrong', async () => {
@@ -179,7 +180,7 @@ describe('hidden marks as notes open, close and the drawer refuses or lags', () 
     drawer.type(instance, { from: 13, insert: '!' })
     release()
     await until(() => has(drawer, instance, strong(8, 13)))
-    expect(marksOn(drawer, instance)).toContainEqual({ kind: 'line', from: 0, style: 'h1' })
+    expect(marksOn(drawer, instance)).toContainEqual(expect.objectContaining({ kind: 'line', from: 0, style: 'h1' }))
   })
 
   it('holds no more changes than its bound while a read is out and reads again for those past it', async () => {
@@ -215,5 +216,129 @@ describe('hidden marks as notes open, close and the drawer refuses or lags', () 
     drawer.type(instance, { from: 15, insert: '!' })
     await until(() => has(drawer, instance, strong(10, 15)))
     expect({ a: groupAt(drawer, instance, 3), b: groupAt(drawer, instance, 10) }).toEqual(named)
+  })
+})
+
+describe('the format keys behind the bridge', () => {
+  it('binds each format key and toggles its format at the selection the key came with', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a word')
+    await until(() => drawer.versions.has(`${instance} marks`))
+    expect(['bold', 'italic', 'strike', 'code', 'highlight'].every(format => drawer.command(format, 'n0'))).toBe(true)
+    drawer.command('bold', instance, [{ anchor: 2, head: 6 }])
+    await until(() => drawer.text(instance) === 'a **word**')
+  })
+
+  it('turns a run off with the cursor inside it, once its own edit came back as a change', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a word')
+    await until(() => drawer.versions.has(`${instance} marks`))
+    drawer.command('bold', instance, [{ anchor: 2, head: 6 }])
+    await until(() => has(drawer, instance, strong(2, 10)))
+    drawer.command('bold', instance, [{ anchor: 6, head: 6 }])
+    await until(() => drawer.text(instance) === 'a word')
+  })
+})
+
+describe('a run the human empties', () => {
+  const settled = (drawer: FakeDrawer, instance: string, version: number) => drawer.versions.get(`${instance} marks`) === version
+
+  it('loses its markers once the last character between them goes, a run inside another with it', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a **b** c ***d*** e')
+    await until(() => has(drawer, instance, strong(2, 7)))
+    drawer.type(instance, { from: 4, to: 5 })
+    await until(() => drawer.text(instance) === 'a  c ***d*** e')
+    drawer.type(instance, { from: 8, to: 9 })
+    await until(() => drawer.text(instance) === 'a  c  e')
+  })
+
+  it('keeps its markers when the human typed between them before the edit came, the edit refused stale', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a **b** c')
+    await until(() => has(drawer, instance, strong(2, 7)))
+    drawer.type(instance, { from: 4, to: 5 })
+    drawer.type(instance, { from: 4, insert: 'x' })
+    await until(() => drawer.calls.includes('editor.edit') && settled(drawer, instance, 2))
+    await tick(20)
+    expect(drawer.text(instance)).toBe('a **x** c')
+  })
+
+  it('keeps markers the human typed with nothing between them', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a ')
+    await until(() => drawer.versions.has(`${instance} marks`))
+    drawer.type(instance, { from: 2, insert: '****' })
+    await until(() => settled(drawer, instance, 1))
+    await tick(20)
+    expect(drawer.calls).not.toContain('editor.edit')
+  })
+})
+
+describe('the settings for which elements hide', () => {
+  const settingsView = (drawer: FakeDrawer) => drawer.instances().find(one => one.view === 'settings')?.instance ?? ''
+  type Node = { kind: string, id: string, checked?: boolean, children?: Node[] }
+  const root = (drawer: FakeDrawer) => (drawer.tree(settingsView(drawer)) as Node | null)?.children ?? []
+  // The boxes in the popover the item's button opens, none while it is shut
+  const boxes = (drawer: FakeDrawer) => (root(drawer).find(child => child.kind === 'popover')?.children ?? [])
+    .filter(child => child.kind === 'checkbox').map(child => [child.id, child.checked])
+  const press = (drawer: FakeDrawer) => drawer.emit({ topic: 'view.event', instance: settingsView(drawer), node: 'marks', type: 'click' })
+  const hiddenAt = (drawer: FakeDrawer, instance: string, from: number) => marksOn(drawer, instance).some(mark => mark.kind === 'hide' && mark.from === from)
+
+  it('is a small item with a button, so it takes no place a view would in the layout', async () => {
+    expect(JSON.parse(await readFile(manifest, 'utf8')).views).toEqual({ settings: { title: 'Hidden marks', kind: 'item' } })
+    const drawer = await started()
+    await until(() => root(drawer).length > 0)
+    expect(root(drawer).map(child => child.kind)).toEqual(['button'])
+  })
+
+  it('opens a popover from its button with a box for each element answer 7 names, each ticked as hidden at first then shuts it again', async () => {
+    const drawer = await started()
+    await until(() => root(drawer).length > 0)
+    press(drawer)
+    await until(() => boxes(drawer).length > 0)
+    expect(boxes(drawer)).toEqual(elementKinds.map(kind => [`hide-${kind}`, true]))
+    press(drawer)
+    await until(() => boxes(drawer).length === 0)
+    expect(elementKinds).toEqual(['bold', 'italic', 'strike', 'code', 'highlight', 'heading', 'bullet', 'quote', 'rule', 'link', 'fence'])
+  })
+
+  it("shows an element's markdown once the human unticks it, keeps the choice in its storage and holds it in the next run", async () => {
+    const drawer = new FakeDrawer()
+    const core = fakeCore({ manifest, drawer })
+    cores.push(core)
+    expect(await core.start(hiddenMarks)).toEqual({ state: 'ready' })
+    const instance = drawer.openNote('notes/a.md', '**a** *b*')
+    await until(() => hiddenAt(drawer, instance, 0) && hiddenAt(drawer, instance, 6))
+    press(drawer)
+    await until(() => boxes(drawer).length > 0)
+    drawer.emit({ topic: 'view.event', instance: settingsView(drawer), node: 'hide-bold', type: 'change', value: false })
+    await until(() => !hiddenAt(drawer, instance, 0))
+    expect(hiddenAt(drawer, instance, 6)).toBe(true)
+    expect(has(drawer, instance, strong(0, 5))).toBe(true)
+    expect(boxes(drawer)[0]).toEqual(['hide-bold', false])
+    expect(core.stored('storage', 'shown')).toEqual(['bold'])
+    await core.stop()
+    expect(await core.start(hiddenMarks)).toEqual({ state: 'ready' })
+    await until(() => root(drawer).length > 0)
+    press(drawer)
+    await until(() => boxes(drawer).length > 0)
+    expect(boxes(drawer)[0]).toEqual(['hide-bold', false])
+    const again = drawer.openNote('notes/b.md', '**a** *b*')
+    await until(() => hiddenAt(drawer, again, 6))
+    expect(hiddenAt(drawer, again, 0)).toBe(false)
+  })
+})
+
+describe('the format key at the end of a run', () => {
+  it('steps out of the run, so the next text typed there is plain', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', '**important**')
+    await until(() => has(drawer, instance, strong(0, 13)))
+    drawer.command('bold', instance, [{ anchor: 11, head: 11 }])
+    await until(() => drawer.selection(instance)?.head === 13)
+    const at = drawer.selection(instance)?.head ?? 0
+    drawer.type(instance, { from: at, insert: ' next' })
+    expect(drawer.text(instance)).toBe('**important** next')
   })
 })

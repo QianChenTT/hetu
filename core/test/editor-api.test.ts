@@ -41,11 +41,20 @@ describe('a mark', () => {
     expect(mark.safeParse({ kind: 'hide', from: 0, to: 2, group: 'g' }).success).toBe(true)
   })
 
+  it("takes a styled range, a line style and a widget into an element's group, so its visible part is the element too", () => {
+    for (const given of [
+      { kind: 'mark', from: 0, to: 2, style: 'em', group: 'g' },
+      { kind: 'line', from: 0, style: 'h1', group: 'g' },
+      { kind: 'widget', from: 0, to: 1, text: '•', group: 'g' },
+    ]) expect(mark.safeParse(given).data).toEqual(given)
+  })
+
   it.each([
     ['an edge other than open or close', { kind: 'hide', from: 0, to: 2, edge: 'middle' }],
     ['a group that is no name', { kind: 'hide', from: 0, to: 2, group: 'a b' }],
     ['a group past 64 characters', { kind: 'hide', from: 0, to: 2, group: 'g'.repeat(65) }],
-    ['a group on a styled range', { kind: 'mark', from: 0, to: 2, style: 'em', group: 'g' }],
+    ['a group on a line style that is no name', { kind: 'line', from: 0, style: 'h1', group: 'a b' }],
+    ['an edge on a styled range', { kind: 'mark', from: 0, to: 2, style: 'em', edge: 'open' }],
     ['an edge on a widget', { kind: 'widget', from: 0, to: 1, text: '•', edge: 'open' }],
   ])('refuses %s', (_name, given) => {
     expect(mark.safeParse(given).success).toBe(false)
@@ -81,6 +90,8 @@ describe('a call on the bridge', () => {
     expect(parseBridgeCall(call('editor.decorate', { instance: 'n1', version: 3, set: 'spelling', marks }))?.args)
       .toEqual({ instance: 'n1', version: 3, set: 'spelling', marks })
     expect(parseBridgeCall(call('editor.edit', { instance: 'n1', version: 0, changes: [3, [0, 'x'], 2, [1]] }))?.verb).toBe('editor.edit')
+    expect(parseBridgeCall(call('editor.edit', { instance: 'n1', version: 0, changes: [3], selection: { anchor: 3, head: 3 } }))?.args)
+      .toEqual({ instance: 'n1', version: 0, changes: [3], selection: { anchor: 3, head: 3 } })
     expect(parseBridgeCall(call('editor.bind', { bindings: [{ key: 'Mod-Shift-k', command: 'kill' }] }))?.verb).toBe('editor.bind')
     expect(parseBridgeCall(call('editor.keys', { on: true }))?.verb).toBe('editor.keys')
     expect(parseBridgeCall(call('editor.viewports', { on: false }))?.args).toEqual({ on: false })
@@ -96,6 +107,7 @@ describe('a call on the bridge', () => {
     ['an extra field', call('editor.read', { instance: 'n1', path: 'a.md' })],
     ['5,001 marks', call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: Array.from({ length: MAX_MARKS + 1 }, () => ({ kind: 'hide', from: 0, to: 1 })) })],
     ['a set name outside the grammar', call('editor.decorate', { instance: 'n1', version: 0, set: 'a b', marks: [] })],
+    ['a cursor with a field past anchor and head', call('editor.edit', { instance: 'n1', version: 0, changes: [3], selection: { anchor: 3, head: 3, goal: 1 } })],
     ['a change list that is no change set', call('editor.edit', { instance: 'n1', version: 0, changes: [[0, 1]] })],
     ['a change list as text', call('editor.edit', { instance: 'n1', version: 0, changes: 'abc' })],
     ['a negative version', call('editor.edit', { instance: 'n1', version: -1, changes: [1] })],
