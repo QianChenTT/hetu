@@ -50,13 +50,10 @@ export class FetchRefused extends Error {
 
 const nodeFetch: Fetch = (url, init) => fetch(url, init)
 
-// The API, github.com where a release's browser_download_url points and the hosts it redirects a download to:
+// The API, github.com where a release's browser_download_url points and the host it redirects a download to:
 // release-assets.githubusercontent.com, which GitHub's docs list as "Needed for downloading release assets" under
-// accessible domains by function in docs.github.com/en/actions/reference/runners/self-hosted-runners. Also
-// objects.githubusercontent.com, which served release downloads before it and still serves the runner's releases
-export const githubHosts: readonly string[] = Object.freeze([
-  'api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com',
-])
+// accessible domains by function in docs.github.com/en/actions/reference/runners/self-hosted-runners
+export const githubHosts: readonly string[] = Object.freeze(['api.github.com', 'github.com', 'release-assets.githubusercontent.com'])
 
 // Whether main may fetch a URL: https to one of GitHub's hosts, with no user or port. The parser lowercases the host
 // and drops the default port

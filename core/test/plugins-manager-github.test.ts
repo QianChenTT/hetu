@@ -34,13 +34,14 @@ async function problemOf(work: Promise<unknown>): Promise<string> {
 const ASSET = 'https://github.com/o/r/releases/download/v1/a.zip'
 
 describe('the hosts main fetches from', () => {
-  it('are GitHub\'s API, github.com and its two release asset hosts, over https with no user or port', () => {
-    expect([...githubHosts].sort()).toEqual(['api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'])
+  it('are GitHub\'s API, github.com and its release asset host, over https with no user or port', () => {
+    expect([...githubHosts].sort()).toEqual(['api.github.com', 'github.com', 'release-assets.githubusercontent.com'])
     for (const host of githubHosts) expect(onGitHub(`https://${host}/x`), host).toBe(true)
     expect(onGitHub('https://GITHUB.com:443/x')).toBe(true)
     for (const url of [
       'http://github.com/x', 'https://gist.github.com/x', 'https://github.com.example/x', 'https://github.com./x', 'https://evil.com/github.com',
       'https://u:p@github.com/x', 'https://u@github.com/x', 'https://github.com:8443/x', 'ftp://github.com/x', 'file:///C:/x', 'not a url',
+      'https://objects.githubusercontent.com/x', 'https://raw.githubusercontent.com/x',
     ]) {
       expect(onGitHub(url), url).toBe(false)
     }
@@ -60,19 +61,22 @@ describe('a redirect', () => {
     const { fetch, calls } = routes({
       [ASSET]: moved('https://release-assets.githubusercontent.com/github-production-release-asset/1?sig=x'),
       'https://release-assets.githubusercontent.com/github-production-release-asset/1?sig=x': moved('/github-production-release-asset/2', 307),
-      'https://release-assets.githubusercontent.com/github-production-release-asset/2': moved('https://objects.githubusercontent.com/3', 301),
-      'https://objects.githubusercontent.com/3': ok('PK'),
+      'https://release-assets.githubusercontent.com/github-production-release-asset/2': moved('https://release-assets.githubusercontent.com/3', 301),
+      'https://release-assets.githubusercontent.com/3': ok('PK'),
     })
     expect((await getFromGitHub(ASSET, want, limits, { fetch })).toString()).toBe('PK')
     expect(calls.map(call => call.url)).toEqual([
       ASSET, 'https://release-assets.githubusercontent.com/github-production-release-asset/1?sig=x',
-      'https://release-assets.githubusercontent.com/github-production-release-asset/2', 'https://objects.githubusercontent.com/3',
+      'https://release-assets.githubusercontent.com/github-production-release-asset/2', 'https://release-assets.githubusercontent.com/3',
     ])
   })
 
   it('is refused off GitHub\'s hosts or https before it is followed, whichever status it comes with', async () => {
     for (const status of [301, 302, 303, 307, 308]) {
-      for (const location of ['https://example.com/a.zip', 'http://release-assets.githubusercontent.com/a', 'https://github.com:8443/a', '//evil.example/a']) {
+      for (const location of [
+        'https://example.com/a.zip', 'http://release-assets.githubusercontent.com/a', 'https://github.com:8443/a', '//evil.example/a',
+        'https://objects.githubusercontent.com/a',
+      ]) {
         const { fetch, calls } = routes({ [ASSET]: moved(location, status) })
         expect(await problemOf(getFromGitHub(ASSET, want, limits, { fetch })), `${status} ${location}`).toBe('off-github')
         expect(calls.map(call => call.url)).toEqual([ASSET])
