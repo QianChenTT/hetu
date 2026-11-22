@@ -416,7 +416,7 @@ describe('what wireCore hands the router', () => {
   it('makes the router ask the guards the plugins manager expects, so one missing while hetu runs refuses the write', async () => {
     let expected: string[] = []
     const { runtime, luoshu } = await writing({ guardsFor: () => expected })
-    expected = ['leases']
+    expected = ['net']
     const reply = await runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
     expect(luoshu.performed).toEqual([])
@@ -428,9 +428,9 @@ describe('what wireCore hands the router', () => {
     const parts = await joined({
       folder: { alpha: filesFor(workerManifest('alpha')) },
       modules: { luoshu: luoshuModule(luoshu) },
-      wire: { guardsFor: () => ['leases'] },
+      wire: { guardsFor: () => ['net'] },
       before: booted => {
-        booted.state.switches = { ...booted.state.switches, off: ['leases'] }
+        booted.state.switches = { ...booted.state.switches, off: ['net'] }
       },
     })
     await parts.pluginsManager.start()
@@ -554,25 +554,25 @@ describe('the core\'s log through the joined core', () => {
 // The guard's policy job states end to end wait for #77, since core/api expects no guard on any action yet. Through the
 // shipping wiring here, with the guards the plugins manager and the router both expect
 describe('a guard down through the joined core', () => {
-  const leases: Listing = { files: filesFor(hostManifest('leases')) }
+  const net: Listing = { files: filesFor(hostManifest('net')) }
 
   it.each([
-    ['it fails its hash check', { ...leases, hash: '0'.repeat(64) }, 'tampered'],
+    ['it fails its hash check', { ...net, hash: '0'.repeat(64) }, 'tampered'],
   ] as const)('stops hetu at start in the fail-safe when %s, no plugin starting and no write reaching the luoshu', async (_name, listing, reason) => {
     const luoshu = new FakeLuoshu()
     const parts = await joined({
-      install: { ...coreInstall(), leases: listing },
+      install: { ...coreInstall(), net: listing },
       folder: { alpha: filesFor(workerManifest('alpha')) },
       modules: { luoshu: luoshuModule(luoshu) },
-      wire: { guardsFor: () => ['leases'] },
+      wire: { guardsFor: () => ['net'] },
       before: booted => {
         booted.state.switches = { ...booted.state.switches, limits: { all: { readyMs: 300 }, plugins: {} } }
       },
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
-    expect(reasonOf(parts.pluginsManager, 'leases')).toBe(reason)
-    expect(parts.pluginsManager.stopped()).toEqual({ control: 'leases', why: 'start-failed', reason: 'absent', again: false })
+    expect(reasonOf(parts.pluginsManager, 'net')).toBe(reason)
+    expect(parts.pluginsManager.stopped()).toEqual({ control: 'net', why: 'start-failed', reason: 'absent', again: false })
     expect(parts.runtime.order()).toEqual([])
     expect(luoshu.performed).toEqual([])
   })

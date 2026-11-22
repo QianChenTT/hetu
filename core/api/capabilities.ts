@@ -39,10 +39,10 @@ function scopes<T extends z.ZodType>(item: T) {
 // The fixed list. A new type needs a new core API version and a plugin can't invent one. Version 2 put ui.view, a view
 // of either kind, and ui.layout, the right to be picked as the layout, in place of ui.panel and ui.statusBar. ui.edit
 // is the right to change an open note through the editor, which the human then saves, and ui.read its twin, the right
-// to read through the editor a note the human opened
+// to read through the editor a note the human opened. Version 4 added lock.set, the right to lock notes
 export const capabilityTypes = frozen([
   'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
-  'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
+  'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
 ] as const)
 
 // An update of a plugin holding one of these waits for the human's Confirm whatever its class: a layout draws the whole
@@ -77,6 +77,8 @@ export const capability = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('plugin.call'), targets: scopes(pluginId) }),
   z.strictObject({ type: z.literal('guard.hook') }),
   z.strictObject({ type: z.literal('log.read') }),
+  // The notes a plugin may lock against every other writer, the human included until he takes one over
+  z.strictObject({ type: z.literal('lock.set'), paths: scopes(scope) }),
 ])
 export type Capability = z.infer<typeof capability>
 export type CapabilityType = Capability['type']
@@ -87,9 +89,10 @@ export function isInstallOnly(type: string): boolean {
 
 export const folderCapability = capability.refine(granted => !isInstallOnly(granted.type), 'a type only core plugins hold')
 
-// The types a pair's item may hold: reading, listing and writing notes and their history. The gate holds a pair to
-// these and an ask names no other, so nothing a pair is given reaches a plugin, runs a command or subscribes to a topic
-export const pairTypes = frozen(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history'] as const satisfies readonly CapabilityType[])
+// The types a pair's item may hold: reading, listing, writing and locking notes and their history. The gate holds a pair
+// to these and an ask names no other, so nothing a pair is given reaches a plugin, runs a command or subscribes to a
+// topic. A pair locks only the notes the human gave it the lock for
+export const pairTypes = frozen(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history', 'lock.set'] as const satisfies readonly CapabilityType[])
 export const pairCapability = folderCapability.refine(granted => (pairTypes as readonly string[]).includes(granted.type), 'a type no pair holds')
 
 // Counted per type and scope field across the list, so splitting a type over many entries doesn't get past the cap

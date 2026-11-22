@@ -368,29 +368,29 @@ describe('the fail-safe at start', () => {
   })
 
   it('starts on with an expected guard the human switched off', async () => {
-    const made = await harness({ ...plugins(), switches: { off: ['leases'] }, pluginsManager: { guardsFor: () => ['leases'] } })
+    const made = await harness({ ...plugins(), switches: { off: ['net'] }, pluginsManager: { guardsFor: () => ['net'] } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
     // The router reads the same switch, so the guard is no step and a write passes it
-    expect(made.pluginsManager.policyJob('leases')).toBe('off')
+    expect(made.pluginsManager.policyJob('net')).toBe('off')
   })
 
   it('starts again with an expected guard nothing holds switched off once its off applied in the stopped mode', async () => {
     const base = await tempBase()
-    const expecting = { guardsFor: () => ['leases'] }
+    const expecting = { guardsFor: () => ['net'] }
     const made = await harness({ base, ...plugins(), pluginsManager: expecting })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'leases', why: 'start-failed' })
+    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'net', why: 'start-failed' })
     // What the Confirm applies. The contract expects no guard yet, so its typed word can't be asked for here
-    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'leases' })
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'net' })
     const { switches } = (await made.store.load()).state
-    expect(switches.off).toContain('leases')
+    expect(switches.off).toContain('net')
     await made.pluginsManager.shutdown()
     const again = await harness({ base, switches, pluginsManager: expecting })
     await again.pluginsManager.start()
     expect(again.pluginsManager.stopped()).toBe(null)
-    expect(again.pluginsManager.policyJob('leases')).toBe('off')
+    expect(again.pluginsManager.policyJob('net')).toBe('off')
   })
 
   // Only a clean Quit or a change applied in the stopped mode clears the restart marker, so a failure that comes back
