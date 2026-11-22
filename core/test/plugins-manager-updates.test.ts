@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { StateStore } from '../backend/boot/state.ts'
+import { StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { Landing } from '../backend/plugins-manager/header.ts'
 import {
   cleanup, coreInstall, entryFor, filesFor, harness, hashOf, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
@@ -90,6 +90,28 @@ describe('a staged update', () => {
     expect(await made.pluginsManager.update('alpha', await stage(made, worker('alpha', { api: '^1' })))).toEqual({ outcome: 'refused', reason: 'api' })
     expect(await made.pluginsManager.update('alpha', await stage(made, filesFor(workerManifest('alpha', { entries: { host: 'host.js' } }))))).toEqual({ outcome: 'refused', reason: 'install-only' })
     expect(await made.pluginsManager.update('nobody', await stage(made, worker('nobody')))).toEqual({ outcome: 'refused', reason: 'missing' })
+  })
+
+  // No signer is taken until provenance lands, so an update would leave the plugin refused for its old entry's signer.
+  // Reset or remove, then approve, is the way past it
+  it('is refused with signer for an entry naming a signer, the first-party one an older build wrote included', async () => {
+    for (const signer of ['hetu first-party', 'sigstore:someone']) {
+      const made = await running({ folder: { layout: worker('layout') }, entries: { layout: signed({ signer }) } })
+      expect(await made.pluginsManager.update('layout', await stage(made, worker('layout', { version: '1.1.0' })))).toEqual({ outcome: 'refused', reason: 'signer' })
+      expect(made.pluginsManager.pending()).toEqual([])
+    }
+  })
+
+  // Held for an entry that came to name a signer while the Confirm waited, which no path in a run makes
+  it('applies nothing when the entry names a signer by the Confirm', async () => {
+    const made = await running()
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
+    expect(await made.pluginsManager.update('alpha', dir)).toMatchObject({ outcome: 'confirm' })
+    const known = (made.pluginsManager as unknown as { known: Map<string, { entry: Plugin }> }).known.get('alpha')!
+    known.entry = { ...known.entry, signer: 'sigstore:someone' }
+    await expect(made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toMatchObject({ code: 'signer' })
+    expect(made.link.events('plugin.updated')).toEqual([])
+    expect(await readFile(path.join(made.dataDir, 'plugins', 'alpha', 'hetu-plugin.json'), 'utf8')).toContain('1.0.0')
   })
 
   it('is staged for git and layout as for any plugin-folder plugin', async () => {

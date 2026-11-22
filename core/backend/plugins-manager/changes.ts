@@ -358,6 +358,8 @@ export abstract class PluginsChanges extends PluginsInstall {
   protected async updateNow(id: string, dir: string): Promise<UpdateOutcome> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder' || k.entry === null) return { outcome: 'refused', reason: 'missing' }
+    // An entry naming a signer is refused signer as the folder check refuses it, so no update carries one on
+    if (k.entry.signer !== null) return { outcome: 'refused', reason: 'signer' }
     const read = await readPlugin(dir, id, 'folder')
     if (read.problem !== null) return { outcome: 'refused', reason: read.problem }
     if (!isNewer(read.manifest!.version, k.entry.version)) return { outcome: 'refused', reason: 'not-newer' }
@@ -397,6 +399,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const staged = this.staged.get(id)
     const k = this.known.get(id)
     if (staged === undefined || k === undefined || k.entry === null) throw new Error(`no update staged for ${id}`)
+    if (k.entry.signer !== null) throw { code: 'signer' }
     this.staged.delete(id)
     const { read } = staged
     const old = k.entry
