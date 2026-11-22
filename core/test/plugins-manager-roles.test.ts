@@ -120,7 +120,7 @@ describe('a second plugin asking for a role', () => {
   it('is refused a widen to the role while another entry holds it, asked or applied, the entry left as it was', async () => {
     const made = await harness({ folder: { mcp: holder('mcp'), tool: filesFor(workerManifest('tool')) }, entries: { mcp: holds(), tool: entryFor } })
     await made.pluginsManager.start()
-    await expect(made.pluginsManager.request({ kind: 'grant.widen', plugin: 'tool', capability: role }, editor)).rejects.toMatchObject({ code: 'invalid' })
+    await expect(made.pluginsManager.request({ kind: 'grant.widen', plugin: 'tool', capability: role }, editor)).rejects.toEqual({ code: 'invalid', reason: 'role-taken' })
     await expect(made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: role })).rejects.toThrow()
     expect((await made.store.load()).state.plugins.tool?.granted).toEqual([])
     expect(made.pluginsManager.role('door.handle')).toBe('mcp')

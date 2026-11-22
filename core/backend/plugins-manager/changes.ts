@@ -25,7 +25,9 @@ export abstract class PluginsChanges extends PluginsInstall {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
     // A widen to a role another plugin holds could never apply, so no Confirm asks for it
-    if (parsed.data.kind === 'grant.widen' && this.roleTaken(parsed.data.plugin, [parsed.data.capability])) return Promise.reject({ code: 'invalid' })
+    if (parsed.data.kind === 'grant.widen' && this.roleTaken(parsed.data.plugin, [parsed.data.capability])) {
+      return Promise.reject({ code: 'invalid', reason: 'role-taken' })
+    }
     const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
     return this.requests.request(change, from)
   }
