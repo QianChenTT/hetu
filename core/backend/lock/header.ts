@@ -8,8 +8,8 @@ import type { Guard, Opening, Provider } from '../../api/policy-jobs.ts'
 // a note locked no longer
 export const MAX_LOCK_MS = 1_800_000 // 30 minutes
 
-// The most live locks the chains under one root plugin hold at once, its pairs together, so no plugin fills main with
-// locks by naming new fields
+// The most live locks the chains under one root plugin hold at once, its clients together, so no plugin fills main with
+// locks by naming new clients. A new session of one client takes from its client's count, so four full clients reach it
 export const MAX_LOCKS_PER_ROOT = 1024
 
 // The most live locks one client under a root plugin holds at once, its sessions together: the root with the field up

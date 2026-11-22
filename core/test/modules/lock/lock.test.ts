@@ -181,6 +181,15 @@ describe('lock.set', () => {
     expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('codex#2'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
   }, 60_000)
 
+  // grantKeyOf's split, so a session name holding a # of its own is still the same client
+  it('takes the client from a field up to its first # when the field holds two', async () => {
+    const { lock } = made()
+    await fill(lock, 'a', MAX_LOCKS_PER_CLIENT / 2, agent('claude-code#1#x'))
+    await fill(lock, 'b', MAX_LOCKS_PER_CLIENT / 2, agent('claude-code#2'))
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#3'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#1#y'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+  }, 60_000)
+
   it('gives a client its count back as its sessions\' locks clear and expire', async () => {
     const { lock, pass } = made()
     await fill(lock, 'a', MAX_LOCKS_PER_CLIENT, agent('claude-code#1'))
