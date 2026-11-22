@@ -35,8 +35,10 @@ class Refused extends Error {
   }
 }
 
-// The reader checks names, sizes and backslashes itself. The checks here run again on every name it hands over
-const READER = { lazyEntries: true, decodeStrings: true, validateEntrySizes: true, strictFileNames: true } as const
+// The reader checks names and sizes itself. strictFileNames off has it turn each \ into / before its own name check,
+// so a zip from Windows PowerShell 5.1's Compress-Archive, which writes \ between segments, unpacks, while ..\x, \x
+// and C:\x are still refused as climbing, absolute or a drive. The checks here run again on every name it hands over
+const READER = { lazyEntries: true, decodeStrings: true, validateEntrySizes: true, strictFileNames: false } as const
 
 // Bit 0 of the flags. The reader refuses bit 6, the strong encryption, itself
 const ENCRYPTED = 0x1

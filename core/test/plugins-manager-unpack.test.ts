@@ -223,6 +223,21 @@ describe('names', () => {
     }
   })
 
+  it('reads a backslash between segments as a folder, as Compress-Archive writes them', async () => {
+    const { problem, files } = await unpacked([{ name: 'dist\\worker.js', data: 'x' }, { name: 'hetu-plugin.json', data: '{}' }])
+    expect(problem).toBeNull()
+    expect(files).toEqual(['dist/', 'dist/worker.js', 'hetu-plugin.json'])
+  })
+
+  it('still refuses a name with backslashes that climbs out, is absolute or names a drive', async () => {
+    for (const name of ['..\\evil.js', 'a\\..\\..\\evil.js', '\\evil.js', '\\\\server\\share\\evil.js', 'C:\\evil.js', 'a\\.\\b.js']) {
+      const { problem, base, files } = await unpacked([{ name, data: 'x' }])
+      expect(problem, name).not.toBeNull()
+      expect(files, name).toEqual([])
+      expect(await readdir(base), name).toEqual(['staging'])
+    }
+  })
+
   it('refuses a zip whose name climbs out, and nothing lands beside the folder', async () => {
     for (const name of ['../evil.js', 'a/../../evil.js', '/evil.js', 'C:/evil.js', '..\\evil.js']) {
       const { problem, base, files } = await unpacked([{ name, data: 'x' }])

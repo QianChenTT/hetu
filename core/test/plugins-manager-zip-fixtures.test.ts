@@ -11,7 +11,7 @@ import { unpackZip } from '../backend/plugins-manager/unpack.ts'
 // with no file type bits. bsdtar.zip: Windows' tar.exe (bsdtar 3.8.9) with -a, data descriptors on files, the ux and UT
 // extra fields and Unix modes. bsdtar-cp437.zip: the same with --options zip:hdrcharset=CP437, café.txt named in CP437
 // with no UTF-8 flag. compress-archive-ps51.zip: Windows PowerShell 5.1's Compress-Archive, which writes \ between the
-// segments of a name
+// segments of a name, read as /
 const fixtures = path.join(import.meta.dirname, 'fixtures', 'zips')
 
 const made: string[] = []
@@ -64,10 +64,11 @@ describe('zips made by other tools', () => {
     expect(await readFile(path.join(into, 'fixture-tar-cp437', 'café.txt'), 'utf8')).toBe('café\n')
   })
 
-  it('refuses Compress-Archive\'s backslash names as no zip the reader takes', async () => {
-    const { zip, problem, files } = await unpacked('compress-archive-ps51.zip')
+  it('unpacks Compress-Archive\'s zip, its backslashes read as folders', async () => {
+    const { zip, into, problem, files } = await unpacked('compress-archive-ps51.zip')
     expect(zip.includes(Buffer.from('fixture-compress-archive\\hetu-plugin.json'))).toBe(true)
-    expect(problem).toBe('invalid')
-    expect(files).toEqual([])
+    expect(problem).toBeNull()
+    expect(files).toEqual(['fixture-compress-archive', 'fixture-compress-archive/dist', 'fixture-compress-archive/dist/worker.js', 'fixture-compress-archive/hetu-plugin.json'])
+    expect((await findPlugins(into)).plugins.map(each => each.id)).toEqual(['fixture-compress-archive'])
   })
 })
