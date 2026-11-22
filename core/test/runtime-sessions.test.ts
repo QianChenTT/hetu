@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -215,5 +215,32 @@ describe('the sessions\' proxy', () => {
     const refused = new FakeSession()
     refused.answer = Promise.reject(new Error('no proxy'))
     await expect(locked(refused, 'workers')).rejects.toThrow('no proxy')
+  })
+})
+
+// Every .ts file under a folder, by its path from there
+async function sources(dir: string, from = dir): Promise<string[]> {
+  const found: string[] = []
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) found.push(...await sources(full, from))
+    else if (entry.name.endsWith('.ts')) found.push(path.relative(from, full).split(path.sep).join('/'))
+  }
+  return found
+}
+
+describe('where sessions are made', () => {
+  // A session made anywhere else would get no proxy, no permission handlers and no request filter. Electron makes one
+  // for session.fromPartition, session.fromPath and a partition in a page's web preferences
+  it('makes them only in main\'s loop over the roles, each locked down there', async () => {
+    const backend = path.join(import.meta.dirname, '..', 'backend')
+    const made: string[] = []
+    for (const file of await sources(backend)) {
+      const lines = (await readFile(path.join(backend, file), 'utf8')).split('\n')
+      lines.forEach((line, at) => {
+        if (/\bfromPartition\s*\(|\bfromPath\s*\(|\bpartition\s*:/.test(line)) made.push(`${file}: ${line.trim()} / ${lines[at + 1]?.trim()}`)
+      })
+    }
+    expect(made).toEqual(['main.ts: sessions[role] = session.fromPartition(partition(role)) / await lockDown(sessions[role], role, pages, views)'])
   })
 })
