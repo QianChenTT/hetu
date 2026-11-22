@@ -85,8 +85,9 @@ type Connection = {
   spent: { start: number, marks: number, chars: number, nodes: number }
   // The last command the human invoked through its binding, which one edit with a cursor or one select may answer: its
   // note, version and selection and when the key came. Any other key, a click in the note, a binding changed, a select
-  // or a refused edit with a cursor and ANSWER_MS gone close it, as a move of the caret or a change does at the call
-  answering: { instance: string, version: number, selection: string, at: number } | null
+  // or a refused edit with a cursor and ANSWER_MS gone close it, as a move of the caret or a change does at the call.
+  // turn is the drawer's turn at the key, so one of these that came while the core answered the call closes it too
+  answering: { instance: string, version: number, selection: string, at: number, turn: number } | null
 }
 
 class Refusal {
@@ -112,6 +113,8 @@ export class Drawer {
   // stamp, so a plugin is sent each range once
   private readonly viewports = new Map<string, Drawn>()
   private stamped = 0
+  // Counts the human's keys and clicks in the editors and the bindings changed, each closing every window after a key
+  private turn = 0
   private readonly mac: boolean
   private readonly clock: () => number
   private readonly settings: () => SettingsValue
@@ -228,11 +231,13 @@ export class Drawer {
     }
   }
 
-  // The human's key, click or touch in the instance's editor, before anything handles it: no select at open is taken on
-  // the note from now on and no plugin's command answers on it any more
+  // The human's key, click, touch or other input in the instance's editor, before anything handles it: no select at open
+  // is taken on the note from now on and no plugin's command answers any more, a call the core is still answering
+  // included
   touched(instance: string): void {
+    this.turn++
     this.opening.delete(instance)
-    for (const conn of this.connections.values()) if (conn.answering?.instance === instance) conn.answering = null
+    for (const conn of this.connections.values()) conn.answering = null
   }
 
   // A key in the editor, named as keys.ts names it, after the core keys. The plugin bound to it hears its command,
@@ -243,6 +248,7 @@ export class Drawer {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
     if (instance !== null) this.opening.delete(instance)
+    this.turn++
     for (const conn of this.connections.values()) conn.answering = null
     const bound = [...this.connections.values()].filter(conn => conn.bindings.has(key))
     const picked = this.settings().keys[key]
@@ -252,7 +258,7 @@ export class Drawer {
       const command = conn.bindings.get(key) as string
       // Where the human was when the key came, sent once the core says the plugin reads the note
       const at = open === undefined ? undefined : { version: open.versions.version, selection: open.selection() }
-      conn.answering = open === undefined || at === undefined ? null : { instance: open.id, version: at.version, selection: JSON.stringify(at.selection), at: this.clock() }
+      conn.answering = open === undefined || at === undefined ? null : { instance: open.id, version: at.version, selection: JSON.stringify(at.selection), at: this.clock(), turn: this.turn }
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
         if (!this.live(conn)) return
@@ -505,7 +511,7 @@ export class Drawer {
           throw new Refusal('invalid')
         }
         if (selection !== undefined) {
-          const late = asked === null || this.clock() - asked.at > ANSWER_MS
+          const late = asked === null || this.clock() - asked.at > ANSWER_MS || asked.turn !== this.turn
           if (late || asked.instance !== instance.id || asked.version !== call.args.version) throw new Refusal('not-granted')
           if (instance.versions.version !== call.args.version) throw new Refusal('stale')
           if (JSON.stringify(instance.selection()) !== asked.selection) throw new Refusal('not-granted')
@@ -527,7 +533,7 @@ export class Drawer {
         const { version, selection } = call.args
         const opening = this.opening.has(instance.id)
         if (!opening) {
-          const late = asked === null || this.clock() - asked.at > ANSWER_MS
+          const late = asked === null || this.clock() - asked.at > ANSWER_MS || asked.turn !== this.turn
           if (late || asked.instance !== instance.id || asked.version !== version) throw new Refusal('not-granted')
         }
         if (instance.versions.version !== version) throw new Refusal('stale')
@@ -542,6 +548,7 @@ export class Drawer {
       case 'editor.bind': {
         const bindings = call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command] as const)
         if (bindings.some(([key]) => RESERVED_KEYS.includes(key))) throw new Refusal('invalid')
+        this.turn++
         for (const each of this.connections.values()) each.answering = null
         conn.bindings = new Map(bindings)
         return null
