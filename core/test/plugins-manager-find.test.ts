@@ -51,6 +51,27 @@ describe('plugins found in an unpacked or picked folder', () => {
     ])
   })
 
+  it('refuses two folders whose manifests name one id and lists both', async () => {
+    const root = await temp()
+    await writeFolder(path.join(root, 'alpha-old'), plugin('alpha', '1.0.0'))
+    await writeFolder(path.join(root, 'alpha-new'), plugin('alpha', '2.0.0'))
+    await writeFolder(path.join(root, 'beta'), plugin('beta'))
+    await writeFolder(path.join(root, 'broken-1'), { 'hetu-plugin.json': '{' })
+    await writeFolder(path.join(root, 'broken-2'), { 'hetu-plugin.json': '{' })
+    const finding = await findPlugins(root)
+    expect(finding.problem).toBe('same-id')
+    expect(summary(finding).map(each => [each.folder, each.id, each.version])).toEqual([
+      ['alpha-new', 'alpha', '2.0.0'], ['alpha-old', 'alpha', '1.0.0'], ['beta', 'beta', '1.0.0'], ['broken-1', null, null], ['broken-2', null, null],
+    ])
+  })
+
+  it('takes folders with no id read alongside each other', async () => {
+    const root = await temp()
+    await writeFolder(path.join(root, 'broken-1'), { 'hetu-plugin.json': '{' })
+    await writeFolder(path.join(root, 'broken-2'), { 'hetu-plugin.json': '{' })
+    expect((await findPlugins(root)).problem).toBeNull()
+  })
+
   it('looks no deeper than one level', async () => {
     const root = await temp()
     await writeFolder(path.join(root, 'release', 'alpha'), plugin('alpha'))

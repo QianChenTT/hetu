@@ -8,8 +8,9 @@ import { MANIFEST_FILE, readPlugin, type Read } from './verify.ts'
 // are set for a read refused after the manifest parsed, so read.problem decides
 export type Found = { folder: string, id: string | null, version: string | null, read: Read }
 
-// not-a-folder: a root that is missing, a file or a link
-export type FindProblem = 'not-a-folder'
+// not-a-folder: a root that is missing, a file or a link. same-id: two folders whose manifests name one id, which would
+// land at one plugins/<id>. The plugins found are listed with it, so the human can be shown which
+export type FindProblem = 'not-a-folder' | 'same-id'
 export type Finding = { problem: FindProblem | null, plugins: Found[] }
 
 // A manifest that is no file, a link among them, holds no plugin. One that can't be looked at is no plugin either
@@ -35,5 +36,6 @@ export async function findPlugins(root: string): Promise<Finding> {
     const folder = path.join(root, name)
     if (await manifestIn(folder)) plugins.push(await readFound(folder))
   }
-  return { problem: null, plugins }
+  const ids = plugins.flatMap(found => (found.id === null ? [] : [found.id]))
+  return { problem: new Set(ids).size < ids.length ? 'same-id' : null, plugins }
 }
