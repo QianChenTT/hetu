@@ -9,6 +9,7 @@ import { realModules } from '../modules-fakes.ts'
 import type { Exec } from '../../backend/providers/exec/exec.ts'
 import type { History } from '../../backend/providers/history/history.ts'
 import type { Luoshu } from '../../backend/providers/luoshu/luoshu.ts'
+import type { Lock } from '../../backend/lock/lock.ts'
 
 const editor: Caller = { kind: 'window', role: 'editor', n: 0 }
 
@@ -91,8 +92,9 @@ function fakes() {
     start: async () => maybe('exec.start'),
     close: () => maybe('exec.close'),
   }
-  const options: Partial<CoreModulesOptions> = { gate, storage, luoshu, history, exec }
-  return { options, seen, throws, gate, storage, luoshu, history, exec }
+  const lock: Lock = { provider: provider(), guard: { check: () => 'allow' }, role: { open: () => maybe('lock.open') } }
+  const options: Partial<CoreModulesOptions> = { gate, storage, luoshu, history, exec, lock }
+  return { options, seen, throws, gate, storage, luoshu, history, exec, lock }
 }
 
 function made(options: Partial<CoreModulesOptions> & { publish?: (topic: string, path: string) => void } = {}) {
@@ -147,7 +149,7 @@ describe('the core modules', () => {
     expect(modules.provider('exec')).toBe(options.exec!.provider)
   })
 
-  it('look a provider up by namespace: cache through storage, lock and net with no module, anything else nothing', async () => {
+  it('look a provider up by namespace: cache through storage, net with no module, anything else nothing', async () => {
     const { options } = fakes()
     const modules = made(options)
     await modules.start([], handing().handed)
@@ -156,7 +158,7 @@ describe('the core modules', () => {
     expect(modules.provider('luoshu')).toBe(options.luoshu!.provider)
     expect(modules.provider('history')).toBe(options.history!.provider)
     expect(modules.provider('exec')).toBe(options.exec!.provider)
-    expect(modules.provider('lock')).toBeNull()
+    expect(modules.provider('lock')).toBe(options.lock!.provider)
     expect(modules.provider('net')).toBeNull()
     expect(modules.provider('gate')).toBeNull()
     expect(modules.provider('constructor')).toBeNull()
@@ -233,18 +235,19 @@ describe('the core modules', () => {
     const { handed, next } = handing()
     await modules.start([], handed)
     expect(seen).toEqual([
-      'gate.stateChanged', 'storage.open', 'history.start', 'exec.start', 'luoshu.open', 'history.open', 'exec.stateChanged',
+      'gate.stateChanged', 'lock.open', 'storage.open', 'history.start', 'exec.start', 'luoshu.open', 'history.open', 'exec.stateChanged',
     ])
     seen.length = 0
     await modules.apply(['luoshu', 'history', 'exec', 'storage', 'gate'])
     expect(seen).toEqual(['luoshu.close', 'history.close', 'exec.close'])
     for (const id of ['luoshu', 'history', 'exec', 'storage', 'gate'] as const) expect(modules.state(id)).toBe('off')
-    // Nothing goes to a module that is off
+    // Nothing goes to a module that is off. The lock is on and handed the folder
     seen.length = 0
     next()
     modules.bumped()
     modules.picked()
-    expect(seen).toEqual([])
+    expect(seen).toEqual(['lock.open'])
+    seen.length = 0
     await modules.apply([])
     expect(seen).toEqual([
       'gate.stateChanged', 'storage.open', 'luoshu.open', 'history.start', 'history.open', 'exec.start', 'exec.stateChanged',
@@ -252,26 +255,88 @@ describe('the core modules', () => {
     for (const id of ['luoshu', 'history', 'exec', 'storage', 'gate'] as const) expect(modules.state(id)).toBe('on')
   })
 
+  it("serve lock.* only while luoshu serves and the lock's guard by its id while the lock is on", async () => {
+    const { options } = fakes()
+    const modules = made(options)
+    expect(modules.guard('lock')).toBeNull()
+    await modules.start(['luoshu'], handing(notes).handed)
+    expect(modules.state('lock')).toBe('on')
+    expect(modules.provider('lock')).toBeNull()
+    expect(modules.guard('lock')).toBe(options.lock!.guard)
+    expect(modules.guard('gate')).toBeNull()
+    expect(modules.guard('constructor')).toBeNull()
+    await modules.apply([])
+    expect(modules.provider('lock')).toBe(options.lock!.provider)
+    await modules.apply(['lock'])
+    expect(modules.guard('lock')).toBeNull()
+    expect(modules.provider('lock')).toBeNull()
+    expect(moduleRequires.lock).toEqual(['luoshu'])
+  })
+
+  it('hand the lock the notes folder at start and with each folder picked', async () => {
+    const { options } = fakes()
+    const opened: Opening[] = []
+    options.lock!.role.open = opening => opened.push(opening)
+    let folder: string | null = notes
+    const { handed } = handing()
+    handed.folder = () => folder
+    const modules = made(options)
+    await modules.start([], handed)
+    folder = path.join(base, 'other')
+    modules.picked()
+    expect(opened).toEqual([{ folder: notes, dataDir, installDir }, { folder: path.join(base, 'other'), dataDir, installDir }])
+  })
+
+  // The guard answers through shutdown and the stopped mode while the luoshu is closed, as flood control does
+  it('keep the lock on through shutdown and the stopped mode, its guard answering and lock.* served by no one', async () => {
+    const { options, seen } = fakes()
+    const modules = made(options)
+    const { handed, changes } = handing(notes)
+    await modules.start([], handed)
+    changes.length = 0
+    modules.close()
+    modules.stop([])
+    expect(modules.state('lock')).toBe('on')
+    expect(modules.guard('lock')).toBe(options.lock!.guard)
+    expect(modules.provider('lock')).toBeNull()
+    expect(changes.filter(change => change.startsWith('lock'))).toEqual([])
+    expect(seen.filter(what => what.startsWith('lock'))).toEqual(['lock.open'])
+  })
+
+  it('start the lock with the gate and flood control and begin or hand nothing else once its folder throws', async () => {
+    const { options, seen, throws } = fakes()
+    throws.add('lock.open')
+    const modules = made(options)
+    const { handed, changes } = handing(notes)
+    await modules.start([], handed)
+    expect(seen).toEqual(['gate.stateChanged', 'lock.open'])
+    expect(modules.state('lock')).toBe('failed')
+    expect(modules.reason('lock')).toBe('state-changed')
+    expect(modules.guard('lock')).toBeNull()
+    expect(changes).toEqual(['gate started', 'flood-control started', 'recording started', 'security-view started', 'lock failed state-changed'])
+    for (const id of ['grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'heartbeat'] as const) expect(modules.state(id)).toBe('starting')
+  })
+
   // The controls that judge yes or no start alone first, so one that fails leaves the rest for the fail-safe
-  it('start the gate alone first and begin or hand nothing else once its first grants snapshot throws', async () => {
+  it("start the fail-safe controls alone first and begin or hand nothing else once the gate's first grants snapshot throws", async () => {
     const { options, seen, throws } = fakes()
     throws.add('gate.stateChanged')
     const modules = made(options)
     const { handed, changes } = handing(notes)
     await modules.start([], handed)
-    expect(seen).toEqual(['gate.stateChanged'])
+    expect(seen).toEqual(['gate.stateChanged', 'lock.open'])
     expect(modules.state('gate')).toBe('failed')
     // The modules with no start of their own that serve the stopped mode read on
-    expect(changes).toEqual(['gate failed state-changed', 'flood-control started', 'recording started', 'security-view started'])
+    expect(changes).toEqual(['gate failed state-changed', 'flood-control started', 'recording started', 'security-view started', 'lock started'])
     for (const id of ['grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'heartbeat'] as const) expect(modules.state(id)).toBe('starting')
     for (const namespace of ['storage', 'luoshu', 'history', 'exec']) expect(modules.provider(namespace)).toBeNull()
     expect(modules.grantRiskClassifier()).toBeNull()
     expect(modules.heartbeat()).toBeNull()
-    // A new snapshot reaches the gate alone and a folder picked reaches no one
+    // A new snapshot reaches the gate alone and a folder picked the lock alone
     seen.length = 0
     modules.bumped()
     modules.picked()
-    expect(seen).toEqual(['gate.stateChanged'])
+    expect(seen).toEqual(['gate.stateChanged', 'lock.open'])
     // The stopped mode closes nothing that never began
     seen.length = 0
     changes.length = 0
@@ -281,18 +346,20 @@ describe('the core modules', () => {
   })
 
   // A start that hangs main leaves its marker, so the marker names the one control whose start ran
-  it('mark each judging module from before its start until its first push returned, one at a time', async () => {
+  it('mark each fail-safe control from before its start until its first push returned, one at a time, before any other module begins', async () => {
     const { options, seen } = fakes()
     const modules = made(options)
     const { handed } = handing(notes)
     handed.starting = async id => { seen.push(`${id} marked`) }
     handed.started = async id => { seen.push(`${id} unmarked`) }
     await modules.start([], handed)
-    expect(seen.slice(0, 5)).toEqual(['gate marked', 'gate.stateChanged', 'gate unmarked', 'flood-control marked', 'flood-control unmarked'])
-    expect(seen.slice(5).filter(what => what.endsWith('marked'))).toEqual([])
+    expect(seen.slice(0, 8)).toEqual([
+      'gate marked', 'gate.stateChanged', 'gate unmarked', 'flood-control marked', 'flood-control unmarked', 'lock marked', 'lock.open', 'lock unmarked',
+    ])
+    expect(seen.slice(8).filter(what => what.endsWith('marked'))).toEqual([])
   })
 
-  it('mark no judging module the human switched off and start on with a fault when a mark throws', async () => {
+  it('mark no fail-safe control the human switched off and start on with a fault when a mark throws', async () => {
     const { options, seen } = fakes()
     const modules = made(options)
     const { handed, faults } = handing(notes)
@@ -300,7 +367,7 @@ describe('the core modules', () => {
       seen.push(`${id} marked`)
       throw new Error('disk full')
     }
-    await modules.start(['flood-control'], handed)
+    await modules.start(['flood-control', 'lock'], handed)
     expect(seen.filter(what => what.endsWith('marked'))).toEqual(['gate marked'])
     expect(faults).toEqual(['gate marker'])
     expect(modules.state('gate')).toBe('on')
@@ -371,7 +438,7 @@ describe('the core modules', () => {
     await modules.start(['history'], handed)
     expect(changes).toEqual([
       'gate started', 'grant-risk-classifier started', 'storage started', 'luoshu started', 'exec failed start-failed',
-      'flood-control started', 'heartbeat started', 'recording started', 'security-view started',
+      'flood-control started', 'heartbeat started', 'recording started', 'security-view started', 'lock started',
     ])
   })
 

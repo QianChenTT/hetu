@@ -86,7 +86,6 @@ export type RouterOptions = {
   now?: () => number
   // A clock no change of the wall clock moves, for rates, the flood cap and timing a guard's answer
   clock?: () => number
-  // The guards expected on an action, in the order they answer. Defaults to core/api's list, tests name others since
-  // core/api expects none until #77
+  // The guards expected on an action, in the order they answer. Defaults to core/api's list, tests name others
   guardsFor?: (action: GuardableAction) => readonly string[]
 }
