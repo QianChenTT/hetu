@@ -3,6 +3,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import { parse } from 'acorn'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { shippedFiles } from './shipped-files.ts'
 
 // imports point one way between hetu's own parts, by the arrows below, with no cycle. A part with a
 // door is reached from outside only through its header.ts, which holds nothing but types, interfaces and constant
@@ -303,6 +304,10 @@ describe('imports point one way', () => {
     }
     for (const file of graph.keys()) walk(file, [])
     expect(found).toEqual([])
+  })
+  // The proof the later move of this walk to shipped-files.ts leans on
+  it('walks the files shippedFiles lists', () => {
+    expect(shipped()).toEqual(shippedFiles({ kinds: ['ts', 'js'], plugins: 'src' }))
   })
 })
 

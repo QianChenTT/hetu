@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { shippedFiles } from './shipped-files.ts'
 
 // The core names a caller by its way in and judges a pair, so no word agent is in what it ships outside the places
 // listed here, each with why. Any case, as a word of its own or a part of a joined name such as userAgent
@@ -79,5 +80,9 @@ describe('the word agent in the core', () => {
       expect(hitsIn(place.place, readFileSync(path.join(core, place.place), 'utf8')).map(hit => hit.word), place.place).toContain(place.word)
       expect(place.why.length).toBeGreaterThan(10)
     }
+  })
+  // The proof the later move of this walk to shipped-files.ts leans on
+  it('walks the files shippedFiles lists', () => {
+    expect(shipped()).toEqual(shippedFiles({ kinds: ['ts', 'js', 'css', 'html', 'md', 'json'], from: 'core' }))
   })
 })
