@@ -46,8 +46,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   for (const [name, text] of Object.entries(setup.notes ?? {})) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  // These tests hold one fixture view, so the file explorer's view is kept out
-  await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [], removed: ['file-explorer'] })
+  await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [] })
   await store.writeLuoshu({ folder })
   if (setup.plugins !== undefined) {
     const source = await temp()
@@ -136,7 +135,7 @@ describe("hetu's layout", () => {
     await until(async () => editor.locator('#drop-mark').isVisible())
     await editor.mouse.move(editorBox.x + editorBox.width / 2, editorBox.y + 60, { steps: 2 })
     await editor.mouse.up()
-    // Dropped on main, the view shows there in place of the note, and the side it left is gone
+    // Dropped on main, the view shows there in place of the note, and the side it left is gone, leaving main alone
     await until(async () => (await editor.locator('.editor:not([hidden])').count()) === 0)
     expect(await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').isVisible()).toBe(true)
     expect(await editor.locator('#base .hetu-divider').count()).toBe(0)

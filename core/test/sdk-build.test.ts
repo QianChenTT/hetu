@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
 import { buildHost, buildPlugin, checkBundle, checkHostImports } from '../sdk/build/esbuild.ts'
 
-const search = path.join(import.meta.dirname, '..', '..', 'core-plugins', 'search')
+const layout = path.join(import.meta.dirname, '..', '..', 'core-plugins', 'layout')
 const dirs: string[] = []
 
 afterEach(async () => {
@@ -107,8 +107,8 @@ describe('a host half\'s imports', () => {
 })
 
 describe('checking a manifest', () => {
-  it('passes search\'s manifest', async () => {
-    expect(await checkManifest(search)).toEqual([])
+  it('passes layout\'s manifest', async () => {
+    expect(await checkManifest(layout)).toEqual([])
   })
 
   it('refuses an unknown capability, a duplicate key and a missing entry once built', async () => {
@@ -122,9 +122,9 @@ describe('checking a manifest', () => {
   })
 })
 
-describe('search as it ships', () => {
+describe('layout as it ships', () => {
   it('builds into one script under the data: URL cap with no zod and no Node', async () => {
-    const outputs = await buildPlugin(search, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
+    const outputs = await buildPlugin(layout, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
     expect(outputs).toHaveLength(1)
     expect(outputs[0].bytes).toBeLessThan(1.5 * 1024 * 1024)
     expect(outputs[0].inputs.filter(input => input.includes('zod') || input.startsWith('node:'))).toEqual([])

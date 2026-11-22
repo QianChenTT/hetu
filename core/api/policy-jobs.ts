@@ -16,8 +16,9 @@ export type Scope = {
   readonly command?: readonly string[]
 }
 
-// The pair a chain under a plugin root carries: the root plugin's id and the onBehalf it set. A chain whose root is a
-// window carries none, its onBehalf naming who the change was made for and judged by nobody
+// The pair a chain under a plugin root carries: the root plugin's id and the grant key of the onBehalf it set, the
+// whole onBehalf staying on the call. A chain whose root is a window carries none, its onBehalf naming who the change
+// was made for and judged by nobody
 export type Pair = { readonly plugin: string, readonly field: string }
 
 // Who made a call, as every part the router hands it to reads it. callId is the router's own. root is the caller at the

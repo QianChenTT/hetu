@@ -422,6 +422,25 @@ describe('what wireCore hands the router', () => {
     expect(luoshu.performed).toEqual([])
   })
 
+  // The start check and the router read the one switch, so a guard the human switched off is no step for either
+  it('lets a write past an expected guard the human switched off', async () => {
+    const luoshu = new FakeLuoshu()
+    const parts = await joined({
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      modules: { luoshu: luoshuModule(luoshu) },
+      wire: { guardsFor: () => ['leases'] },
+      before: booted => {
+        booted.state.switches = { ...booted.state.switches, off: ['leases'] }
+      },
+    })
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
+    expect(parts.pluginsManager.stopped()).toBe(null)
+    const reply = await parts.runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    expect(reply).toMatchObject({ ok: true })
+    expect(luoshu.performed).toHaveLength(1)
+  })
+
   it('hands the router the debug sink for a gate that throws', async () => {
     const debug: { plugin: string | null }[] = []
     const gate = gateDeciding(() => { throw new Error('broken') })

@@ -110,6 +110,14 @@ export function isSecurityControl(id: string): boolean {
     || (guardingModuleIds as readonly string[]).includes(id)
 }
 
+// The controls the fail-safe at start covers, each once: the judging modules and every guard expected on a guardable
+// action. One that failed at start, hung main the run before or is missing without the human's switch stops hetu
+// before any other module begins. The guarding modules are not among them, hetu starts on without them. guardsOf
+// defaults to the guards table, tests name others
+export function failSafeControls(guardsOf: (action: GuardableAction) => readonly string[] = action => guards[action]): readonly string[] {
+  return frozen([...new Set<string>([...judgingModuleIds, ...guardableActions.flatMap(guardsOf)])])
+}
+
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
 // their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
 // start in this order, the ones after them have no start of their own
@@ -126,7 +134,7 @@ export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
 // the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
-export const firstPartyIds = frozen(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout', 'hidden-marks'] as const)
+export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,

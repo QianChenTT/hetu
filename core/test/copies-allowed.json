@@ -309,8 +309,8 @@
       ],
       "hash": "64c06c4eb1d29f22",
       "at": [
-        "core/backend/plugins-manager/changes.ts:147-151",
-        "core/backend/plugins-manager/changes.ts:455-459"
+        "core/backend/plugins-manager/changes.ts:149-153",
+        "core/backend/plugins-manager/changes.ts:457-461"
       ],
       "judged": "not yet"
     },
@@ -321,8 +321,8 @@
       ],
       "hash": "91353fb6522643e5",
       "at": [
-        "core/backend/plugins-manager/changes.ts:147-151",
-        "core/backend/plugins-manager/changes.ts:368-372"
+        "core/backend/plugins-manager/changes.ts:149-153",
+        "core/backend/plugins-manager/changes.ts:370-374"
       ],
       "judged": "not yet"
     },
@@ -331,9 +331,9 @@
         "core/backend/plugins-manager/changes.ts",
         "core/backend/plugins-manager/requests.ts"
       ],
-      "hash": "2d6bec0f2ae7db04",
+      "hash": "2c2066769d83be6a",
       "at": [
-        "core/backend/plugins-manager/changes.ts:27-32",
+        "core/backend/plugins-manager/changes.ts:29-34",
         "core/backend/plugins-manager/requests.ts:200-207"
       ],
       "judged": "not yet"

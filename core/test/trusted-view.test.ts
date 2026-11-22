@@ -233,6 +233,15 @@ describe('what the trusted window draws', () => {
     expect(drawn.revoke).toBeNull()
   })
 
+  it('draws a connect with no redirect as a program on this computer, the label still apart at the heading\'s end', () => {
+    const connect = describeChange(connectChange({ client: 'claude-code', name: 'Claude Code', redirect: null, field: 'claude-code#1' }, 'mcp-http-handler')!)
+    const held: HeldRequest = { id: 'r1', kind: 'consent.ask', plugin: 'mcp-http-handler', notes: connect.notes, type: null, text: connect.text, root: 'mcp-http-handler', field: 'claude-code#1' }
+    expect(screen(calm({ requests: [held] })).request!.heading).toEqual([
+      { text: 'Connect the client "claude-code" named "Claude Code", a program on this computer reaching hetu over the local pipe, through mcp-http-handler as ', label: false },
+      { text: '"claude-code#1"', label: true },
+    ])
+  })
+
   it('draws apart the label at a connect\'s end and not a name that reads as the label', () => {
     const connect = describeChange(connectChange({ client: 'client', name: 'client#3', redirect: 'http://127.0.0.1:5000/cb', field: 'client#3' }, 'mcp-http-handler')!)
     const held: HeldRequest = { id: 'r1', kind: 'consent.ask', plugin: 'mcp-http-handler', notes: [], type: null, text: connect.text, root: 'mcp-http-handler', field: 'client#3' }
