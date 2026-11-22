@@ -426,6 +426,8 @@ export function harness(given: HarnessOptions = {}) {
     providers: id => providers[id] ?? null,
     recording,
     debug: entry => { debug.push(entry) },
+    // No guard expected unless a test names its own, since the fake plugins manager holds no lock module
+    guardsFor: () => [],
     ...over,
   })
   // What the plugins manager and the runtime hand in through the router's door: the table, the core actions, the

@@ -8,6 +8,7 @@ import type { Asks, RouterOptions, Debug, Served } from './router/header.ts'
 import { Limits } from './router/limits.ts'
 import { createFloodControl } from './flood-control/flood-control.ts'
 import { createHeartbeat } from './heartbeat/heartbeat.ts'
+import { createLock } from './lock/lock.ts'
 import type { Recording } from './recording/header.ts'
 import { createRecording } from './recording/recording.ts'
 import { createSecurityView } from './security-view/security-view.ts'
@@ -45,11 +46,12 @@ export type WireOptions = {
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
   // Core modules in place of the ones the core makes, for tests
-  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat' | 'securityView'>>
+  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat' | 'securityView' | 'lock'>>
 }
 
 // The core modules made and held: each the real one unless a test hands its own, the luoshu publishing through publish
-// for its two topics alone and flood control counting by limit, the fixed values unless one is handed
+// for its two topics alone and flood control counting by limit, the fixed values unless one is handed. Flood control and
+// the lock time on a clock no change of the wall clock moves
 export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'installDir' | 'trash'> & Partial<CoreModulesOptions> & {
   publish: (topic: string, path: string) => void
   limit?: (plugin: string | null, name: LimitName) => number
@@ -69,16 +71,16 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
     }),
     heartbeat: given.heartbeat ?? createHeartbeat(),
     securityView: given.securityView ?? createSecurityView(),
+    lock: given.lock ?? createLock({ clock: () => performance.now() }),
   })
 }
 
-// What the router asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
-// that runs holds one. wireCore and the plugins manager's tests both build the router from it, so the tests run the
-// wiring that ships
+// What the router asks for: the gate, every guard, every provider and flood control from the core modules. wireCore and
+// the plugins manager's tests both build the router from it, so the tests run the wiring that ships
 export function routerOptions(modules: Holder, rest: Omit<RouterOptions, 'gate' | 'guards' | 'providers' | 'floodControl'>): RouterOptions {
   return {
     gate: () => modules.gate(),
-    guards: () => null,
+    guards: id => modules.guard(id),
     providers: id => modules.provider(id),
     floodControl: () => modules.floodControl(),
     ...rest,
