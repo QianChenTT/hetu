@@ -47,9 +47,13 @@ describe('the door in the trusted window\'s list', () => {
 })
 
 describe('a utility half', () => {
-  it('starts from the host entry\'s verified bytes on a port registered under its host half, never imported in main', async () => {
+  // No hash is kept apart for the door, so its check reads unchecked and never ok: a packaged build's door.js is covered
+  // by app.asar's integrity alone
+  it('starts from the bytes of door.js read once, on a port registered under its host half, never imported in main', async () => {
     const made = await harness({ door })
     await made.pluginsManager.start()
+    expect(made.link.events('plugin.checked')).toContainEqual({ plugin: 'mcp-http-handler', from: 'core', result: 'unchecked' })
+    expect(made.link.events('plugin.checked').filter(fields => fields.plugin === 'mcp-http-handler')).toHaveLength(1)
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
     expect(made.pluginsManager.plugin('mcp-http-handler')?.place).toBe('utility')
     expect(made.pluginsManager.list().find(row => row.id === 'mcp-http-handler')?.place).toBe('utility')

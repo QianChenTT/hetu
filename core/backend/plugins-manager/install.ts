@@ -13,7 +13,8 @@ export abstract class PluginsInstall extends PluginsClasses {
   // ---- the door
 
   // The door's code as the build wrote it, read once like a plugin's bytes. What it may do is fixed in code, so no
-  // manifest is read. Code that can't be read leaves it refused missing
+  // manifest is read. Code that can't be read leaves it refused missing. No hash is kept apart to check it against, so
+  // its check is recorded unchecked: a packaged build's door.js is covered by app.asar's integrity alone
   protected async readDoor(): Promise<void> {
     const file = this.doorFile
     if (file === null) return
@@ -24,7 +25,7 @@ export abstract class PluginsInstall extends PluginsClasses {
       // Read as missing below
     }
     this.know(doorId, 'core', path.dirname(file), read, null)
-    this.checked(doorId, 'core', read, null, false)
+    this.note('plugin.checked', { plugin: doorId, from: 'core', result: read.hash === null ? 'missing' : 'unchecked' })
   }
 
   // ---- the plugin folder
@@ -78,7 +79,7 @@ export abstract class PluginsInstall extends PluginsClasses {
     let result: string
     if (read.hash === null) result = 'missing'
     else if (expected !== null && read.hash !== expected) result = !loose ? 'tampered' : this.dev(id) ? 'dev' : 'skipped'
-    else result = read.problem ?? (expected === null && from === 'folder' ? 'new' : 'ok')
+    else result = read.problem ?? (expected === null ? 'new' : 'ok')
     this.note('plugin.checked', { plugin: id, from, result })
   }
 }
