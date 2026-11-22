@@ -22,17 +22,17 @@ describe('the plugin holding a role', () => {
   it('is the one approved plugin whose entry holds the role\'s item, null for no holder and for an action that is no role', async () => {
     const made = await harness({ folder: { mcp: holder('mcp'), other: filesFor(workerManifest('other')) }, entries: { mcp: holds(), other: entryFor } })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
-    expect(made.pluginsManager.role('door.other')).toBeNull()
-    expect(made.pluginsManager.role('mcp.handle')).toBeNull()
-    expect(made.pluginsManager.role('toString')).toBeNull()
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.other')).toBeNull()
+    expect(made.pluginsManager.holderOf('mcp.handle')).toBeNull()
+    expect(made.pluginsManager.holderOf('toString')).toBeNull()
   })
 
   it('is none while no entry holds the item, a manifest asking for it with no approval included', async () => {
     const made = await harness({ folder: { mcp: holder('mcp') } })
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'mcp')).toBe('found')
-    expect(made.pluginsManager.role('door.handle')).toBeNull()
+    expect(made.pluginsManager.holderOf('door.handle')).toBeNull()
   })
 
   // Finding the holder is routing and not judging, so the item's switch holds with the gate off (D-680 F)
@@ -42,24 +42,24 @@ describe('the plugin holding a role', () => {
   ])('is none while the holder\'s item is switched off, with the gate %s, and the holder again once it is on', async (_gate, switches) => {
     const made = await harness({ folder: { mcp: holder('mcp', [read]) }, entries: { mcp: holds({ granted: [role, read] }) }, switches })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
     await made.pluginsManager.apply({ kind: 'item.off', plugin: 'mcp', capability: role })
-    expect(made.pluginsManager.role('door.handle')).toBeNull()
+    expect(made.pluginsManager.holderOf('door.handle')).toBeNull()
     // Another item switched off leaves the role served
     await made.pluginsManager.apply({ kind: 'item.on', plugin: 'mcp', capability: role })
     await made.pluginsManager.apply({ kind: 'item.off', plugin: 'mcp', capability: read })
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
   })
 
   it('is none while the holder is switched off or refused', async () => {
     const made = await harness({ folder: { mcp: holder('mcp') }, entries: { mcp: holds() } })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'mcp' })
-    expect(made.pluginsManager.role('door.handle')).toBeNull()
+    expect(made.pluginsManager.holderOf('door.handle')).toBeNull()
     const unsigned = await harness({ folder: { mcp: holder('mcp') }, entries: { mcp: holds() }, switches: { allowUnsigned: [] } })
     await unsigned.pluginsManager.start()
     expect(reasonOf(unsigned.pluginsManager, 'mcp')).toBe('unsigned')
-    expect(unsigned.pluginsManager.role('door.handle')).toBeNull()
+    expect(unsigned.pluginsManager.holderOf('door.handle')).toBeNull()
   })
 
   it('tells the router when the item is switched, so a call open on a holder that went ends', async () => {
@@ -80,7 +80,7 @@ describe('a second plugin asking for a role', () => {
     expect(reasonOf(made.pluginsManager, 'copy')).toBe('role-taken')
     expect(made.link.events('plugin.refused')).toContainEqual({ plugin: 'copy', reason: 'role-taken' })
     expect(made.pluginsManager.pending().filter(held => held.plugin === 'copy')).toEqual([])
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
     await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'mcp' })
     await until(() => stateOf(made.pluginsManager, 'copy') === 'found')
     expect(made.pluginsManager.pending()).toContainEqual(expect.objectContaining({ kind: 'plugin.approve', plugin: 'copy' }))
@@ -123,7 +123,7 @@ describe('a second plugin asking for a role', () => {
     await expect(made.pluginsManager.request({ kind: 'grant.widen', plugin: 'tool', capability: role }, editor)).rejects.toEqual({ code: 'invalid', reason: 'role-taken' })
     await expect(made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: role })).rejects.toThrow()
     expect((await made.store.load()).state.plugins.tool?.granted).toEqual([])
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
   })
 
   // An update keeps the entry's grants, so a new version asking for the role gets no item and no second holder comes of
@@ -137,7 +137,7 @@ describe('a second plugin asking for a role', () => {
     await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'tool' })
     await until(() => stateOf(made.pluginsManager, 'tool') === 'ready')
     expect((await made.store.load()).state.plugins.tool).toMatchObject({ version: '1.1.0', granted: [] })
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
     expect(reasonOf(made.pluginsManager, 'mcp')).toBeNull()
   })
 
@@ -149,14 +149,14 @@ describe('a second plugin asking for a role', () => {
     await made.pluginsManager.update('tool', dir)
     await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'tool' })
     await until(() => stateOf(made.pluginsManager, 'tool') === 'ready')
-    expect(made.pluginsManager.role('door.handle')).toBeNull()
+    expect(made.pluginsManager.holderOf('door.handle')).toBeNull()
   })
 
   it('is let widen to the role when no other entry holds it', async () => {
     const made = await harness({ folder: { tool: filesFor(workerManifest('tool')) }, entries: { tool: entryFor } })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: role })
-    expect(made.pluginsManager.role('door.handle')).toBe('tool')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('tool')
   })
 
   // Only an edited state file holds two, and entries carry no order, so neither serves until the human removes one
@@ -165,10 +165,10 @@ describe('a second plugin asking for a role', () => {
     await made.pluginsManager.start()
     expect(reasonOf(made.pluginsManager, 'mcp')).toBe('role-taken')
     expect(reasonOf(made.pluginsManager, 'copy')).toBe('role-taken')
-    expect(made.pluginsManager.role('door.handle')).toBeNull()
+    expect(made.pluginsManager.holderOf('door.handle')).toBeNull()
     await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'copy' })
     await until(() => stateOf(made.pluginsManager, 'mcp') === 'ready')
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
   })
 })
 
@@ -202,7 +202,7 @@ describe('a role in deps', () => {
     })
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'mcp')).toBe('waiting')
-    expect(made.pluginsManager.role('door.handle')).toBe('mcp')
+    expect(made.pluginsManager.holderOf('door.handle')).toBe('mcp')
     const door = made.runtime.half('mcp-http-handler', 1, 'utility')
     // A change that tells the router and sends deps, the role's holder unchanged
     await made.pluginsManager.apply({ kind: 'limit.set', plugin: 'mcp', constant: 'readyMs', value: 2000 })

@@ -155,7 +155,7 @@ class FakePluginsManager implements PluginTable {
     return this.infos.get(id) ?? null
   }
 
-  role(action: string): string | null {
+  holderOf(action: string): string | null {
     return this.roles.get(action) ?? null
   }
 

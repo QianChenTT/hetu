@@ -8,7 +8,7 @@ import type { Asks, RouterDoor, RouterOptions, Heard, Port, Served, WayClosed } 
 import { topicsOf, whoOf, Context } from './context.ts'
 import { busState, listable, recheck, rejudge, revokeAll } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
-import { moved } from './route.ts'
+import { endMovedRoles } from './route.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
 // Policy comes from the policy jobs it asks: the gate decides and the router enforces
@@ -76,7 +76,7 @@ export class Router implements RouterDoor {
     if (this.c.closed || this.c.shutting) return
     this.c.bus.sync()
     this.c.bus.emit(coreTopic.status)
-    moved(this.c)
+    endMovedRoles(this.c)
     const view = this.c.view()
     if (view === null || view === this.c.announced) return
     const first = this.c.announced === undefined

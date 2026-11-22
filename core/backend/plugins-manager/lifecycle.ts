@@ -265,7 +265,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
     if (k.place === 'utility') {
       for (const [action, spec] of Object.entries(roleActions)) {
         if (spec.from !== 'utility') continue
-        const holder = this.role(action)
+        const holder = this.holderOf(action)
         deps[action] = holder === null ? 'unavailable' : stateOf(holder)
       }
     }

@@ -290,9 +290,9 @@ export class Context {
   }
 
   // The plugin holding a role's item, null for none and for a table that throws
-  role(action: string): string | null {
+  holderOf(action: string): string | null {
     try {
-      const id = this.tableOf().role(action)
+      const id = this.tableOf().holderOf(action)
       return typeof id === 'string' ? id : null
     } catch {
       return null

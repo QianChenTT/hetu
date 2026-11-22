@@ -316,7 +316,7 @@ ${capabilityKey(change.capability)}`)
 
   // The one plugin serving a role: its grants hold the role's item, switched on, and it isn't refused or off, gate on or
   // off. null for none
-  role(action: string): string | null {
+  holderOf(action: string): string | null {
     const spec = Object.hasOwn(roleActions, action) ? roleActions[action] : undefined
     if (spec === undefined) return null
     const serving = [...this.known.values()].filter(k => {

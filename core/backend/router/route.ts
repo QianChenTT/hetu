@@ -117,7 +117,7 @@ async function serve(c: Context, pending: Pending, served: Served | undefined, a
 // 6 route to a plugin's declared <target>.<name>, then 8 decide and 10 perform by the callee. Only a caller that
 // passed precheck learns here whether the target is there, starting or declares the action
 function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: 'plugin' }>, args: unknown, kind: Kind): void {
-  const info = ready(c, pending, target.target)
+  const info = readyOrAnswer(c, pending, target.target)
   if (info === null) return
   const declared = Object.hasOwn(info.actions, target.name) ? info.actions[target.name] : undefined
   if (typeof declared !== 'object' || declared === null) return finish(c, pending, no('not-found'))
@@ -134,16 +134,16 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
 // role's own action. The floor decided the caller, so no gate step judges the call. What the holder does under it is
 // judged as any call is. The record names the holder as the call's target
 function role(c: Context, pending: Pending, args: unknown): void {
-  const holder = c.role(pending.action)
+  const holder = c.holderOf(pending.action)
   if (holder === null) return finish(c, pending, no('unavailable'))
   setScope(pending, frozen({ target: holder }))
-  const info = ready(c, pending, holder)
+  const info = readyOrAnswer(c, pending, holder)
   if (info !== null) handOn(c, pending, holder, info, args, { kind: 'role' })
 }
 
 // The plugin's row while it can take a call. A plugin starting, unresponsive or not ready answers the call and gives
 // null
-function ready(c: Context, pending: Pending, id: string): PluginInfo | null {
+function readyOrAnswer(c: Context, pending: Pending, id: string): PluginInfo | null {
   const info = c.info(id)
   if (info?.state === 'ready') return info
   // Calls to an unresponsive plugin time out at once
@@ -171,11 +171,11 @@ function handOn(c: Context, pending: Pending, id: string, info: PluginInfo, args
 // The plugins manager changed something: an open role call whose holder the table no longer names ends stale with
 // its sub-calls, as a narrowed grant stops what follows (D-606). Gate on or off, since the holder is found and not
 // judged. A table that throws names no holder, so a fault there ends every open role call stale, fail-safe
-export function moved(c: Context): void {
+export function endMovedRoles(c: Context): void {
   for (const way of [...c.ways.values()]) {
     for (const pending of [...way.made.values()]) {
       if (pending.done || !Object.hasOwn(roleActions, pending.action)) continue
-      if (pending.scope?.target !== c.role(pending.action)) revoke(c, pending, 'stale')
+      if (pending.scope?.target !== c.holderOf(pending.action)) revoke(c, pending, 'stale')
     }
   }
 }

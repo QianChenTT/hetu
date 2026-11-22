@@ -189,14 +189,14 @@ describe('door.handle', () => {
     router.changed()
     const id = http.call('door.handle', request, as)
     await mcp.delivered('door.handle')
-    pluginsManager.role = () => { throw new Error('table down') }
+    pluginsManager.holderOf = () => { throw new Error('table down') }
     router.changed()
     expect(code(await http.reply(id))).toBe('stale')
   })
 
   it('answers unavailable when the table throws, as for a plugin it can\'t read', async () => {
     const { http, pluginsManager } = door()
-    pluginsManager.role = () => { throw new Error('table down') }
+    pluginsManager.holderOf = () => { throw new Error('table down') }
     expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
   })
 })
