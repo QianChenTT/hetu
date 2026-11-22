@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { START_HUNG, type CoreStatus, type SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
+import { doorId } from '../api/ids.ts'
 import type { Failure } from '../backend/runtime/header.ts'
 import { afterFailure, Ending } from '../backend/runtime/quit.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
@@ -11,7 +12,7 @@ import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, hostManifest, stateOf, tempBase, throwingClassifier, until,
+  allowAll, cleanup, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, stateOf, tempBase, throwingClassifier, until,
   workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
 import { storageModule } from './modules-fakes.ts'
@@ -23,10 +24,14 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const worker = (id: string): Files => filesFor(workerManifest(id))
 const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 const exists = (file: string) => stat(file).then(() => true, () => false)
-// An install list naming a core module, which the core holds and no list may name, so the list can't be read
-const naming = () => ({ ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) } })
 const plugins = () => ({ folder: { alpha: worker('alpha') }, entries: { alpha: (root: string) => entryFor(root) } })
-const tampered = (again: boolean) => ({ control: 'install', why: 'tampered', reason: null, again })
+// The gate whose first grants snapshot throws, which stops hetu in the stopped mode at start
+const throwingGate = () => {
+  const gate = allowAll()
+  gate.throws = true
+  return gate
+}
+const gateFailed = { control: 'gate', why: 'start-failed', reason: 'state-changed', again: false }
 
 describe('a core module that fails at start', () => {
   it.each([
@@ -74,32 +79,16 @@ describe('a core module that fails at start', () => {
   })
 })
 
-describe('an install list that can\'t be read', () => {
-  it('stops hetu in the stopped mode as tampered when it names a core module, starting no plugin', async () => {
-    const made = await harness({ ...plugins(), install: naming() })
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toEqual(tampered(false))
-    expect(made.runtime.order()).toEqual([])
-    expect(stateOf(made.pluginsManager, 'alpha')).not.toBe('ready')
-    expect(made.link.events('core.ready')).toEqual([])
-    expect(made.link.events('core.stopped')).toEqual([tampered(false)])
-  })
-
-  it('says again when the run before restarted', async () => {
-    const made = await harness({ install: naming(), before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log') })
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toEqual(tampered(true))
-  })
-
+describe('the stopped mode at start', () => {
   it('shows the stopped mode in core.status and the trusted window\'s list', async () => {
-    const made = await harness({ install: naming() })
+    const made = await harness({ modules: { gate: throwingGate() } })
     await made.pluginsManager.start()
-    expect(((await made.pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).stopped).toEqual(tampered(false))
-    expect(((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).stopped).toEqual(tampered(false))
+    expect(((await made.pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).stopped).toEqual(gateFailed)
+    expect(((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).stopped).toEqual(gateFailed)
   })
 
   it('takes the human\'s choice in the stopped mode and clears the restart marker with it', async () => {
-    const made = await harness({ install: naming(), before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log') })
+    const made = await harness({ modules: { gate: throwingGate() }, before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log') })
     await made.pluginsManager.start()
     const { held } = await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted) as { held: string }
     await made.pluginsManager.confirm(held, { typed: 'gate' })
@@ -368,29 +357,29 @@ describe('the fail-safe at start', () => {
   })
 
   it('starts on with an expected guard the human switched off', async () => {
-    const made = await harness({ ...plugins(), switches: { off: ['net'] }, pluginsManager: { guardsFor: () => ['net'] } })
+    const made = await harness({ ...plugins(), switches: { off: [doorId] }, pluginsManager: { guardsFor: () => [doorId] } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
     // The router reads the same switch, so the guard is no step and a write passes it
-    expect(made.pluginsManager.policyJob('net')).toBe('off')
+    expect(made.pluginsManager.policyJob(doorId)).toBe('off')
   })
 
   it('starts again with an expected guard nothing holds switched off once its off applied in the stopped mode', async () => {
     const base = await tempBase()
-    const expecting = { guardsFor: () => ['net'] }
+    const expecting = { guardsFor: () => [doorId] }
     const made = await harness({ base, ...plugins(), pluginsManager: expecting })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'net', why: 'start-failed' })
+    expect(made.pluginsManager.stopped()).toMatchObject({ control: doorId, why: 'start-failed' })
     // What the Confirm applies. The contract expects no guard yet, so its typed word can't be asked for here
-    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'net' })
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: doorId })
     const { switches } = (await made.store.load()).state
-    expect(switches.off).toContain('net')
+    expect(switches.off).toContain(doorId)
     await made.pluginsManager.shutdown()
     const again = await harness({ base, switches, pluginsManager: expecting })
     await again.pluginsManager.start()
     expect(again.pluginsManager.stopped()).toBe(null)
-    expect(again.pluginsManager.policyJob('net')).toBe('off')
+    expect(again.pluginsManager.policyJob(doorId)).toBe('off')
   })
 
   // Only a clean Quit or a change applied in the stopped mode clears the restart marker, so a failure that comes back

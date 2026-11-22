@@ -1,45 +1,59 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
 import {
-  cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, tick, until, workerManifest, type Listing,
+  allowAll, cleanup, DOOR_CODE, entryFor, filesFor, harness, reasonOf, stateOf, tick, until, workerManifest,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
-const host = (id: string, extra: object = {}): Listing => ({ files: filesFor(hostManifest(id, extra)) })
 const utilityCaller = (incarnation = 1): Caller => ({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation })
 const windowCall = (action: string, plugin: string, role: 'editor' | 'trusted' = 'trusted') => {
   const caller: Caller = { kind: 'window', role, n: 1 }
   return { callId: 'c', caller, root: caller, action, args: { plugin }, deadline: Date.now() + 1000 }
 }
 
-// http, whose host entry runs in a utility process, requiring storage, a core module
-const install = (http: Listing = host('mcp-http-handler', { requires: ['storage'] })) => ({ ...coreInstall(), 'mcp-http-handler': http })
+// The door, whose host entry runs in a utility process
+const door = DOOR_CODE
 // A folder plugin requiring http
 const dependent = { folder: { tool: filesFor(workerManifest('tool', { requires: ['mcp-http-handler'] })) }, entries: { tool: (root: string) => entryFor(root) } }
 
+describe('the door\'s powers', () => {
+  // Fixed in code: what the floor admits from its utility process and nothing it holds
+  it('holds no grant: none the gate is handed, none the classifier reads and no role', async () => {
+    const gate = allowAll()
+    const made = await harness({ door, ...dependent, modules: { gate } })
+    await made.pluginsManager.start()
+    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
+    const inside = made.pluginsManager as unknown as { grantsHeld(k: unknown): unknown[], grantsOf(id: string): unknown[], known: Map<string, unknown> }
+    expect(inside.grantsHeld(inside.known.get('mcp-http-handler'))).toEqual([])
+    expect(inside.grantsOf('mcp-http-handler')).toEqual([])
+    expect(gate.seen.length).toBeGreaterThan(0)
+    for (const snapshot of gate.seen) expect(Object.keys(snapshot.plugins)).not.toContain('mcp-http-handler')
+  })
+})
+
 describe('a utility half', () => {
   it('starts from the host entry\'s verified bytes on a port registered under its host half, never imported in main', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
     expect(made.pluginsManager.plugin('mcp-http-handler')?.place).toBe('utility')
     expect(made.pluginsManager.list().find(row => row.id === 'mcp-http-handler')?.place).toBe('utility')
     expect(made.runtime.started.filter(start => start.id === 'mcp-http-handler')).toEqual([
-      { id: 'mcp-http-handler', incarnation: 1, half: 'utility', code: '// mcp-http-handler host.js 1.0.0\n' },
+      { id: 'mcp-http-handler', incarnation: 1, half: 'utility', code: DOOR_CODE },
     ])
     expect(made.link.registered).toContainEqual(utilityCaller())
     // Recorded as the port of the utility process the core started, which the router's floor reads
     expect(made.link.utilities).toEqual([utilityCaller()])
     // Main counts the bytes on its port, since no relay page sits in front of it. A worker's it leaves to the relay
     expect(made.runtime.channels).toEqual([{ id: 'mcp-http-handler', counted: true }])
-    // Storage, the core module it requires, serves before it starts. No plugin holds door.handle, the role it calls
+    // It requires nothing. No plugin holds door.handle, the role it calls
     expect(made.runtime.order()).toEqual(['mcp-http-handler'])
-    expect(made.runtime.half('mcp-http-handler', 1, 'utility').got('init')[0].deps).toEqual({ storage: 'ready', 'door.handle': 'unavailable' })
+    expect(made.runtime.half('mcp-http-handler', 1, 'utility').got('init')[0].deps).toEqual({ 'door.handle': 'unavailable' })
   })
 
   it('is never told the data folder', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     const [init] = made.runtime.half('mcp-http-handler', 1, 'utility').got('init')
     expect(init).toMatchObject({ kind: 'init', id: 'mcp-http-handler', incarnation: 1 })
@@ -47,30 +61,8 @@ describe('a utility half', () => {
     expect(JSON.stringify(made.link.sentTo('mcp-http-handler', 'init'))).not.toContain(made.dataDir)
   })
 
-  it('waits while storage, which it requires, is switched off and starts once it is on', async () => {
-    const made = await harness({ install: install(), switches: { off: ['storage'] } })
-    await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('waiting')
-    expect(reasonOf(made.pluginsManager, 'mcp-http-handler')).toBe('dependency:storage:off')
-    expect(made.runtime.order()).toEqual([])
-    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'storage' })
-    await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'ready')
-    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'storage' })
-    await made.pluginsManager.settled()
-    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('waiting')
-    expect(made.runtime.killed).toEqual([{ id: 'mcp-http-handler', incarnation: 1 }])
-  })
-
-  it('is refused with place when its manifest names no host entry, so it never runs as a worker instead', async () => {
-    const made = await harness({ install: install({ files: filesFor(manifest('mcp-http-handler', { entries: { worker: 'worker.js' } })) }) })
-    await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('refused')
-    expect(reasonOf(made.pluginsManager, 'mcp-http-handler')).toBe('place')
-    expect(made.runtime.started.filter(start => start.id === 'mcp-http-handler')).toEqual([])
-  })
-
   it('is killed and reads crashed when it isn\'t ready by its deadline', async () => {
-    const made = await harness({ install: install(), behave: { 'mcp-http-handler': { ready: false } }, limits: { readyMs: 60 } })
+    const made = await harness({ door, behave: { 'mcp-http-handler': { ready: false } }, limits: { readyMs: 60 } })
     await made.pluginsManager.start()
     await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'crashed')
     expect(reasonOf(made.pluginsManager, 'mcp-http-handler')).toBe('start-timeout')
@@ -78,7 +70,7 @@ describe('a utility half', () => {
   })
 
   it('reads crashed with start-failed when the fork throws', async () => {
-    const made = await harness({ install: install(), behave: { 'mcp-http-handler': { throws: true } } })
+    const made = await harness({ door, behave: { 'mcp-http-handler': { throws: true } } })
     await made.pluginsManager.start()
     await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'crashed')
     expect(reasonOf(made.pluginsManager, 'mcp-http-handler')).toBe('start-failed')
@@ -87,7 +79,7 @@ describe('a utility half', () => {
 
 describe('the heartbeat of a utility half', () => {
   it('pings it and kills it after heartbeatMisses unanswered, crashed with unresponsive, its dependents waiting', async () => {
-    const made = await harness({ install: install(), ...dependent, limits: { heartbeatMs: 15, heartbeatMisses: 3 } })
+    const made = await harness({ door, ...dependent, limits: { heartbeatMs: 15, heartbeatMisses: 3 } })
     await made.pluginsManager.start()
     await until(() => stateOf(made.pluginsManager, 'tool') === 'ready')
     made.runtime.behave['mcp-http-handler'] = { pong: false }
@@ -101,7 +93,7 @@ describe('the heartbeat of a utility half', () => {
 
   it('kills no utility half in its planned stop for missed beats, its stop ending as the human\'s', async () => {
     const made = await harness({
-      install: install(), behave: { 'mcp-http-handler': { stopped: false } }, limits: { heartbeatMs: 10, heartbeatMisses: 2, stopGraceMs: 200 },
+      door, behave: { 'mcp-http-handler': { stopped: false } }, limits: { heartbeatMs: 10, heartbeatMisses: 2, stopGraceMs: 200 },
     })
     await made.pluginsManager.start()
     made.runtime.behave['mcp-http-handler'] = { pong: false, stopped: false }
@@ -114,7 +106,7 @@ describe('the heartbeat of a utility half', () => {
   })
 
   it('kills no utility half while the human has the heartbeat off', async () => {
-    const made = await harness({ install: install(), switches: { off: ['heartbeat'] }, limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
+    const made = await harness({ door, switches: { off: ['heartbeat'] }, limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
     await made.pluginsManager.start()
     made.runtime.behave['mcp-http-handler'] = { pong: false }
     await tick(80)
@@ -126,7 +118,7 @@ describe('the heartbeat of a utility half', () => {
   // and it still lives while it sends, then dies once silent
   it('keeps one over its rate whose pongs are dropped while main hears anything from it and kills it once it is silent', async () => {
     const made = await harness({
-      install: install(),
+      door,
       limits: { heartbeatMs: 40, heartbeatMisses: 2 },
       switches: { limits: { all: {}, plugins: { 'mcp-http-handler': { messagesPerSecond: 5, floodFactor: 1000 } } } },
     })
@@ -148,7 +140,7 @@ describe('the heartbeat of a utility half', () => {
 
   it('ends one past its flood cap as flood, though main heard it', async () => {
     const made = await harness({
-      install: install(),
+      door,
       limits: { heartbeatMs: 40, heartbeatMisses: 2 },
       switches: { limits: { all: {}, plugins: { 'mcp-http-handler': { messagesPerSecond: 5, floodFactor: 2, floodMs: 1000 } } } },
     })
@@ -161,7 +153,7 @@ describe('the heartbeat of a utility half', () => {
   })
 
   it('keeps one that answers ready and running', async () => {
-    const made = await harness({ install: install(), limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
+    const made = await harness({ door, limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
     await made.pluginsManager.start()
     await until(() => made.link.sentTo('mcp-http-handler', 'ping').length >= 5)
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
@@ -171,7 +163,7 @@ describe('the heartbeat of a utility half', () => {
 
 describe('a utility process that ends', () => {
   it('reads crashed when it exits by itself while ready, whatever its exit, with exited', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     made.runtime.exit('mcp-http-handler', 1, false)
     await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'crashed')
@@ -180,7 +172,7 @@ describe('a utility process that ends', () => {
   })
 
   it('reads the runtime\'s own kill as killed, never as a clean exit', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     made.runtime.exit('mcp-http-handler', 1, true)
     await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'crashed')
@@ -188,7 +180,7 @@ describe('a utility process that ends', () => {
   })
 
   it('reads its port closing as a crash, as a worker\'s', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     made.runtime.half('mcp-http-handler', 1, 'utility').crash()
     await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'crashed')
@@ -196,7 +188,7 @@ describe('a utility process that ends', () => {
   })
 
   it('changes nothing when an incarnation that is over exits late', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(windowCall('core.restart', 'mcp-http-handler'))
     await until(() => made.pluginsManager.plugin('mcp-http-handler')?.incarnation === 2 && stateOf(made.pluginsManager, 'mcp-http-handler') === 'ready')
@@ -208,7 +200,7 @@ describe('a utility process that ends', () => {
 
 describe('stops and restarts of a utility half', () => {
   it('stops on core.stop from the trusted window: stop down its way, the way ended, then the process killed', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(windowCall('core.stop', 'mcp-http-handler'))
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('stopped')
@@ -218,7 +210,7 @@ describe('stops and restarts of a utility half', () => {
   })
 
   it('is killed once the stop grace ran out when it never answers stopped', async () => {
-    const made = await harness({ install: install(), behave: { 'mcp-http-handler': { stopped: false } } })
+    const made = await harness({ door, behave: { 'mcp-http-handler': { stopped: false } } })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(windowCall('core.stop', 'mcp-http-handler'))
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('stopped')
@@ -226,7 +218,7 @@ describe('stops and restarts of a utility half', () => {
   })
 
   it('restarts in the same run on core.restart as a new incarnation from the same bytes', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     made.runtime.exit('mcp-http-handler', 1, false)
     await until(() => stateOf(made.pluginsManager, 'mcp-http-handler') === 'crashed')
@@ -240,7 +232,7 @@ describe('stops and restarts of a utility half', () => {
 
   // The door is the human's to restart: a restart cuts every agent call in flight and brings back a door the core ended
   it('is restarted from the trusted window alone, never from the editor window, running or failed', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     await expect(made.pluginsManager.serve(windowCall('core.restart', 'mcp-http-handler', 'editor'))).rejects.toEqual({ code: 'not-granted' })
     expect(made.runtime.killed).toEqual([])
@@ -260,7 +252,7 @@ describe('a utility half whose bind failed', () => {
     ({ callId: 'c', caller, root: caller, action: 'core.bindFailed', args: { reason }, deadline: Date.now() + 1000 })
 
   it.each(['port-taken', 'bind-failed'])('reads failed with %s, not crashed, its process ended and its dependents waiting', async reason => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(bindFailed(reason))
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('failed')
@@ -273,7 +265,7 @@ describe('a utility half whose bind failed', () => {
   })
 
   it('moves a plugin that requires it to waiting, naming it failed', async () => {
-    const made = await harness({ install: install(), ...dependent })
+    const made = await harness({ door, ...dependent })
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'tool')).toBe('ready')
     // The folder plugin's worker is registered on a port, never as a utility process
@@ -285,7 +277,7 @@ describe('a utility half whose bind failed', () => {
   })
 
   it('starts again on core.restart from the trusted window, a new incarnation from the same bytes', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(bindFailed('port-taken'))
     await made.pluginsManager.serve(windowCall('core.restart', 'mcp-http-handler'))
@@ -295,7 +287,7 @@ describe('a utility half whose bind failed', () => {
   })
 
   it('ends nothing for a caller whose incarnation is over or that is not a utility half', async () => {
-    const made = await harness({ install: install(), ...dependent })
+    const made = await harness({ door, ...dependent })
     await made.pluginsManager.start()
     await expect(made.pluginsManager.serve(bindFailed('port-taken', utilityCaller(2)))).rejects.toEqual({ code: 'not-found' })
     const tool: Caller = { kind: 'plugin', id: 'tool', half: 'worker', incarnation: 1 }
@@ -312,7 +304,7 @@ describe('limits the human sets', () => {
     const heard: [string, number][] = []
     const holder: { made: Awaited<ReturnType<typeof harness>> | null } = { made: null }
     holder.made = await harness({
-      install: install(),
+      door,
       pluginsManager: { limited: plugin => void heard.push([plugin, holder.made!.router.limit(plugin, 'messagesPerSecond')]) },
     })
     await holder.made.pluginsManager.start()
@@ -335,7 +327,7 @@ describe('limits the human sets', () => {
   })
 
   it('apply even when the runtime throws as it hears one', async () => {
-    const made = await harness({ install: install(), pluginsManager: { limited: () => { throw new Error('no child') } } })
+    const made = await harness({ door, pluginsManager: { limited: () => { throw new Error('no child') } } })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'mcp-http-handler' })
     expect(made.router.limit('mcp-http-handler', 'messagesPerSecond')).toBe(20)

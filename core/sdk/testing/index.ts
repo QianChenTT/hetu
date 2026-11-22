@@ -4,7 +4,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import { grantKeyOf, type Caller, type Refusal, type RefusalCode } from '../../api/envelope.ts'
 import { type LimitName, defaultLimits } from '../../api/limits.ts'
-import { LOCK_GUARD, utilityIds } from '../../api/ids.ts'
+import { doorId, LOCK_GUARD } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
 import type { Call, Guard, PluginState, PolicyJobState, Provider } from '../../api/policy-jobs.ts'
@@ -467,7 +467,7 @@ export class FakeCore {
   private async launch(plugin: Plugin): Promise<FakeState> {
     const incarnation = ++this.incarnation
     const caller: Caller = { kind: 'plugin', id: this.manifest.id, half: this.half, incarnation }
-    const utility = this.half === 'host' && (utilityIds as readonly string[]).includes(this.manifest.id)
+    const utility = this.half === 'host' && this.manifest.id === doorId
     this.reason = null
     this.infos(this.manifest.id, {
       state: 'starting',

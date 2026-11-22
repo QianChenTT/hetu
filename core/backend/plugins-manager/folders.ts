@@ -1,12 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { z } from 'zod'
 import { pluginId } from '../../api/ids.ts'
-import { pluginVersion } from '../../api/install.ts'
-import { retried, syncDir, writable } from '../../lib/disk.ts'
+import { retried, syncDir } from '../../lib/disk.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
-import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
+import { replaceFile } from '../../lib/hashed-file.ts'
 
 // The plugins manager's folders in the data folder
 export const folders = {
@@ -16,7 +14,6 @@ export const folders = {
   starting: (dataDir: string) => path.join(dataDir, 'starting'),
   cache: (dataDir: string, id: string) => path.join(dataDir, 'cache', id),
   storage: (dataDir: string, id: string) => path.join(dataDir, 'storage', id),
-  installed: (dataDir: string) => path.join(dataDir, 'installed.json'),
 }
 
 const token = () => randomBytes(8).toString('hex')
@@ -132,50 +129,4 @@ export async function readStartMarkers(dataDir: string, ids: readonly string[]):
   } catch {
     return []
   }
-}
-
-const installedFile = z.strictObject({
-  format: z.literal(1),
-  plugins: z.record(pluginId, z.strictObject({ version: pluginVersion, hash: z.string().regex(/^[0-9a-f]{64}$/) })),
-})
-export type Installed = Record<string, { version: string, hash: string }>
-
-// The version and hash each core plugin had in the last run, which tells an app update from a start. A file that is
-// gone or fails its hash line reads as no run before, so no plugin hears of an update it can't be sure of
-export async function readInstalled(dataDir: string): Promise<Installed> {
-  let bytes: Buffer
-  try {
-    bytes = await retried(() => readFile(folders.installed(dataDir)), folders.installed(dataDir), 'read')
-  } catch {
-    return Object.create(null)
-  }
-  const checked = checkHash(bytes)
-  if (!('body' in checked)) return Object.create(null)
-  try {
-    return Object.assign(Object.create(null), parseStrict(checked.body, installedFile).plugins)
-  } catch {
-    return Object.create(null)
-  }
-}
-
-// Written whole with its hash line, as the state files are. A read-only copy a restore left is cleared first, as the
-// StateStore does, or Windows refuses the replace
-export async function writeInstalled(dataDir: string, plugins: Installed): Promise<void> {
-  const body = Buffer.from(`${JSON.stringify({ format: 1, plugins }, null, 2)}\n`)
-  await mkdir(dataDir, { recursive: true })
-  await writable(folders.installed(dataDir))
-  await replaceFile(folders.installed(dataDir), withHash(body))
-}
-
-// A piece of the install's own code, which loads only from inside the install
-export function insideInstall(installDir: string, relative: string, platform: string = process.platform): string {
-  const paths = platform === 'win32' ? path.win32 : path.posix
-  if (relative === '' || paths.isAbsolute(relative)) throw new Error(`not a path inside the install: ${relative}`)
-  const resolved = paths.resolve(installDir, relative)
-  const inside = paths.relative(installDir, resolved)
-  // .. covers an escape and an absolute answer covers another drive, which a drive relative path like C:x can reach
-  if (inside === '' || inside === '..' || inside.startsWith(`..${paths.sep}`) || paths.isAbsolute(inside)) {
-    throw new Error(`not a path inside the install: ${relative}`)
-  }
-  return resolved
 }

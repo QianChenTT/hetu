@@ -7,19 +7,20 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/policy-jobs.ts'
+import { doorId } from '../api/ids.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { RouterDoor } from '../backend/router/header.ts'
 import { wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { httpPlugin } from '../../core-plugins/mcp-http-handler/src/keeper.ts'
+import { httpPlugin } from '../backend/door/keeper.ts'
 import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './router-fakes.ts'
 import { luoshuModule, storageModule } from './modules-fakes.ts'
 import {
-  allowAll, coreInstall, FakeRuntime, filesFor, hashOf, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
-  writeInstall, type Files, type Listing, type Message, writeApproved,
+  allowAll, DOOR_CODE, FakeRuntime, filesFor, hashOf, reasonOf, tempBase, workerManifest, writeDoor, writeFolder,
+  type Files, type Message, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -38,11 +39,11 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-// The joined core over a real boot: a temp data folder holding approved folder plugins, an install written from
-// fixtures, the fake runtime and the core modules, a gate that allows everything and the real others unless modules
+// The joined core over a real boot: a temp data folder holding approved folder plugins, the door's code when a test
+// hands one, the fake runtime and the core modules, a gate that allows everything and the real others unless modules
 // hands its own. before runs on the booted core before anything starts
 async function joined(options: {
-  install?: Record<string, Listing>
+  door?: string
   folder?: Record<string, Files>
   // More for a folder plugin's approved entry, its grants and switches
   entries?: Record<string, Partial<Plugin>>
@@ -57,7 +58,7 @@ async function joined(options: {
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, options.install ?? coreInstall())
+  const doorFile = options.door === undefined ? undefined : await writeDoor(installDir, options.door)
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
   for (const [id, files] of Object.entries(options.folder ?? {})) {
@@ -72,7 +73,8 @@ async function joined(options: {
   runtime.behave = options.behave ?? {}
   // No guard expected unless a test names its own, so the tests here hold their meaning with the lock module wired
   const { recording, pluginsManager, router, modules } = wireCore({
-    booted, installDir, runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0, guardsFor: () => [], ...options.wire,
+    booted, installDir, ...(doorFile === undefined ? {} : { doorFile }), runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0,
+    guardsFor: () => [], ...options.wire,
   })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
@@ -109,7 +111,7 @@ describe('wiring the core', () => {
     await pluginsManager.start()
     await recording.flush()
     const events = await coreRecordEvents(dataDir)
-    expect(events).toContain('install.checked')
+    expect(events).toContain('plugin.checked')
     expect(events).toContain('plugin.started')
     expect(router.limit('gate', 'readyMs')).toBe(10000)
     // The router keeps no import of the plugins manager, so the typecheck proves here that its door gives the plugins manager all it needs
@@ -404,9 +406,9 @@ describe('what wireCore hands the router', () => {
     const parts = await joined({
       folder: { alpha: filesFor(workerManifest('alpha')) },
       modules: { luoshu: luoshuModule(luoshu) },
-      wire: { guardsFor: () => ['net'] },
+      wire: { guardsFor: () => [doorId] },
       before: booted => {
-        booted.state.switches = { ...booted.state.switches, off: ['net'] }
+        booted.state.switches = { ...booted.state.switches, off: [doorId] }
       },
     })
     await parts.pluginsManager.start()
@@ -531,14 +533,9 @@ describe('the core\'s log through the joined core', () => {
 // The guard's policy job states end to end wait for #77, since core/api expects no guard on any action yet. Through the
 // shipping wiring here, with the guards the plugins manager and the router both expect
 describe('a guard down through the joined core', () => {
-  const net: Listing = { files: filesFor(hostManifest('net')) }
-
-  it.each([
-    ['it fails its hash check', { ...net, hash: '0'.repeat(64) }, 'tampered'],
-  ] as const)('stops hetu at start in the fail-safe when %s, no plugin starting and no write reaching the luoshu', async (_name, listing, reason) => {
+  it('stops hetu at start in the fail-safe when nothing holds it, no plugin starting and no write reaching the luoshu', async () => {
     const luoshu = new FakeLuoshu()
     const parts = await joined({
-      install: { ...coreInstall(), net: listing },
       folder: { alpha: filesFor(workerManifest('alpha')) },
       modules: { luoshu: luoshuModule(luoshu) },
       wire: { guardsFor: () => ['net'] },
@@ -548,7 +545,6 @@ describe('a guard down through the joined core', () => {
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
-    expect(reasonOf(parts.pluginsManager, 'net')).toBe(reason)
     expect(parts.pluginsManager.stopped()).toEqual({ control: 'net', why: 'start-failed', reason: 'absent', again: false })
     expect(parts.runtime.order()).toEqual([])
     expect(luoshu.performed).toEqual([])
@@ -918,10 +914,7 @@ describe('the door through the joined core', () => {
       return decision
     }
     const parts = await joined({
-      install: {
-        ...coreInstall(),
-        'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler')) },
-      },
+      door: DOOR_CODE,
       folder: {
         beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })),
         mcp: filesFor(workerManifest('mcp', { capabilities: [role] })),

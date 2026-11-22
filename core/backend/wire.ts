@@ -27,8 +27,8 @@ import type { Failure, Runtime } from './runtime/header.ts'
 export type WireOptions = {
   booted: Booted
   installDir: string
-  // Where the install list is when it isn't in the install folder
-  listDir?: string
+  // The door's code, left out where no door runs
+  doorFile?: string
   runtime: Runtime
   // The guards expected on an action, the same list for the plugins manager and the router. Defaults to core/api's
   guardsFor?: (action: GuardableAction) => readonly string[]
@@ -146,7 +146,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,
-    ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
+    ...(options.doorFile !== undefined ? { doorFile: options.doorFile } : {}),
     link: router,
     recording,
     runtime: options.runtime,

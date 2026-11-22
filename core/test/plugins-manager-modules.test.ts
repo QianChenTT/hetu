@@ -5,7 +5,7 @@ import type { CoreStatus, SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Failure } from '../backend/runtime/header.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, hostManifest, reasonOf, stateOf, until,
+  allowAll, cleanup, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, hostManifest, reasonOf, stateOf, until,
   workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
 
@@ -158,23 +158,6 @@ describe('the banner', () => {
 })
 
 describe('the core modules in the stopped mode', () => {
-  it('never start when the install list fails its check, so nothing judges or serves', async () => {
-    const luoshu = fakeLuoshu()
-    const history = fakeHistory()
-    const exec = fakeExec()
-    const gate = allowAll()
-    const made = await harness({ install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) } }, modules: { luoshu, history, exec, gate } })
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'install', why: 'tampered' })
-    expect(history.started + exec.started).toBe(0)
-    expect(luoshu.opened).toEqual([])
-    expect(gate.views).toEqual([])
-    expect(made.modules.gate()).toBeNull()
-    expect(made.pluginsManager.policyJob('gate')).toBe('failed')
-    expect(made.modules.provider('storage')).toBeNull()
-    expect(changes(made)).toEqual([])
-  })
-
   it('close once every plugin stopped, in the reverse of their start with the gate last, when the log fails again', async () => {
     const failures: Failure[] = []
     const luoshu = fakeLuoshu()

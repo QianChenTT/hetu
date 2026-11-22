@@ -11,7 +11,7 @@ import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { cleanup, harness, worker } from './router-fakes.ts'
-import { coreInstall, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
+import { FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeApproved } from './plugins-manager-fakes.ts'
 
 // What another plugin's write does once a write's temp file is open, after its version check and before its note lands
 const hook = { onTemp: null as null | (() => Promise<void>) }
@@ -51,7 +51,6 @@ async function world(folders: Record<string, Capability[]>) {
   const folder = path.join(base, 'notes')
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   // The grant risk classifier off, so no item of a class 4 plugin asks at first use and the path alone is judged
   await store.writeSwitches({ ...defaultSwitches(), off: ['grant-risk-classifier'] })

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,12 +6,9 @@ import vm from 'node:vm'
 import { build } from 'esbuild'
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreModuleIds } from '../api/ids.ts'
-import { INSTALL_LIST, installList } from '../api/install.ts'
 import { type BuildKind, buildMain } from '../build/main.ts'
 import { checkModuleImports, moduleBuiltins, moduleFolders } from '../build/module-imports.ts'
-import { hashFiles, readFiles } from '../lib/hash-files.ts'
-import { parseStrict } from '../lib/hashed-file.ts'
-import { checkManifest } from '../sdk/build/check-manifest.ts'
+import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import { writeFolder } from './plugins-manager-fakes.ts'
 
 const repo = path.join(import.meta.dirname, '..', '..')
@@ -38,20 +35,23 @@ describe('the main bundle', () => {
     expect(await readFile(path.join(out, 'main.js'), 'utf8')).toMatch(/from ["']electron["']/)
   })
 
-  it('writes no plugin into the install but the core plugin, layout and hidden marks included', async () => {
+  it('writes the door beside main.js and no install list or plugins folder', async () => {
     const out = await outDir()
     await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    expect(Object.keys(list.plugins)).toEqual(['mcp-http-handler'])
-    for (const id of ['layout', 'hidden-marks']) await expect(stat(path.join(out, 'plugins', id))).rejects.toThrow('ENOENT')
+    expect((await stat(path.join(out, DOOR_FILE))).isFile()).toBe(true)
+    await expect(stat(path.join(out, 'hetu-install.json'))).rejects.toThrow('ENOENT')
+    await expect(stat(path.join(out, 'plugins'))).rejects.toThrow('ENOENT')
   })
 
-  // An output folder an older build wrote to still holds its plugins, which the list no longer names and nothing reads
-  it('clears every plugin folder it does not build out of the output, the layout and hidden marks an older build wrote included', async () => {
+  // An output folder an older build wrote to still holds its install list and core plugins, which nothing reads
+  it('removes the install list and the plugins folder an older build left in the output', async () => {
     const out = await outDir()
-    for (const id of ['layout', 'hidden-marks']) await writeFolder(path.join(out, 'plugins', id), { 'hetu-plugin.json': '{}', 'dist/worker.js': '' })
+    for (const id of ['mcp-http-handler', 'layout']) await writeFolder(path.join(out, 'plugins', id), { 'hetu-plugin.json': '{}', 'dist/host.js': '' })
+    await writeFile(path.join(out, 'hetu-install.json'), '{"format":1,"plugins":{}}\n')
     await buildMain(out)
-    expect(await readdir(path.join(out, 'plugins'))).toEqual(['mcp-http-handler'])
+    expect((await stat(path.join(out, DOOR_FILE))).isFile()).toBe(true)
+    await expect(stat(path.join(out, 'hetu-install.json'))).rejects.toThrow('ENOENT')
+    await expect(stat(path.join(out, 'plugins'))).rejects.toThrow('ENOENT')
   })
 
   // The build takes source only from this repository, so nothing outside it can name another folder for it
@@ -64,30 +64,21 @@ describe('the main bundle', () => {
     expect([kindNamesNoSource, takesTwo]).toEqual([true, true])
   })
 
-  it('writes none of the core modules into the install, main.js holding each of them', async () => {
+  it('writes none of the core modules beside main.js, main.js holding each of them', async () => {
     const out = await outDir()
     await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    for (const id of coreModuleIds) {
-      expect(Object.keys(list.plugins)).not.toContain(id)
-      await expect(stat(path.join(out, 'plugins', id))).rejects.toThrow('ENOENT')
-    }
+    for (const id of coreModuleIds) await expect(stat(path.join(out, 'plugins', id))).rejects.toThrow('ENOENT')
     const main = await readFile(path.join(out, 'main.js'), 'utf8')
     for (const make of ['createGate', 'createGrantRiskClassifier', 'createStorage', 'createLuoshu', 'createHistory', 'createExec']) {
       expect(main, make).toContain(`function ${make}(`)
     }
   })
 
-  // http's host half runs in a utility process, so it holds no provider and no role and its module is the plugin alone
-  it('writes http into the install as a host half that imports only the built-ins its manifest names and exports the plugin alone', async () => {
+  // The door runs in a utility process, so it holds no provider and no role and its module is the plugin alone
+  it('writes the door as one module that imports only the built-ins core/api names for it and exports the plugin alone', async () => {
     const out = await outDir()
     await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'mcp-http-handler')
-    expect(list.plugins['mcp-http-handler']).toEqual({ path: 'plugins/mcp-http-handler', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
-    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
-    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
+    const text = (await readFile(path.join(out, DOOR_FILE))).toString('utf8')
     const imports = [...new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))]
     expect(imports.sort()).toEqual(['node:fs/promises', 'node:http', 'node:net', 'node:os'])
     const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>

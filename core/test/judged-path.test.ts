@@ -8,7 +8,7 @@ import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { luoshuModule } from './modules-fakes.ts'
-import { coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message, writeApproved } from './plugins-manager-fakes.ts'
+import { FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, type Message, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -44,7 +44,6 @@ async function world(granted: Record<string, string[]>) {
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   // The grant risk classifier off, so no item of a class 4 plugin asks at first use and the path alone is judged
   await store.writeSwitches({ ...defaultSwitches(), off: ['grant-risk-classifier'] })

@@ -89,7 +89,7 @@ export const retiredNames: readonly RetiredName[] = [
   },
   { name: 'StateView', now: 'grants snapshot', pattern: /\bStateView\b/g, allowed: [] },
   { name: 'requestEnvelope', now: 'callEnvelope', pattern: /\brequestEnvelope\b/g, allowed: [] },
-  { name: 'installIds', now: 'corePluginIds', pattern: /\binstallIds\b/g, allowed: [] },
+  { name: 'installIds', now: 'doorId', pattern: /\binstallIds\b/g, allowed: [] },
   { name: 'core/frontend/mount', now: 'core/frontend/editor', pattern: /\bfrontend\/mount\b/g, allowed: [] },
   { name: 'luoshu.set', now: 'luoshu.pick', pattern: /\bluoshu\.set\b/g, allowed: [] },
   {

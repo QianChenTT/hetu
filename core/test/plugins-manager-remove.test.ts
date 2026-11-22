@@ -61,7 +61,7 @@ describe('removing a plugin-folder plugin', () => {
     await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
     expect(made.pluginsManager.plugin('outline')).toBe(null)
     expect(made.pluginsManager.list().some(row => row.id === 'outline')).toBe(false)
-    const again = await harness({ base: made.base, install: undefined })
+    const again = await harness({ base: made.base })
     await again.pluginsManager.start()
     expect(again.pluginsManager.plugin('outline')).toBe(null)
   })
@@ -72,7 +72,7 @@ describe('removing a plugin-folder plugin', () => {
     fake.held = path.resolve(made.dataDir, 'plugins', 'outline')
     await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'outline' })
     fake.held = null
-    const again = await harness({ base: made.base, install: undefined })
+    const again = await harness({ base: made.base })
     await again.pluginsManager.start()
     expect(stateOf(again.pluginsManager, 'outline')).toBe('found')
     expect(again.runtime.order()).not.toContain('outline')

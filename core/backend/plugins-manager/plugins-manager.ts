@@ -15,7 +15,7 @@ import { viewsOf } from './reads.ts'
 import { PluginsChanges } from './changes.ts'
 import { type PluginsManagerOptions, type Listing, isModule, isOne } from './base.ts'
 
-export { bootOrder, type Listing, type PluginsManagerOptions, type UpdateOutcome } from './base.ts'
+export { type Listing, type PluginsManagerOptions, type UpdateOutcome } from './base.ts'
 
 // The plugins manager: what may run, where, when and as whom. It checks every plugin's bytes once before they run, places each
 // by where its code came from, resolves the requires graph, mints every port and owns every lifecycle state. It starts
@@ -121,8 +121,8 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const asking = new Set((entry?.firstUse ?? []).map(capabilityKey))
       return {
         id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
-        security: row.from === 'install' && isSecurityControl(row.id),
-        on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
+        security: row.from === 'core' && isSecurityControl(row.id),
+        on: row.from === 'core' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
         })),
@@ -223,17 +223,12 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
 
   // ---- boot
 
-  // In boot's order: the install checked, the core modules started, the install's plugins started, every plugin-folder
-  // entry classed again, the plugin folder scanned and its plugins started in graph order. core.ready closes it with
-  // every policy job's state, unless a shutdown began on the way
+  // In boot's order: the door's code read, the core modules started, the door started, every plugin-folder entry
+  // classed again, the plugin folder scanned and its plugins started in graph order. core.ready closes it with every
+  // policy job's state, unless a shutdown began on the way
   async start(): Promise<void> {
-    await this.readInstall()
+    await this.readDoor()
     this.failedBefore = await readFailedOnce(this.dataDir)
-    // An install list that can't be read counts as tampered, since it ships inside hetu's own files. The core modules
-    // start only once it passed
-    if (this.listResult === 'invalid') {
-      return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
-    }
     // The controls that judge yes or no go first and alone. Only core modules hold a guard, so any other expected guard
     // the human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
     // read from policyJob as the router reads it
@@ -272,7 +267,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     this.phase = 'all'
     this.replan()
     await this.settled()
-    await this.saveInstalled()
     // In the changes' turn, so no change writes an entry under the pass
     await this.serial(() => this.classAll('start'))
     this.classedAtStart = true

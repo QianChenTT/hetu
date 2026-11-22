@@ -1,79 +1,30 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { isReservedId, pluginId } from '../../api/ids.ts'
-import { INSTALL_LIST, installList, MAX_INSTALL_LIST_BYTES, type Listed } from '../../api/install.ts'
+import { doorId, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried } from '../../lib/disk.ts'
-import { parseStrict } from '../../lib/hashed-file.ts'
 import type { Plugin } from '../boot/header.ts'
-import { folders, insideInstall, readInstalled, writeInstalled, type Installed } from './folders.ts'
-import { readPlugin, unread, type Read } from './verify.ts'
+import { folders } from './folders.ts'
+import { doorRead, readPlugin, unread, type Read } from './verify.ts'
 import { type Known, osFiles, placeOf } from './base.ts'
 import { PluginsClasses } from './classes.ts'
 
-// The install and the plugin folder: the install list read and checked and every plugin found read once and verified
-// before it runs
+// The door and the plugin folder: the door's code and every plugin found read once and verified before it runs
 export abstract class PluginsInstall extends PluginsClasses {
-  // ---- the install
+  // ---- the door
 
-  protected async readInstall(): Promise<void> {
-    const file = path.join(this.listDir, INSTALL_LIST)
-    let bytes: Buffer | null = null
+  // The door's code as the build wrote it, read once like a plugin's bytes. What it may do is fixed in code, so no
+  // manifest is read. Code that can't be read leaves it refused missing
+  protected async readDoor(): Promise<void> {
+    const file = this.doorFile
+    if (file === null) return
+    let read = unread
     try {
-      bytes = await retried(() => readFile(file), file, 'read')
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.listResult = 'invalid'
-    }
-    if (bytes !== null) {
-      try {
-        if (bytes.length > MAX_INSTALL_LIST_BYTES) throw new Error('too large')
-        this.install = parseStrict(bytes, installList)
-        this.listResult = 'ok'
-      } catch {
-        this.listResult = 'invalid'
-      }
-    } else if (this.listResult === 'unread') {
-      this.listResult = 'absent'
-    }
-    this.note('install.checked', { result: this.listResult })
-    if (this.install === null) return
-
-    for (const [id, listed] of Object.entries(this.install.plugins)) {
-      let root: string | null = null
-      try {
-        root = insideInstall(this.installDir, listed.path, this.platform)
-      } catch {
-        // A path the install list can't place inside the install reads as unread, which checked records as missing
-      }
-      const read = root === null ? unread : await readPlugin(root, id, 'install')
-      this.know(id, 'install', root ?? this.installDir, read, listed, null)
-      this.checked(id, 'install', read, listed.hash, this.loose(id))
-    }
-
-    this.installed = await readInstalled(this.dataDir)
-    for (const k of this.known.values()) {
-      const last = this.installed[k.id]
-      if (last !== undefined && k.listed !== null && (last.version !== k.listed.version || last.hash !== k.listed.hash)) {
-        k.updated = last.version
-      }
-    }
-  }
-
-  // The marker for the next run: every core plugin's version and hash, except one whose update hasn't applied yet,
-  // which keeps the version it had so the next start finds the change again
-  protected async saveInstalled(): Promise<void> {
-    if (this.install === null) return
-    const next: Installed = Object.create(null)
-    for (const k of this.known.values()) {
-      if (k.from !== 'install' || k.listed === null) continue
-      const last = this.installed[k.id]
-      next[k.id] = k.updated !== null && last !== undefined ? last : { version: k.listed.version, hash: k.listed.hash }
-    }
-    try {
-      await writeInstalled(this.dataDir, next)
-      this.installed = next
+      read = doorRead(await retried(() => readFile(file), file, 'read'))
     } catch {
-      this.note('fault', { plugin: null, step: 'installed' })
+      // Read as missing below
     }
+    this.know(doorId, 'core', path.dirname(file), read, null)
+    this.checked(doorId, 'core', read, null, false)
   }
 
   // ---- the plugin folder
@@ -109,15 +60,14 @@ export abstract class PluginsInstall extends PluginsClasses {
     const root = folders.plugins(this.dataDir, id)
     const entry = this.state.plugins[id] ?? null
     const read = present ? await readPlugin(root, id, 'folder') : unread
-    this.know(id, 'folder', root, read, null, entry)
+    this.know(id, 'folder', root, read, entry)
     this.checked(id, 'folder', read, entry?.contentHash ?? null, this.loose(id))
   }
 
-  protected know(id: string, from: 'install' | 'folder', root: string, read: Read, listed: Listed | null, entry: Plugin | null): Known {
+  protected know(id: string, from: 'core' | 'folder', root: string, read: Read, entry: Plugin | null): Known {
     const k: Known = {
-      id, from, root, listed, entry, read, place: placeOf(id, read, from), state: 'found', reason: null, held: null,
+      id, from, root, entry, read, place: placeOf(from), state: 'found', reason: null, held: null,
       live: null, incarnations: 0, lastStop: null, previousVersion: this.versions.get(id) ?? null,
-      updated: null,
     }
     this.known.set(id, k)
     return k
@@ -128,7 +78,7 @@ export abstract class PluginsInstall extends PluginsClasses {
     let result: string
     if (read.hash === null) result = 'missing'
     else if (expected !== null && read.hash !== expected) result = !loose ? 'tampered' : this.dev(id) ? 'dev' : 'skipped'
-    else result = read.problem ?? (expected === null ? 'new' : 'ok')
+    else result = read.problem ?? (expected === null && from === 'folder' ? 'new' : 'ok')
     this.note('plugin.checked', { plugin: id, from, result })
   }
 }

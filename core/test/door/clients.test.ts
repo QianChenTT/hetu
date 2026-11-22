@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { Refused } from '@hetu/sdk'
-import { MAX_FIELDS_ASKED } from 'hetu-core/api/actions.ts'
-import { type Clients, clientsOf, MAX_FIELDS } from '../src/clients.ts'
+import { Refused } from '../../sdk/index.ts'
+import { MAX_FIELDS_ASKED } from '../../api/actions.ts'
+import { type Clients, clientsOf, MAX_FIELDS } from '../../backend/door/clients.ts'
 
 const made: Clients[] = []
 afterEach(() => {

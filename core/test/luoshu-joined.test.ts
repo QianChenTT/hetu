@@ -18,7 +18,7 @@ import type { SettingsValue } from '../frontend/editor/settings.ts'
 import type { UiHooks } from '../frontend/editor/ui-port.ts'
 import { Versions } from '../frontend/editor/versions.ts'
 import { cleanup, FakeGuard, harness, windowWay } from './router-fakes.ts'
-import { coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
+import { FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 const versionOf = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -40,7 +40,6 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   // The gate switched off by the human, as the trusted window does
   await store.writeSwitches(options.gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())

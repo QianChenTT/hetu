@@ -4,17 +4,15 @@ import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { type Caller } from '../../api/envelope.ts'
 import { defaultLimits, MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  coreModuleIds, corePluginIds, guardableActions, guards as expectedGuards, isSecurityControl, providers,
-  utilityIds, type CoreModuleId, type GuardableAction,
+  coreModuleIds, guardableActions, guards as expectedGuards, isSecurityControl, providers, type CoreModuleId, type GuardableAction,
 } from '../../api/ids.ts'
-import type { InstallList, Listed } from '../../api/install.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { HumanLimits, Opening, PluginInfo, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { Booted, FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/header.ts'
 import type { RouterDoor } from '../router/header.ts'
 import { type CoreModules } from '../modules/header.ts'
-import { clear, folders, type Installed } from './folders.ts'
+import { clear, folders } from './folders.ts'
 import { plan, type Plan, type Status, type Verdict } from './graph.ts'
 import { Connects, type PairOf } from './connects.ts'
 import type { Beating } from '../heartbeat/header.ts'
@@ -28,9 +26,9 @@ export type PluginsManagerOptions = {
   // What boot handed over: the state to run with, its checks, the one StateStore and the data folder
   booted: Pick<Booted, 'state' | 'checks' | 'store' | 'dataDir'>
   installDir: string
-  // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
-  // packaged build does inside app.asar
-  listDir?: string
+  // The door's code as the build wrote it, door.js beside main.js, inside app.asar in a packaged build. Left out, no
+  // door runs, as in the tests of the rest
+  doorFile?: string
   link: RouterDoor
   // Recording, which the plugins manager calls only while the human has it on
   recording: PluginsRecording
@@ -64,10 +62,10 @@ export type UpdateOutcome =
   | { outcome: 'refused', reason: string }
   | { outcome: 'confirm', stops: readonly string[] }
 
-// One row of the plugin list. from is where the code came from: the install or the plugin folder
+// One row of the plugin list. from is where the code came from: the core's own, the door, or the plugin folder
 export type Listing = {
   id: string
-  from: 'install' | 'folder'
+  from: 'core' | 'folder'
   place: PluginInfo['place']
   state: PluginState
   reason: string | null
@@ -93,13 +91,12 @@ export type Live = {
   deps: string
 }
 
-// A plugin the plugins manager knows. read holds the bytes that run. held is what happened in this run that only a restart
-// clears. updated is the version an app update replaced, until its record lands
+// A plugin the plugins manager knows, or the door. read holds the bytes that run. held is what happened in this run that
+// only a restart clears
 export type Known = {
   readonly id: string
-  readonly from: 'install' | 'folder'
+  readonly from: 'core' | 'folder'
   root: string
-  listed: Listed | null
   entry: Plugin | null
   read: Read
   place: PluginInfo['place']
@@ -110,13 +107,9 @@ export type Known = {
   incarnations: number
   lastStop: string | null
   previousVersion: string | null
-  updated: string | null
 }
 
 export type Staged = { dir: string, read: Read }
-
-// The order core plugins start in, the order ids.ts lists them. A requirement still starts before its dependent
-export const bootOrder = corePluginIds
 
 export const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at
@@ -127,13 +120,10 @@ export const refused = (reason: string): Status => ({ kind: 'refused', reason })
 
 export const ok: Status = { kind: 'ok' }
 
-// Where the core runs a plugin, never what its manifest asks for: a core plugin core/api names runs its host entry
-// in a utility process
-export function placeOf(id: string, read: Read, from: 'install' | 'folder'): PluginInfo['place'] {
-  const entries = read.manifest?.entries
-  if (entries === undefined) return from === 'install' ? 'host' : 'sandboxed'
-  if (entries.host !== undefined) return from === 'install' && isOne(utilityIds, id) ? 'utility' : 'host'
-  return 'sandboxed'
+// Where the core runs a part, never what a manifest asks for: the door in a utility process of its own, every plugin
+// sandboxed
+export function placeOf(from: 'core' | 'folder'): PluginInfo['place'] {
+  return from === 'core' ? 'utility' : 'sandboxed'
 }
 
 export function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
@@ -157,7 +147,7 @@ export abstract class PluginsBase {
   protected readonly store: StateStore
   protected readonly dataDir: string
   protected readonly installDir: string
-  protected readonly listDir: string
+  protected readonly doorFile: string | null
   protected readonly platform: string
   protected readonly guardsFor: (action: GuardableAction) => readonly string[]
   protected readonly logWrites: () => boolean
@@ -178,9 +168,6 @@ export abstract class PluginsBase {
   // none is cut off when the process ends
   protected readonly markerWork = new Set<Promise<void>>()
   protected state: SecurityState
-  protected install: InstallList | null = null
-  protected listResult: 'unread' | 'ok' | 'absent' | 'invalid' = 'unread'
-  protected installed: Installed = Object.create(null)
   protected planned: Plan = { verdicts: new Map(), order: [] }
   protected n = 1
   protected closing = false
@@ -218,7 +205,7 @@ export abstract class PluginsBase {
     this.store = booted.store
     this.dataDir = booted.dataDir
     this.installDir = options.installDir
-    this.listDir = options.listDir ?? options.installDir
+    this.doorFile = options.doorFile ?? null
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
@@ -331,9 +318,9 @@ ${capabilityKey(change.capability)}`)
     return serving.length === 1 ? serving[0].id : null
   }
 
-  // What a plugin holds: a folder plugin's entry, none before approval, and a core plugin's manifest
+  // What a plugin holds: a folder plugin's entry, none before approval. The door holds nothing
   protected grantsHeld(k: Known): readonly Capability[] {
-    return k.from === 'install' ? k.read.manifest?.capabilities ?? [] : k.entry?.granted ?? []
+    return k.from === 'core' ? [] : k.entry?.granted ?? []
   }
 
   // Whether another plugin holds a role these grants hold or ask for. An entry holds its role, on or off, until it is
@@ -386,42 +373,26 @@ ${capabilityKey(change.capability)}`)
     return [...new Set([...Object.keys(this.policyJobs()), ...guards])]
   }
 
-  // A core module's id, a provider and a guard name roles only a host half in main could hold. The core runs none
-  protected needsHost(id: string): boolean {
-    return isModule(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
-  }
-
   // A security control serving no provider namespace is required by nothing, the lock serving lock.* may be, as the
-  // luoshu is. A core module requires nothing in the graph. Core plugins require only core plugins and core modules
+  // luoshu is. A core module requires nothing in the graph
   protected requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
     if (isModule(k.id) && requires.length > 0) return true
-    return requires.some(id => (isSecurityControl(id) && !isOne(Object.values(providers), id))
-      || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
+    return requires.some(id => isSecurityControl(id) && !isOne(Object.values(providers), id))
   }
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
   // human switched off reads off whatever its check said and a failed check never reads as off
   // allowing is a build judged as allowUnsigned would name it, the build an update's Confirm allows
   protected status(k: Known, allowing: string | null = null): Status {
-    return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k, allowing)
+    return k.from === 'core' ? this.doorStatus(k) : this.folderStatus(k, allowing)
   }
 
-  // Dev mode on a core plugin loads its bytes unhashed, from the install and never from the plugin folder
-  protected installStatus(k: Known): Status {
-    const listed = k.listed!
+  // The door's code ships inside hetu's own files beside main.js, so no hash is kept apart to check it against. It is
+  // off by the human's switch, as a core module is
+  protected doorStatus(k: Known): Status {
     if (isOne(this.state.switches.off, k.id)) return { kind: 'off' }
-    const loose = this.loose(k.id)
     if (k.read.hash === null) return refused('missing')
-    if (!loose && k.read.hash !== listed.hash) return refused('tampered')
-    if (k.read.problem !== null) return refused(k.read.problem)
-    const manifest = k.read.manifest!
-    if (!loose && manifest.version !== listed.version) return refused('invalid')
-    if (this.needsHost(k.id)) return refused('place')
-    // A host entry runs only in a utility process, for the ids core/api places there, and those run only as it, never
-    // as a worker in its place
-    if ((manifest.entries.host !== undefined) !== isOne(utilityIds, k.id)) return refused('place')
-    if (this.requiresProblem(k)) return refused('requires')
     return k.held ?? ok
   }
 
@@ -484,10 +455,9 @@ ${capabilityKey(change.capability)}`)
     return isModule(id) ? this.moduleServes(id) : this.known.get(id)?.state === 'ready'
   }
 
+  // The door starts before every plugin
   protected rank(k: Known): number {
-    if (k.from === 'folder') return FOLDER_RANK
-    const at = (bootOrder as readonly string[]).indexOf(k.id)
-    return at === -1 ? FOLDER_RANK - 1 : at
+    return k.from === 'folder' ? FOLDER_RANK : 0
   }
 
   protected verdictOf(k: Known): Verdict {
@@ -597,10 +567,9 @@ ${capabilityKey(change.capability)}`)
     void this.record(event, fields)
   }
 
-  // What a plugin holds: a plugin-folder plugin's entry, a core plugin's manifest
+  // What a plugin holds: a plugin-folder plugin's entry. The door holds nothing
   protected grantsOf(id: string): readonly Capability[] {
-    const k = this.known.get(id)
-    if (k?.from === 'install') return k.read.manifest?.capabilities ?? []
+    if (this.known.get(id)?.from === 'core') return []
     return this.state.plugins[id]?.granted ?? []
   }
 

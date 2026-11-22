@@ -66,10 +66,10 @@ export function beforeReady(
   return found
 }
 
-// Where the core plugins are and where the install list is. A packaged build keeps the plugins beside app.asar and
-// the list inside it, so ASAR integrity covers the list. A run from the source uses the built main's folder for both.
-// Either one not locked takes HETU_INSTALL_DIR in their place, so the tests can hand it an install of their own. A
-// locked build never reads the environment
+// Where hetu is installed and where the code built beside main.js is, the door's among it. A packaged build keeps that
+// code inside app.asar, so ASAR integrity covers it. A run from the source uses the built main's folder for both.
+// Either one not locked takes HETU_INSTALL_DIR in their place, so the tests can hand it a door of their own. A locked
+// build never reads the environment
 export function installDirFor(options: {
   packaged: boolean
   locked: boolean
@@ -77,13 +77,13 @@ export function installDirFor(options: {
   here: string
   resourcesPath: string
   platform: string
-}): { installDir: string, listDir: string } {
+}): { installDir: string, codeDir: string } {
   const paths = options.platform === 'win32' ? path.win32 : path.posix
   const override = options.locked ? undefined : options.env.HETU_INSTALL_DIR
   if (override !== undefined) {
     if (!paths.isAbsolute(override)) throw new Error('HETU_INSTALL_DIR is not an absolute path')
-    return { installDir: override, listDir: override }
+    return { installDir: override, codeDir: override }
   }
-  if (options.packaged) return { installDir: options.resourcesPath, listDir: paths.join(options.resourcesPath, 'app.asar') }
-  return { installDir: options.here, listDir: options.here }
+  if (options.packaged) return { installDir: options.resourcesPath, codeDir: paths.join(options.resourcesPath, 'app.asar') }
+  return { installDir: options.here, codeDir: options.here }
 }

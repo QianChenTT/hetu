@@ -6,7 +6,7 @@ import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
 import {
-  coreInstall, FakeRuntime, filesFor, hashOf, oldFirstPartyEntry, plant, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved,
+  FakeRuntime, filesFor, hashOf, oldFirstPartyEntry, plant, tempBase, until, workerManifest, writeFolder, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 // Folder plugins on the joined core over a real boot, the core modules as they ship and the log on
@@ -30,7 +30,6 @@ async function joined(fill: (dataDir: string, store: StateStore) => Promise<void
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
   if (folder !== null) await store.writeLuoshu({ folder })

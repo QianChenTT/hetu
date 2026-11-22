@@ -195,7 +195,7 @@ export abstract class PluginsChanges extends PluginsInstall {
         this.bump()
       }
     })
-    if (k.from === 'install') k.held = { kind: 'held', state: 'stopped', reason: 'restart-hetu' }
+    if (k.from === 'core') k.held = { kind: 'held', state: 'stopped', reason: 'restart-hetu' }
     this.replan()
   }
 
@@ -239,12 +239,8 @@ export abstract class PluginsChanges extends PluginsInstall {
     // A plugin the human switched off holds nothing from the change on, so a call it makes in its stop grace passes on
     // no grant
     for (const [id, entry] of Object.entries(this.state.plugins)) {
-      if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
+      if (this.known.get(id)?.from === 'core' || !entry.enabled || entry.granted.length === 0) continue
       plugins[id] = items(entry.granted, entry.off ?? [], asks ? entry.firstUse ?? [] : [])
-    }
-    for (const k of this.known.values()) {
-      const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
-      if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
     // Each pair's items and the pairs revoked in the run, from memory
     const { pairs, revoked } = this.pairsSnapshot()
@@ -296,7 +292,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const k = this.known.get(id)
     // An expected guard has its switch whether it is installed or not, as the fail-safe's start with it switched off needs
     if (k === undefined && !this.expected().includes(id)) throw new Error(`no plugin ${id}`)
-    if (k === undefined || k.from === 'install') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
+    if (k === undefined || k.from === 'core') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
     if (k.entry === null) throw new Error(`no entry for ${id}`)
     const entry = { ...k.entry, enabled: on }
     await this.store.writePlugin(id, entry)
@@ -457,7 +453,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     }
     k.entry = entry
     k.read = read
-    k.place = placeOf(k.id, read, 'folder')
+    k.place = placeOf('folder')
     await this.allowBuild(old.contentHash, entry.contentHash)
     if (k.held?.reason === 'update') k.held = null
     this.bump()

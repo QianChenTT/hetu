@@ -93,7 +93,7 @@ describe('door.handle', () => {
   it('refuses a host half on a port the core never recorded as its utility process', async () => {
     const { connect, pluginsManager, mcp } = door()
     pluginsManager.utility('other')
-    expect(code(await connect(host('other'), 'port').ask('door.handle', request))).toBe('not-granted')
+    expect(code(await connect(host('other'), 'port').ask('door.handle', request, as))).toBe('not-granted')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 

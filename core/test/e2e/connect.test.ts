@@ -1,14 +1,10 @@
-import { cp, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
-import { INSTALL_LIST } from '../../api/install.ts'
-import { API_VERSION } from '../../api/manifest.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
-import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, repo, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
+import { filesFor, workerManifest, writeDoor, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
+import { cleanup, editorPage, launch, logged, pageAt, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 // A client's connect in the built app: a fake http in its utility process asks the core for the connect and collects
 // the answer, which a folder plugin's worker drives. The trusted window draws the request in the core's words
@@ -42,23 +38,13 @@ export default definePlugin({
 })
 `
 
-// The shipped install with the fake http in place of the shipped one
+// An install folder holding the fake http as the door in place of the shipped one
 async function install(): Promise<string> {
   const dir = await temp()
-  const dist = path.join(repo, 'core', 'dist')
-  await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true })
-  const list = JSON.parse(await readFile(path.join(dist, INSTALL_LIST), 'utf8')) as { format: number, plugins: Record<string, unknown> }
   const source = await temp()
   await writeFolder(source, { 'src/host.ts': http })
   const built = await buildHost(source, 'src/host.ts', [])
-  const root = path.join(dir, 'plugins', 'mcp-http-handler')
-  const manifest = {
-    id: 'mcp-http-handler', name: 'mcp-http-handler', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' },
-    provides: { actions: { connect: { from: ['caller'] }, collect: { from: ['caller'] } } },
-  }
-  await writeFolder(root, { 'hetu-plugin.json': `${JSON.stringify(manifest, null, 2)}\n`, 'dist/host.js': built.text })
-  list.plugins['mcp-http-handler'] = { path: 'plugins/mcp-http-handler', version: '1.0.0', hash: hashFiles(await readFiles(root)) }
-  await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
+  await writeDoor(dir, built.text)
   return dir
 }
 

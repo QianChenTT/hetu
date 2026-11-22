@@ -1,4 +1,5 @@
-import { folderManifest, installManifest, MAX_MANIFEST_BYTES, supportsApi, type InstallManifest } from '../../api/manifest.ts'
+import { doorId } from '../../api/ids.ts'
+import { API_VERSION, folderManifest, installManifest, MAX_MANIFEST_BYTES, supportsApi, type InstallManifest } from '../../api/manifest.ts'
 import { hashFiles, readFiles, type PluginFile } from '../../lib/hash-files.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 
@@ -52,6 +53,17 @@ function manifestOf(files: readonly PluginFile[], id: string, from: 'install' | 
   const held = new Set(files.map(candidate => candidate.path))
   if (!entryPaths(manifest).every(entry => held.has(entry))) return { manifest, problem: 'invalid' }
   return { manifest, problem: null }
+}
+
+// The file the build writes the door's code to, beside main.js
+export const DOOR_FILE = 'door.js'
+
+// The door's read: its code as built and the core's own record of it, never read from a file. One host entry run in a
+// utility process, asking for nothing and requiring nothing
+export function doorRead(bytes: Buffer): Read {
+  const files = [{ path: DOOR_FILE, bytes }]
+  const manifest: InstallManifest = { id: doorId, name: 'door', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: DOOR_FILE } }
+  return { files, hash: hashFiles(files), manifest, problem: null }
 }
 
 // Reads each file of the folder once and keeps the bytes, which are the bytes that run (threat row 26). The manifest is

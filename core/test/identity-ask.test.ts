@@ -6,7 +6,7 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Call } from '../api/policy-jobs.ts'
 import { EventLog } from '../lib/event-log.ts'
-import { allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, until, workerManifest, type FakeLink } from './plugins-manager-fakes.ts'
+import { allowAll, cleanup, DOOR_CODE, entryFor, filesFor, harness, until, workerManifest, type FakeLink } from './plugins-manager-fakes.ts'
 
 // A pair's items as the plugins manager holds them: asked for by the plugin the root of a chain called, confirmed by the
 // human, kept in memory for the run and handed to the gate keyed by the root plugin and the field
@@ -26,7 +26,7 @@ const gamma: Caller = { kind: 'plugin', id: 'gamma', half: 'worker', incarnation
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
 const item = (capability: Capability) => ({ capability, off: false, firstUse: false })
 
-// mcp and beta in the plugin folder, mcp-http-handler as the install's utility plugin, a clock the test moves. The
+// mcp and beta in the plugin folder, mcp-http-handler as the door, a clock the test moves. The
 // handler's chains reach mcp, beta's reach gamma
 async function started(base?: string) {
   const clock = { now: 1000 }
@@ -36,10 +36,7 @@ async function started(base?: string) {
   const gammaFiles = filesFor(workerManifest('gamma', { capabilities: [read] }))
   const made = await harness({
     ...(base !== undefined ? { base } : {}),
-    install: {
-      ...coreInstall(),
-      'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
-    },
+    door: DOOR_CODE,
     folder: { mcp: mcpFiles, beta: betaFiles, gamma: gammaFiles },
     entries: {
       mcp: root => entryFor(root, { signer: null, granted: [read], class: 1 }),

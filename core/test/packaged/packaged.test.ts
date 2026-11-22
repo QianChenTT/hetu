@@ -1,12 +1,11 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFile, link, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { link, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { flipFuses, FuseV1Options, FuseVersion, getCurrentFuseWire } from '@electron/fuses'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
-import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { appDir, asarHeader, cleanup, electronCopyIn, endedRefused, exitText, fuseFileIn, fuseFileOf, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
@@ -27,9 +26,9 @@ describe('the packed folder', () => {
   })
 
   // macOS keeps the app's icon there too, which Info.plist names
-  it('holds app.asar and the core plugins in resources and nothing else', async () => {
+  it('holds app.asar in resources and nothing else, the door inside it', async () => {
     const icon = process.platform === 'darwin' ? ['electron.icns'] : []
-    expect((await readdir(resourcesOf(appDir))).sort()).toEqual(['app.asar', ...icon, 'plugins'].sort())
+    expect((await readdir(resourcesOf(appDir))).sort()).toEqual(['app.asar', ...icon].sort())
   })
 })
 
@@ -43,8 +42,7 @@ describe('a start', () => {
     expect(started.ready).toBe(true)
     expect(started.dataDir).toBe(dataDir)
     const events = started.records.map(record => `${record.event}${typeof record.plugin === 'string' ? ` ${record.plugin}` : ''}`)
-    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started layout', 'plugin.started mcp-http-handler']))
-    expect(started.records.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
+    expect(events).toEqual(expect.arrayContaining(['plugin.started layout', 'plugin.started mcp-http-handler']))
     expect(started.records.find(record => record.event === 'core.ready')).toMatchObject({ gate: 'on' })
     expect([await exists(decoyData), await exists(decoyInstall)]).toEqual([false, false])
     expect(await readdir(decoy)).toEqual([])
@@ -251,34 +249,9 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   })
 })
 
-describe('a changed core plugin', () => {
-  const list = async () => JSON.parse(await readFile(path.join(repo, 'dist-package', 'dir', 'stage', 'app', 'hetu-install.json'), 'utf8')) as { plugins: Record<string, { hash: string }> }
-
-  async function tampered(id: string): Promise<string> {
-    const file = path.relative(appDir, path.join(resourcesOf(appDir), 'plugins', id, 'dist', 'host.js')).split(path.sep).join('/')
-    const copy = await linkedCopy([file])
-    await appendFile(path.join(copy, file), '\n// changed\n')
-    return copy
-  }
-
-  // The core modules are inside app.asar, which its integrity check holds, so mcp-http-handler is the core plugin the
-  // list's hash check is left to hold
-  it('fails alone as tampered and hetu runs', async () => {
-    const started = await start({ dir: await tampered('mcp-http-handler') })
-    expect(started.records.find(record => record.event === 'plugin.checked' && record.plugin === 'mcp-http-handler')).toMatchObject({ result: 'tampered' })
-    expect(started.ready).toBe(true)
-  })
-
-  it('stays tampered with a list planted beside app.asar that names its new hash', async () => {
-    const copy = await tampered('mcp-http-handler')
-    const planted = await list()
-    planted.plugins['mcp-http-handler'].hash = hashFiles(await readFiles(path.join(resourcesOf(copy), 'plugins', 'mcp-http-handler')))
-    await writeFile(path.join(resourcesOf(copy), 'hetu-install.json'), JSON.stringify(planted))
-    const started = await start({ dir: copy })
-    expect(started.records.find(record => record.event === 'plugin.checked' && record.plugin === 'mcp-http-handler')).toMatchObject({ result: 'tampered' })
-  })
-
-  it('never reads a plugin folder the list doesn\'t name', async () => {
+// The door is inside app.asar beside main.js, so nothing beside app.asar is read as a plugin
+describe('a plugin folder beside app.asar', () => {
+  it('is never read', async () => {
     const copy = await linkedCopy()
     const stray = path.join(resourcesOf(copy), 'plugins', 'stray')
     await mkdir(path.join(stray, 'dist'), { recursive: true })

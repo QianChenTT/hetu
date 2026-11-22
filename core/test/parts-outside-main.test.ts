@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { coreActions, eventActions, providerActions } from '../api/actions.ts'
 import { capabilityTypes } from '../api/capabilities.ts'
-import { corePluginIds, utilityIds } from '../api/ids.ts'
+import { doorId } from '../api/ids.ts'
 import { layoutTopics, uiNeeds } from '../api/ui.ts'
 import { placeProblems, type Place } from './listed-places.ts'
 import { apiConstants, namedIn, relaysOf, type Known, type Named, type Relays } from './named-parts.ts'
@@ -17,12 +17,13 @@ import { shippedFiles } from './shipped-files.ts'
 const repo = path.join(import.meta.dirname, '..', '..')
 const files = shippedFiles({ kinds: ['ts', 'js'] }).filter(file => file !== 'core/api/ids.ts')
 
-// The parts outside main: each core plugin and the utility process ones among them, read from ids.ts. leases is a core
-// plugin that is gone, which an old switches file still names. The first-party ids went with the first-party plugins:
-// hetu ships none and a user installs each in the plugin folder, so the core names them no more than any other plugin.
-// Core modules run in main and the namespaces are the core's, so neither counts
+// The parts outside main are plugins: the ids of plugins the core once named. leases is a core plugin that is gone,
+// which an old switches file still names. The first-party ids went with the first-party plugins: hetu ships none and a
+// user installs each in the plugin folder, so the core names them no more than any other plugin. Core modules run in
+// main and the namespaces are the core's, net among them, so neither counts. The door is core code in a utility process
+// the core starts and switches by its id, so its id names the core's own part
 const retired = ['leases', 'mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks']
-export const outside: ReadonlyMap<string, string> = new Map([...corePluginIds, ...utilityIds, ...retired].map(id => [id, id]))
+export const outside: ReadonlyMap<string, string> = new Map(retired.map(id => [id, id]))
 
 // The names core's own contract tables hold, read from core/api: the capability types, the drawer's verbs, its event
 // topics to the layout and the actions. Core defines these, so net.fetch or layout.draw is not core knowing a plugin
@@ -48,7 +49,8 @@ export const listed: readonly Place[] = [
   { place: 'frontend/editor/ui-port.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on' },
   { place: 'sdk/ui.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on, as the SDK names it' },
   { place: 'frontend/editor/bridge.ts', text: "? 'layout' :", hits: 1, why: 'the surface a layout.draw call draws on, the skeleton' },
-  { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
+  { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'net', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
+  { place: 'backend/door/checks.ts', text: "route: 'mcp'", hits: 1, why: 'the route of the door\'s one endpoint, POST /mcp, named for the protocol and not the mcp plugin' },
 ]
 
 // What fails: an id named outside the places listed and what listed-places.ts fails in a place
@@ -68,8 +70,8 @@ describe('the parts outside main the core names', () => {
     expect(files).toContain('core/frontend/editor/ui-port.ts')
     expect(files).not.toContain('core/api/ids.ts')
     expect(files.every(file => /\.(ts|js)$/.test(file) && file.startsWith('core/'))).toBe(true)
-    for (const id of ['mcp', 'git', 'layout', 'net', 'mcp-http-handler', 'hidden-marks', 'leases']) expect(outside.has(id), id).toBe(true)
-    for (const id of ['gate', 'luoshu', 'lock', 'core', 'plugin']) expect(outside.has(id), id).toBe(false)
+    for (const id of ['mcp', 'git', 'layout', 'hidden-marks', 'leases']) expect(outside.has(id), id).toBe(true)
+    for (const id of ['gate', 'luoshu', 'lock', 'core', 'plugin', 'net', doorId]) expect(outside.has(id), id).toBe(false)
   })
 
   it('names none outside the places listed, each still there and with its why', () => {
@@ -87,7 +89,6 @@ describe('the parts outside main check itself', () => {
 
   it.each([
     ["if (id === 'notify') {}", `${at}:1 'notify' names notify, a part hetu doesn't run in main`],
-    ["if (call.from === `mcp-http-handler`) {}", `${at}:1 'mcp-http-handler' names mcp-http-handler, a part hetu doesn't run in main`],
     ["const order = { 'hidden-marks': 1 }", `${at}:1 'hidden-marks' names hidden-marks, a part hetu doesn't run in main`],
     ["off.filter(id => id !== 'leases')", `${at}:1 'leases' names leases, a part hetu doesn't run in main`],
     ["if (caller.id === 'mcp') {}", `${at}:1 'mcp' names mcp, a part hetu doesn't run in main`],

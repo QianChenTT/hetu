@@ -1,4 +1,4 @@
-import { definePlugin, type Plugin } from '@hetu/sdk'
+import { definePlugin, type Plugin } from '../../sdk/index.ts'
 import { doorLimits, type TokenSeam } from './checks.ts'
 import { clientsOf } from './clients.ts'
 import { mcpServe } from './mcp.ts'

@@ -10,7 +10,7 @@ import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { luoshuModule } from './modules-fakes.ts'
 import {
-  coreInstall, FakeRuntime, filesFor, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
+  DOOR_CODE, FakeRuntime, filesFor, hashOf, tempBase, tick, workerManifest, writeDoor, writeFolder,
   type Half, type Message, writeApproved,
 } from './plugins-manager-fakes.ts'
 
@@ -22,9 +22,9 @@ afterEach(async () => {
 
 const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 
-// The joined core over a real boot with the real gate and luoshu. mcp-http-handler is the core plugin whose utility
-// half the test drives as the root of each chain, naming a field on its calls. mcp is a plugin-folder plugin approved
-// unsigned by its hash, a worker the test answers for, holding read on everything. With the gate on, the pair of the handler and client-1 is given
+// The joined core over a real boot with the real gate and luoshu. mcp-http-handler is the door whose utility half the
+// test drives as the root of each chain, naming a field on its calls. mcp is a plugin-folder plugin approved unsigned
+// by its hash, a worker the test answers for, holding door.handle and read on everything. With the gate on, the pair of the handler and client-1 is given
 // read on inbox through mcp's ask and the human's Confirm, as is client-3 on inbox. client-2 holds nothing
 async function joined(gate: 'on' | 'off') {
   const base = await tempBase()
@@ -37,13 +37,10 @@ async function joined(gate: 'on' | 'off') {
   await writeFile(path.join(folder, 'private', 'b.md'), 'SECRET')
   // A link in inbox that leads into private. A junction, which Windows makes with no admin rights
   await symlink(path.join(folder, 'private'), path.join(folder, 'inbox', 'link'), 'junction')
-  const mcpGrant: Capability[] = [everything, { type: 'plugin.call', targets: ['artifacts'] }]
-  const mcp = filesFor(workerManifest('mcp', { capabilities: mcpGrant, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }))
+  const mcpGrant: Capability[] = [{ type: 'door.handle' }, everything, { type: 'plugin.call', targets: ['artifacts'] }]
+  const mcp = filesFor(workerManifest('mcp', { capabilities: mcpGrant }))
   const artifacts = filesFor(workerManifest('artifacts', { capabilities: [everything], provides: { actions: { query: {} } } }))
-  await writeInstall(installDir, {
-    ...coreInstall(),
-    'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
-  })
+  const doorFile = await writeDoor(installDir, DOOR_CODE)
   const store = new StateStore(dataDir)
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcp)
@@ -70,7 +67,7 @@ async function joined(gate: 'on' | 'off') {
   }
   const runtime = new FakeRuntime()
   const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
-  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile, runtime, modules, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
@@ -121,20 +118,21 @@ async function ask(half: Half, action: string, args: unknown, extra: object = {}
   throw new Error(`no reply to ${action}`)
 }
 
-// The door hands mcp one request on behalf of label and mcp gets it as mcp.handle, each delivery taken once
+// The door hands mcp, the holder of door.handle, one request on behalf of label and mcp gets it as door.handle, each
+// delivery taken once
 const taken = new WeakSet<object>()
 async function request(door: Half, mcp: Half, label: string) {
   const id = 5000 + next++
-  door.send({ v: 1, kind: 'call', id, action: 'mcp.handle', args: { body: '{}' }, onBehalf: label })
+  door.send({ v: 1, kind: 'call', id, action: 'door.handle', args: { body: '{}', headers: {} }, onBehalf: label })
   for (let waited = 0; waited < 3000; waited += 5) {
-    const got = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle' && message.onBehalf === label && !taken.has(message))
+    const got = mcp.inbox.find(message => message.kind === 'call' && message.action === 'door.handle' && message.onBehalf === label && !taken.has(message))
     if (got !== undefined) {
       taken.add(got)
       return { parent: got.callId as string }
     }
     await tick(5)
   }
-  throw new Error('mcp.handle never arrived')
+  throw new Error('door.handle never arrived')
 }
 
 const outcome = (reply: Message) => (reply.ok === true ? (reply.result as { text: string }).text : (reply.refusal as { code: string }).code)

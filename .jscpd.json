@@ -1,7 +1,7 @@
 {
-  "path": ["core/api", "core/lib", "core/sdk", "core/frontend", "core/backend", "core-plugins"],
+  "path": ["core/api", "core/lib", "core/sdk", "core/frontend", "core/backend"],
   "format": ["typescript"],
-  "ignore": ["**/node_modules/**", "**/dist/**", "**/test/**", "**/testing/**", "core/sdk/build/**", "core-plugins/*/build.ts", "**/*.test.ts", "**/*.d.ts"],
+  "ignore": ["**/node_modules/**", "**/dist/**", "**/test/**", "**/testing/**", "core/sdk/build/**", "**/*.test.ts", "**/*.d.ts"],
   "minLines": 4,
   "minTokens": 20
 }
