@@ -28,7 +28,8 @@ type Namespaces = {
 }
 
 // One call per action, such as ctx.luoshu.read({ path }) or ctx.storage.set({ key, value }). call reaches another
-// plugin's <target>.<name>, which needs plugin.call on that target
+// plugin's <target>.<name>, which needs plugin.call on that target, or with the target core a core action the floor
+// admits from the caller's place, as the door's core.bindFailed
 export type Client = Namespaces & {
   call(target: string, name: string, args?: unknown, options?: CallOptions): Promise<unknown>
 }
