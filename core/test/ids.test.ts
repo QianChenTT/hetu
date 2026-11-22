@@ -122,7 +122,7 @@ describe('policy jobs, providers and guards', () => {
   })
 
   // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
-  it('runs http alone in the door\'s utility process, which holds no policy job, guard or provider role', () => {
+  it('names the door by an id of its own, reserved, with its built-ins, which is no policy job, guard or provider role', () => {
     expect(doorId).toBe('mcp-http-handler')
     expect(doorNode).toEqual(['http', 'net', 'os', 'fs'])
     expect(isReservedId(doorId)).toBe(true)
