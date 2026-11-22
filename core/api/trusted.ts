@@ -1,3 +1,4 @@
+import type { StagedSource } from './actions.ts'
 import type { Capability } from './capabilities.ts'
 
 // What the trusted window's page shares with the core, kept apart from zod so the page bundles none of it
@@ -75,4 +76,13 @@ const sentences: Sentences = {
 
 export function grantSentence(granted: Capability): string {
   return (sentences[granted.type] as (granted: Capability) => string)(granted)
+}
+
+// What an install says of the plugins it takes, which no signature proves yet
+export const UNSIGNED = 'Unsigned: nothing proves who made these plugins. Install only what comes from a source you trust'
+
+// The source as the core staged it, a link's with the release it took the zip from
+export function sourceLine(source: StagedSource): string {
+  if (source.kind === 'link') return `From ${quoted(source.asset)} in the release ${quoted(source.tag)} of ${quoted(source.link)}`
+  return `From the ${source.kind} ${quoted(source.path)}`
 }

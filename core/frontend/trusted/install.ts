@@ -3,7 +3,7 @@
 // approves them. Every word is this file's, a plugin's own text only quoted
 import { MAX_LINK_LENGTH, type InstallProblem, type InstallSource, type ReleaseAsset, type StagedPlugin, type StagedProblem, type StagedSource } from '../../api/actions.ts'
 import { classNames } from '../../api/policy-jobs.ts'
-import { grantSentence } from '../../api/trusted.ts'
+import { grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 
 export type InstallFlow =
   | { step: 'assets', link: string, tag: string, assets: ReleaseAsset[] }
@@ -19,8 +19,6 @@ export type InstallBox =
   | { step: 'found', staged: string, source: string, unsigned: string, plugins: FoundRow[], ready: boolean, busy: boolean }
 
 const quoted = (value: string) => JSON.stringify(value)
-
-const UNSIGNED = 'Unsigned: nothing proves who made these plugins. Install only what comes from a source you trust'
 
 const problems: Readonly<Record<InstallProblem, string>> = {
   'not-github': 'That isn’t a link to a GitHub repository or release',
@@ -45,12 +43,6 @@ const refused: Readonly<Record<StagedProblem, string>> = {
   'install-only': 'It asks for what only hetu’s own parts hold, so it can’t be installed',
   api: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed',
   reserved: 'Its id is one hetu keeps, so it can’t be installed',
-}
-
-// The source as the core staged it, a link's with the release it took the zip from
-function sourceLine(source: StagedSource): string {
-  if (source.kind === 'link') return `From ${quoted(source.asset)} in the release ${quoted(source.tag)} of ${quoted(source.link)}`
-  return `From the ${source.kind} ${quoted(source.path)}`
 }
 
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
