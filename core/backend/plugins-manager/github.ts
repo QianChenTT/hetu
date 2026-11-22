@@ -2,6 +2,8 @@
 // offline. Node's own fetch, not Electron's net, which goes through the default session that refuses every request
 // and keeps cookies. Node's fetch keeps none and no cookie or credential is sent here
 
+import { hostOnly, parsedUrl } from '../lib/url.ts'
+
 // The fetch main uses, Node's global one unless a test hands in its own
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>
 
@@ -63,13 +65,8 @@ export const githubHosts: readonly string[] = Object.freeze(['api.github.com', '
 // Whether main may fetch a URL: https to one of GitHub's hosts, with no user or port. The parser lowercases the host
 // and drops the default port
 export function onGitHub(url: string): boolean {
-  let at: URL
-  try {
-    at = new URL(url)
-  } catch {
-    return false
-  }
-  return at.protocol === 'https:' && githubHosts.includes(at.hostname) && at.username === '' && at.password === '' && at.port === ''
+  const at = parsedUrl(url)
+  return at !== null && at.protocol === 'https:' && githubHosts.includes(at.hostname) && hostOnly(at)
 }
 
 // The name every request gives in its one header naming the client, which GitHub's API asks of every request. It

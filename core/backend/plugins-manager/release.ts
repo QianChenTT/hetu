@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { FetchRefused, getFromGitHub, onGitHub, type Fetch, type FetchLimits, type FetchProblem, type Wanted } from './github.ts'
 
 // A GitHub release's zips: a pasted repo or release link resolved through GitHub's API to the release's .zip assets,
@@ -42,13 +43,8 @@ function decoded(segment: string): string | null {
 // What a pasted link names: https://github.com/<owner>/<repo>, its releases page, its latest release or a release by
 // tag, or null. The query and the fragment are ignored
 export function githubLink(pasted: string): GitHubLink | null {
-  let at: URL
-  try {
-    at = new URL(pasted.trim())
-  } catch {
-    return null
-  }
-  if (at.protocol !== 'https:' || at.hostname !== 'github.com' || at.username !== '' || at.password !== '' || at.port !== '') return null
+  const at = parsedUrl(pasted.trim())
+  if (at === null || at.protocol !== 'https:' || at.hostname !== 'github.com' || !hostOnly(at)) return null
   const segments = at.pathname.split('/').slice(1)
   if (segments.at(-1) === '') segments.pop()
   const [owner, named, ...rest] = segments
