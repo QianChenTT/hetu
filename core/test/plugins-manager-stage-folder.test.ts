@@ -103,6 +103,14 @@ describe('a picked folder staged', () => {
     expect(await readdir(into)).toEqual([])
   })
 
+  it('skips a __MACOSX folder at the top, as a zip\'s', async () => {
+    const picked = path.join(await temp(), 'alpha')
+    await writeFolder(picked, { ...filesFor(workerManifest('alpha')), '__MACOSX/._worker.js': 'fork' })
+    const into = await staging()
+    expect(await stageFolder(picked, into)).toBeNull()
+    expect(await listed(into)).toEqual(['hetu-plugin.json', 'worker.js'])
+  })
+
   it('takes only an empty staging folder', async () => {
     const picked = path.join(await temp(), 'alpha')
     await writeFolder(picked, filesFor(workerManifest('alpha')))

@@ -86,6 +86,26 @@ describe('a zip unpacked into a staging folder', () => {
   })
 })
 
+describe('the Finder\'s resource forks', () => {
+  it('skips every entry under __MACOSX/ and writes the rest', async () => {
+    const { problem, files } = await unpacked([
+      { name: 'hetu-plugin.json', data: '{}' },
+      { name: '__MACOSX/', mode: 0o040755 },
+      { name: '__MACOSX/._hetu-plugin.json', data: 'fork' },
+      { name: '__MACOSX/dist/._worker.js', data: 'fork' },
+      { name: 'dist/worker.js', data: 'x' },
+    ])
+    expect(problem).toBeNull()
+    expect(files).toEqual(['dist/', 'dist/worker.js', 'hetu-plugin.json'])
+  })
+
+  it('skips only the folder at the top named exactly so', async () => {
+    const { problem, files } = await unpacked([{ name: 'alpha/__MACOSX/a.txt', data: 'x' }, { name: '__MACOSXY/b.txt', data: 'x' }])
+    expect(problem).toBeNull()
+    expect(files).toEqual(['__MACOSXY/', '__MACOSXY/b.txt', 'alpha/', 'alpha/__MACOSX/', 'alpha/__MACOSX/a.txt'])
+  })
+})
+
 describe('names', () => {
   it('refuses a name that climbs as climbing, not only as a trailing dot', () => {
     for (const name of ['..', '../a.js', 'a/../../b.js', 'a/../b.js', 'a/..']) expect(nameProblem(name), name).toBe('a .. segment')

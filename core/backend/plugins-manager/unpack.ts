@@ -133,6 +133,11 @@ class Writer {
   }
 }
 
+// The Finder's Compress puts each file's resource fork and extended attributes in AppleDouble files under __MACOSX/ at
+// the top of the zip. No plugin runs them, so they are skipped rather than written into a plugin and its hash. A
+// __MACOSX folder anywhere else is an ordinary folder
+const resourceForks = (name: string) => name === '__MACOSX' || name.startsWith('__MACOSX/')
+
 // The reader's own failures, each a zip refused as invalid
 async function fromZip<T>(work: Promise<T>): Promise<T> {
   try {
@@ -168,6 +173,7 @@ async function zipInto(zip: Buffer, writer: Writer, limits: UnpackLimits): Promi
       const entry = next.value
       const folder = entry.fileName.endsWith('/')
       const name = folder ? entry.fileName.slice(0, -1) : entry.fileName
+      if (resourceForks(name)) continue
       if (special(entry, folder)) throw new Refused('special')
       if ((entry.generalPurposeBitFlag & ENCRYPTED) !== 0) throw new Refused('encrypted')
       if (folder) await writer.folder(name)
@@ -197,6 +203,7 @@ async function folderInto(dir: string, prefix: string, writer: Writer): Promise<
   for await (const entry of await opendir(dir)) {
     const name = prefix + entry.name
     const from = path.join(dir, entry.name)
+    if (resourceForks(name)) continue
     if (entry.isDirectory()) {
       await writer.folder(name)
       await folderInto(from, `${name}/`, writer)
