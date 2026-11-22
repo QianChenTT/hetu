@@ -184,6 +184,16 @@ describe('door.handle', () => {
     expect((await http.reply(id)).ok).toBe(true)
   })
 
+  it('ends an open call stale once the table throws, fail-safe', async () => {
+    const { http, mcp, router, pluginsManager } = door()
+    router.changed()
+    const id = http.call('door.handle', request, as)
+    await mcp.delivered('door.handle')
+    pluginsManager.role = () => { throw new Error('table down') }
+    router.changed()
+    expect(code(await http.reply(id))).toBe('stale')
+  })
+
   it('answers unavailable when the table throws, as for a plugin it can\'t read', async () => {
     const { http, pluginsManager } = door()
     pluginsManager.role = () => { throw new Error('table down') }
