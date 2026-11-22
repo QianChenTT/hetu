@@ -7,7 +7,6 @@ import { build } from 'esbuild'
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreModuleIds } from '../api/ids.ts'
 import { INSTALL_LIST, installList } from '../api/install.ts'
-import { installManifest } from '../api/manifest.ts'
 import { type BuildKind, buildMain } from '../build/main.ts'
 import { checkModuleImports, moduleBuiltins, moduleFolders } from '../build/module-imports.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
@@ -91,17 +90,14 @@ describe('the main bundle', () => {
     expect((module.default as { kind: string }).kind).toBe('hetu-plugin')
   })
 
-  // The page compiles hidden marks in itself. The install's copy is what its switch and its hash cover
-  it('writes hidden-marks into the install as an in-page plugin: an install manifest with a page entry and the module bundled, with the hash of its files', async () => {
+  it('writes hidden marks into the install as a first-party copy, a worker holding ui.read and ui.decoration', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'hidden-marks')
-    expect(list.plugins['hidden-marks']).toEqual({ path: 'plugins/hidden-marks', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/page.js', 'hetu-plugin.json'])
-    const manifest = installManifest.parse(JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')))
-    expect(manifest.entries).toEqual({ page: 'dist/page.js' })
-    expect(await readFile(path.join(root, 'dist', 'page.js'), 'utf8')).toContain('hiddenMarks')
+    expect(list.plugins['hidden-marks']).toEqual({ path: 'plugins/hidden-marks', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
+    expect(await checkManifest(root, { built: true })).toEqual([])
   })
 
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {
@@ -111,6 +107,15 @@ describe('the main bundle', () => {
       expect((await stat(path.join(out, 'frontend', file))).isFile(), file).toBe(true)
     }
     expect(built.pageImports).toEqual([])
+  })
+
+  // Hidden marks runs as a worker behind the editor bridge, so the page parses notes and holds no plugin's code
+  it('bundles the editor page with the markdown language and without hidden marks', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const page = await readFile(path.join(out, 'frontend', 'editor', 'page.js'), 'utf8')
+    expect(page).toContain('HighlightMark')
+    expect(page).not.toContain('hiddenMarks')
   })
 
   it('bundles the utility bootstrap beside main.js as one module that imports nothing', async () => {
@@ -182,6 +187,7 @@ describe('each core module\'s Node built-ins', () => {
       heartbeat: [],
       recording: [],
       'security-view': [],
+      lock: ['node:crypto', 'node:fs/promises', 'node:path'],
     })
     expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
   })

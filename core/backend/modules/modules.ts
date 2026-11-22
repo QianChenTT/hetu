@@ -1,9 +1,10 @@
-import { coreModuleIds, judgingModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
+import { coreModuleIds, failSafeControls, LOCK_GUARD, providers, type CoreModuleId } from '../../api/ids.ts'
 import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
 import type { GrantRiskClassifier } from '../../api/classes.ts'
-import type { Gate, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { Gate, Guard, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Beating, Heartbeat, HeartbeatModule } from '../heartbeat/header.ts'
+import type { Lock } from '../lock/header.ts'
 import type { SecurityView } from '../security-view/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
@@ -18,12 +19,14 @@ import {
 const closing = [...coreModuleIds].reverse()
 
 // The modules that run on through shutdown and the stopped mode until hetu ends, since they hold nothing open and the
-// human's way back in needs them: flood control, recording, which writes the last records and the security view, which
-// holds the stopped mode's choices for the Confirm
-const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording', 'security-view'])
+// human's way back in needs them: flood control, recording, which writes the last records, the security view, which
+// holds the stopped mode's choices for the Confirm and the lock, whose guard answers every write that still comes
+const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording', 'security-view', 'lock'])
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
-const judging = (id: CoreModuleId) => (judgingModuleIds as readonly CoreModuleId[]).includes(id)
+// The modules among the controls the fail-safe at start covers: the judging modules and every expected guard a module
+// holds
+const failSafe = (id: CoreModuleId) => failSafeControls().includes(id)
 
 // The one place the six core modules are held, made by the join. The router reads the gate and the providers through here and
 // the plugins manager the grant risk classifier and storage's clear, each null while its module is off or failed. A
@@ -44,6 +47,7 @@ export class CoreModules implements Holder {
   // Made once, since it is told on every message heard from a plugin
   private readonly heartbeatTold: Heartbeat
   private readonly securityViewOf: SecurityView
+  private readonly lockOf: Lock
   private off = new Set<string>()
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
@@ -57,7 +61,7 @@ export class CoreModules implements Holder {
   private handed: Handed | null = null
   // True while start runs: every module reads starting until all are started and handed what they need
   private booting = false
-  // The modules a judging module failed at start left never begun, which read starting, are handed nothing and are
+  // The modules a fail-safe control failed at start left never begun, which read starting, are handed nothing and are
   // closed by nothing until the stopped mode. The lasting modules have no start and serve the stopped mode, so none is
   // among them
   private readonly unbegun = new Set<CoreModuleId>()
@@ -87,6 +91,7 @@ export class CoreModules implements Holder {
     }
     this.heartbeatTold = Object.freeze({ started: told('started'), heard: told('heard'), stopped: told('stopped') })
     this.securityViewOf = options.securityView
+    this.lockOf = options.lock
   }
 
   state(id: CoreModuleId): ModuleState {
@@ -138,8 +143,14 @@ export class CoreModules implements Holder {
     return this.serving('heartbeat') ? this.heartbeatTold : null
   }
 
-  // The provider serving a namespace, cache through storage. lock and net have no module yet and answer null. A module
-  // serves only while what it requires does
+  // An expected guard by its id while its module is on, the lock the one a module holds. It answers from its own table,
+  // so it needs nothing the luoshu holds
+  guard(id: string): Guard | null {
+    return id === LOCK_GUARD && this.serving('lock') ? this.lockOf.guard : null
+  }
+
+  // The provider serving a namespace, cache through storage. net has no module yet and answers null. A module serves
+  // only while what it requires does
   provider(namespace: string): Provider | null {
     const id = Object.hasOwn(providers, namespace) ? (providers as Readonly<Record<string, string>>)[namespace] : undefined
     if (id === undefined || !isModule(id) || !this.serving(id) || moduleRequires[id].some(other => !this.serving(other))) return null
@@ -152,15 +163,17 @@ export class CoreModules implements Holder {
         return this.historyOf.provider
       case 'exec':
         return this.execOf.provider
+      case 'lock':
+        return this.lockOf.provider
       default:
         return null
     }
   }
 
   // Once, as the plugins manager starts, after the install list passed and before any plugin starts: every module that
-  // is on started one at a time, each start given readyMs, then each handed what it needs. The modules that judge yes
-  // or no go first and alone: one of them failed leaves every other module never begun and never handed anything, for
-  // the plugins manager's fail-safe
+  // is on started one at a time, each start given readyMs, then each handed what it needs. The fail-safe controls go
+  // first and alone: one of them failed leaves every other module never begun and never handed anything, for the
+  // plugins manager's fail-safe
   async start(off: readonly string[], handed: Handed): Promise<void> {
     if (this.handed !== null || this.halted) return
     this.off = new Set(off)
@@ -168,8 +181,8 @@ export class CoreModules implements Holder {
     this.handed = handed
     this.booting = true
     try {
-      const first = coreModuleIds.filter(judging)
-      const rest = coreModuleIds.filter(id => !judging(id))
+      const first = coreModuleIds.filter(failSafe)
+      const rest = coreModuleIds.filter(id => !failSafe(id))
       await this.marked(first)
       if (first.some(id => this.startFailed.has(id) || this.pushFailed.has(id))) {
         for (const id of rest) if (!lasting.has(id)) this.unbegun.add(id)
@@ -190,7 +203,7 @@ export class CoreModules implements Holder {
     for (const id of ids) this.push(id)
   }
 
-  // The judging modules each begun and handed what it needs before the next begins, each marked on disk from before
+  // The fail-safe controls each begun and handed what it needs before the next begins, each marked on disk from before
   // its start until its first push returned. A start that hangs main leaves the marker of that one alone. A marker
   // that can't be written or cleared is a fault and the start goes on
   private async marked(ids: readonly CoreModuleId[]): Promise<void> {
@@ -240,12 +253,13 @@ export class CoreModules implements Holder {
     return this.tell(before, null, ['gate', 'exec'])
   }
 
-  // A new notes folder: the luoshu and history are handed it. Answers whether a module's state changed with it
+  // A new notes folder: the luoshu, history and the lock are handed it. Answers whether a module's state changed with it
   picked(): boolean {
     const before = this.states()
     this.push('luoshu')
     this.push('history')
-    return this.tell(before, null, ['luoshu', 'history'])
+    this.push('lock')
+    return this.tell(before, null, ['luoshu', 'history', 'lock'])
   }
 
   // Shutdown, once every plugin stopped: exec and history end what runs, the luoshu's watch ends and storage serves no
@@ -333,9 +347,10 @@ export class CoreModules implements Holder {
       else if (id === 'luoshu') {
         step = 'open'
         this.luoshuOf.role.open(this.trash === undefined ? this.opening() : { ...this.opening(), trash: this.trash })
-      } else if (id === 'history') {
+      } else if (id === 'history' || id === 'lock') {
         step = 'open'
-        this.historyOf.role.open(this.opening())
+        const role = id === 'history' ? this.historyOf.role : this.lockOf.role
+        role.open(this.opening())
       } else return
       this.pushFailed.delete(id)
     } catch {

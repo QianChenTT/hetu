@@ -58,6 +58,7 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'exec', under: 'core/backend/providers/exec/' },
   { part: 'flood-control', under: 'core/backend/flood-control/' },
   { part: 'heartbeat', under: 'core/backend/heartbeat/' },
+  { part: 'lock', under: 'core/backend/lock/' },
   { part: 'recording', under: 'core/backend/recording/' },
   { part: 'security-view', under: 'core/backend/security-view/' },
   { part: 'tooling', under: 'scripts/' },
@@ -87,7 +88,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   boot: ['contract', 'lib', 'backend-lib'],
   'plugins-manager': ['contract', 'lib', 'backend-lib', 'router', 'boot', 'runtime', 'modules', 'heartbeat', 'recording', 'security-view'],
   runtime: ['contract', 'lib', 'backend-lib', 'router', 'boot'],
-  modules: ['contract', 'lib', 'backend-lib', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'security-view'],
+  modules: ['contract', 'lib', 'backend-lib', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'lock', 'security-view'],
   gate: ['contract'],
   'grant-risk-classifier': ['contract'],
   storage: ['contract', 'lib'],
@@ -96,6 +97,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   exec: ['contract', 'lib'],
   'flood-control': ['contract'],
   heartbeat: ['contract'],
+  lock: ['contract', 'lib'],
   recording: ['contract', 'lib'],
   'security-view': ['contract'],
   plugin: ['contract', 'sdk'],
@@ -105,7 +107,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
 
 // The parts reached from outside only through their header.ts. The gate, the classifier and storage are in no part's
 // row but the joins', which build them, so nothing else may import them and they need no door
-export const doors = new Set(['router', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'])
+export const doors = new Set(['router', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'lock', 'recording', 'security-view'])
 
 // Files outside the arrows, each with its reason. The utility process's own bootstrap runs in its own process and not
 // in main: it is bundled apart into utility.js and runs a utility half through the SDK's runner, so it and the check

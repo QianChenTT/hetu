@@ -1,8 +1,9 @@
 import type { CoreModuleId } from '../../api/ids.ts'
 import type { GrantRiskClassifier } from '../../api/classes.ts'
-import type { ExecView, Gate, GrantsSnapshot, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { ExecView, Gate, GrantsSnapshot, Guard, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Heartbeat, HeartbeatCore, HeartbeatModule } from '../heartbeat/header.ts'
+import type { Lock } from '../lock/header.ts'
 import type { SecurityView } from '../security-view/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
@@ -20,6 +21,7 @@ export type CoreModules = {
   grantRiskClassifier(): GrantRiskClassifier | null
   storage(): StorageRole | null
   provider(namespace: string): Provider | null
+  guard(id: string): Guard | null
   floodControl(): FloodControl | null
   heartbeat(): Heartbeat | null
   securityView(): SecurityView | null
@@ -69,12 +71,13 @@ export type CoreModulesOptions = {
   floodControl: FloodControl
   heartbeat: HeartbeatModule
   securityView: SecurityView
+  lock: Lock
 }
 
 // What the plugins manager hands the modules at start, read again at each push: the newest grants snapshot, exec's view
 // of the grants, the notes folder picked, how long a module's start may take, where a fault goes, where each change
-// of a module's state is told, what the core does at the heartbeat's ask and the start marker of each judging module,
-// written before its start and cleared once its start and first push returned
+// of a module's state is told, what the core does at the heartbeat's ask and the start marker of each fail-safe
+// control, written before its start and cleared once its start and first push returned
 export type Handed = {
   grants(): GrantsSnapshot
   exec(): ExecView
@@ -88,8 +91,9 @@ export type Handed = {
 }
 
 // What each module requires, as its manifest said when it was a core plugin. History commits the notes the luoshu
-// holds, so it serves only while the luoshu does and the graph shows it waiting meanwhile. Each list is frozen too, as
-// frozen() would, since a header may import no function
+// holds and the lock locks them, so each serves only while the luoshu does and the graph shows it waiting meanwhile.
+// The lock's guard answers whatever the luoshu reads. Each list is frozen too, as frozen() would, since a header may
+// import no function
 export const moduleRequires: Readonly<Record<CoreModuleId, readonly CoreModuleId[]>> = Object.freeze({
   gate: Object.freeze([]),
   'grant-risk-classifier': Object.freeze([]),
@@ -101,5 +105,6 @@ export const moduleRequires: Readonly<Record<CoreModuleId, readonly CoreModuleId
   heartbeat: Object.freeze([]),
   recording: Object.freeze([]),
   'security-view': Object.freeze([]),
+  lock: Object.freeze(['luoshu'] as const),
 })
 

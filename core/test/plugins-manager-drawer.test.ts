@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ActionResults, CoreStatus } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import { cleanup, coreInstall, entryFor, filesFor, harness, manifest, stateOf, workerManifest } from './plugins-manager-fakes.ts'
+import { cleanup, coreInstall, entryFor, filesFor, harness, stateOf, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -9,28 +9,12 @@ const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 const wrongHash = 'b'.repeat(64)
 
-// hidden-marks as the build puts it in the install: a manifest with a page entry and the module's bundle
-const hiddenMarks = () => ({ files: filesFor(manifest('hidden-marks', { entries: { page: 'dist/page.js' } }), { 'dist/page.js': '// hidden marks' }) })
-
-describe('in-page plugins', () => {
-  it('names an in-page core plugin in core.status while it is ready', async () => {
-    const { pluginsManager } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() } })
+// Hidden marks runs as a worker behind the editor bridge, so the editor page applies no plugin's code itself
+describe('core.status', () => {
+  it('names no plugin for the editor page to apply', async () => {
+    const { pluginsManager } = await harness({ install: coreInstall() })
     await pluginsManager.start()
-    expect(stateOf(pluginsManager, 'hidden-marks')).toBe('ready')
-    expect(((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual(['hidden-marks'])
-  })
-
-  it('leaves it out once the human switched it off', async () => {
-    const { pluginsManager } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() }, switches: { off: ['hidden-marks'] } })
-    await pluginsManager.start()
-    expect(((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual([])
-  })
-
-  it('leaves it out when its bytes fail the install list', async () => {
-    const { pluginsManager } = await harness({ install: { ...coreInstall(), 'hidden-marks': { ...hiddenMarks(), hash: wrongHash } } })
-    await pluginsManager.start()
-    expect(stateOf(pluginsManager, 'hidden-marks')).toBe('refused')
-    expect(((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual([])
+    expect(Object.keys((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus)).not.toContain('page')
   })
 })
 

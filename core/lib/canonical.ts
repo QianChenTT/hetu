@@ -21,7 +21,7 @@ export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule, absent?: Canonical }
 
 // absolute is for the disk. relative joins the names with / on every platform and is what the gate, the guards and
-// the records see. key is only for the luoshu's latch on a path and the lease table's conflict check
+// the records see. key is only for the luoshu's latch on a path and the lock module's table
 export type Canonical = { ok: true, absolute: string, relative: string, key: string }
 
 // hetu's own folders, which a luoshu picked at the home folder holds
@@ -38,12 +38,12 @@ const devices = new Set([
   ...[...'0123456789\u00b9\u00b2\u00b3'].flatMap(digit => [`com${digit}`, `lpt${digit}`]),
 ])
 
-// For latches and leases only. A name that doesn't exist yet keeps the caller's spelling, so two spellings of one new
-// note meet only here. Drops what HFS+ skips, takes NFC since APFS reads both forms as one name and folds case
+// For latches and note locks only. A name that doesn't exist yet keeps the caller's spelling, so two spellings of one
+// new note meet only here. Drops what HFS+ skips, takes NFC since APFS reads both forms as one name and folds case
 // further than lowercase does, since lowercase keeps the sharp s, the long s and the micro sign apart from the ss, s
 // and mu APFS reads them as. Folding more than a volume does only makes two notes share a latch or block each other's
-// lease. The same fold in matching would widen a grant
-const keyOf = (relative: string) =>
+// lock. The same fold in matching would widen a grant. The lock guard keys the canonical relative paths it is handed
+export const keyOf = (relative: string) =>
   withoutIgnorable(relative).normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')
 
 // Before the disk is touched. Each rule closes a spelling the OS or the path joiner reads as another name

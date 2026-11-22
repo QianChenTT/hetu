@@ -70,8 +70,9 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
+  // No guard expected unless a test names its own, so the tests here hold their meaning with the lock module wired
   const { recording, pluginsManager, router, modules } = wireCore({
-    booted, installDir, runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0, ...options.wire,
+    booted, installDir, runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0, guardsFor: () => [], ...options.wire,
   })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
@@ -477,7 +478,6 @@ describe('core.status, for a window\'s banner', () => {
       modulesOff: [],
       logWrites: true,
       luoshuPicked: false,
-      page: [],
       pending: [],
       stopped: null,
       suspect: [],

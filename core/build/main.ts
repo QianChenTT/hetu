@@ -6,16 +6,12 @@ import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 import { checkModuleImports } from './module-imports.ts'
 
-// The first-party plugins built, each a worker from src/worker.ts
-const FIRST_PARTY = ['layout']
+// The first-party plugins built, each a worker from src/worker.ts in hetu's own plugins folder
+const FIRST_PARTY = ['layout', 'hidden-marks']
 // The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
 // utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
 // main.js
 const INSTALL = ['mcp-http-handler']
-// The in-page core plugins, each a module the editor page compiles in from core/frontend/editor. The install's copy
-// holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
-// plugins manager path for in-page code
-const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
 
 const core = path.join(import.meta.dirname, '..')
 const frontend = path.join(core, 'frontend')
@@ -108,26 +104,6 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     const root = path.join(outDir, 'plugins', id)
     const { version } = await writeFirstParty(path.join(core, '..', 'core-plugins', id), root)
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
-  }
-  for (const [id, module] of Object.entries(PAGE)) {
-    const source = path.join(core, '..', 'core-plugins', id)
-    const root = path.join(outDir, 'plugins', id)
-    await rm(root, { recursive: true, force: true })
-    await mkdir(path.join(root, 'dist'), { recursive: true })
-    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
-    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
-    // Its own code only: CodeMirror is the page's
-    await build({
-      ...shared,
-      entryPoints: [path.join(frontend, 'editor', module)],
-      outfile: path.join(root, 'dist', 'page.js'),
-      platform: 'browser',
-      format: 'esm',
-      target: CHROMIUM,
-      packages: 'external',
-    })
-    const { version } = JSON.parse(manifest.toString('utf8')) as { version: string }
-    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   const list = { format: INSTALL_LIST_FORMAT, plugins }
   await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)

@@ -82,10 +82,10 @@ export const coreNamespaces = frozen(Object.keys(namespaces).filter(namespace =>
 export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)
 export type GuardableAction = typeof guardableActions[number]
 
-// The guards expected on each guardable action, in the order they answer. Empty until the lock module is wired, since
-// an expected guard that isn't running refuses every write
+// The guards expected on each guardable action, in the order they answer: the lock module on each. An expected guard
+// that isn't running refuses every write
 export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({
-  'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
+  'luoshu.write': ['lock'], 'luoshu.remove': ['lock'], 'luoshu.move': ['lock'],
 })
 
 // The guard holding note locks. Its deny answers locked, any other guard's guard-refused
@@ -123,13 +123,14 @@ export function failSafeControls(guardsOf: (action: GuardableAction) => readonly
 
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
 // their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
-// start in this order, the ones after them have no start of their own
-export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'] as const)
+// start in this order, the ones after them have no start of their own. The fail-safe controls among them start first
+export const coreModuleIds = frozen([
+  'gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view', 'lock',
+] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
-// Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the
-// editor page. net is designed and not built
-export const corePluginIds = frozen(['mcp-http-handler', 'net', 'hidden-marks'] as const)
+// Core plugins, which load only from the install: mcp-http-handler in a utility process. net is designed and not built
+export const corePluginIds = frozen(['mcp-http-handler', 'net'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
@@ -137,7 +138,7 @@ export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
 // the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
-export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout'] as const)
+export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,

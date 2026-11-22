@@ -1,22 +1,21 @@
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
-import { syntaxTree } from '@codemirror/language'
 import {
-  Annotation, type ChangeSet, Compartment, EditorState, type Extension, Prec, StateEffect, StateField, Transaction, type TransactionSpec,
+  Annotation, type ChangeSet, EditorState, type Extension, Prec, StateEffect, StateField, Transaction, type TransactionSpec,
 } from '@codemirror/state'
-import { Decoration, type DecorationSet, EditorView, keymap, ViewPlugin, type ViewUpdate } from '@codemirror/view'
+import { Decoration, type DecorationSet, EditorView, keymap } from '@codemirror/view'
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
-import { hiddenMarks, markdownSupport } from './hidden-marks.ts'
 import { hiddenRules, hiddenText } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
 import { lay } from './layers.ts'
+import { markdownSupport } from './markdown.ts'
 import { drawMarks } from './marks.ts'
 import type { Editors } from './notes.ts'
 import { mapThrough, Versions } from './versions.ts'
 
 // The drawer's editor slots: a CodeMirror view per open note, each laid over the box of the editor slot the layout
 // placed for it, in the lifted layer, and hidden while no slot holds it. The current one is the note the human works in.
-// CodeMirror is core mechanism here and decides nothing. Hidden marks is applied only while its core plugin is ready. Plugins' marks come only through
+// CodeMirror is core mechanism here and decides nothing. Plugins' marks, hidden marks' among them, come only through
 // the bridge, drawn with the drawer's own classes. Nothing here reaches the core: the notes and the drawer do
 
 export type ViewHooks = {
@@ -143,35 +142,12 @@ function hiddenBy(owned: Owned, changes: ChangeSet): string[] {
   return owners
 }
 
-// Hidden marks over the visible ranges, built again when the text, the viewport or the parse moves
-const hiddenMarksView = ViewPlugin.fromClass(class {
-  drawn: Drawn
-
-  constructor(view: EditorView) {
-    this.drawn = drawMarks(hiddenMarks(view.state, view.visibleRanges), view.state.doc)
-  }
-
-  update(update: ViewUpdate) {
-    if (update.docChanged || update.viewportChanged || syntaxTree(update.startState) !== syntaxTree(update.state)) {
-      this.drawn = drawMarks(hiddenMarks(update.state, update.view.visibleRanges), update.state.doc)
-    }
-  }
-}, {
-  provide: plugin => [
-    EditorView.decorations.of(view => view.plugin(plugin)?.drawn.marks ?? Decoration.none),
-    EditorView.decorations.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
-    hiddenText.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
-  ],
-})
-
 type Open = { view: EditorView, element: HTMLElement, instance: Instance }
 
 export class EditorViews implements Editors {
   private readonly host: HTMLElement
   private readonly hooks: ViewHooks
   private readonly open = new Map<string, Open>()
-  private readonly marksSwitch = new Compartment()
-  private marksOn = false
   private shownId: string | null = null
   private readonly nonce: string
 
@@ -223,7 +199,6 @@ export class EditorViews implements Editors {
               return true
             },
           }),
-          this.marksSwitch.of(this.marksOn ? hiddenMarksView : []),
           pluginMarks,
           EditorView.updateListener.of(update => {
             if (instance === null) return
@@ -344,11 +319,5 @@ export class EditorViews implements Editors {
 
   instances(): Instance[] {
     return [...this.open.values()].map(open => open.instance)
-  }
-
-  hiddenMarks(on: boolean): void {
-    if (on === this.marksOn) return
-    this.marksOn = on
-    for (const open of this.open.values()) open.view.dispatch({ effects: this.marksSwitch.reconfigure(on ? hiddenMarksView : []) })
   }
 }

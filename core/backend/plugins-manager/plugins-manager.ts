@@ -213,7 +213,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       modulesOff: coreModuleIds.filter(id => !Object.hasOwn(policyJobs, id) && this.modules.state(id) === 'off'),
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
-      page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
       pending: this.pending(),
       stopped: this.stoppedMode,
       suspect: [...this.suspect],
@@ -241,8 +240,8 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     if (this.listResult === 'invalid') {
       return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
     }
-    // The controls that judge yes or no go first and alone. Nothing the core runs holds a guard, so an expected guard the
-    // human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
+    // The controls that judge yes or no go first and alone. Only core modules hold a guard, so any other expected guard
+    // the human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
     // read from policyJob as the router reads it
     const controls = failSafeControls(action => this.guardsFor(action))
     // A start marker the run before left names the control whose start hung main, which goes to the fail-safe. One of a

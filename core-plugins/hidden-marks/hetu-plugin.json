@@ -2,6 +2,10 @@
   "id": "hidden-marks",
   "name": "Hidden marks",
   "version": "0.1.0",
-  "api": "^2",
-  "entries": { "page": "dist/page.js" }
+  "api": "^3",
+  "entries": { "worker": "dist/worker.js" },
+  "capabilities": [
+    { "type": "ui.read", "paths": ["**"] },
+    { "type": "ui.decoration" }
+  ]
 }

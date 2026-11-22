@@ -95,7 +95,7 @@ describe('a selection over hidden text', () => {
     expect(selected(settled(note(bold, boldMarks, 10, 0)))).toBe('x **bold**')
   })
 
-  // ## Title, then **a** b, hidden as the install's hidden marks hide it, with no group: such text belongs to its line
+  // ## Title, then **a** b, hidden with no group as any plugin may send it: such text belongs to its line
   it('takes hidden text with no group when it holds its whole line, so select-all copies the markdown and a cut line leaves nothing', () => {
     const text = '## Title\n**a** b'
     const plain: Mark[] = [{ kind: 'hide', from: 0, to: 3 }, { kind: 'hide', from: 9, to: 11 }, { kind: 'hide', from: 12, to: 14 }]

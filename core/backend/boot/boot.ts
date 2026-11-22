@@ -202,6 +202,7 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
       const fields: Record<string, string> = { file: check, ...(id !== undefined ? { id } : {}) }
       healthy = await (error === undefined ? record(log, 'boot.upgraded', fields) : record(log, 'boot.upgrade-failed', { ...fields, error })) && healthy
     }
+    for (const id of loaded.dropped) healthy = await record(log, 'boot.dropped', { file: 'switches', id }) && healthy
   }
 
   return {

@@ -1,0 +1,10 @@
+The lock module, a core module in main that holds note locks: a path, its holder and when it ends. A holder sets a lock for some time. While it holds no other holder's write, remove or move reaches that note. The `leases` community plugin decides who gets one, for which notes and how long
+
+- `lock.ts`: `createLock`, which `wire.ts` makes and the core modules hold. Its provider serves `lock.set`, `lock.clear` and `lock.held`. Its guard answers each write, remove and move in the router's guard step, a move's both ends, from its table alone with no await, `deny` for a note another holder locks, which the router answers `locked`. `role.open` hands it the notes folder as the luoshu gets its own
+- `header.ts`: its door, the shapes and the caps the holder and the tests read
+
+The holder is the chain's own: the root plugin with the whole `onBehalf` field, so each session under one root plugin holds its own locks, or the window for a chain a window began. Never a name in the arguments. Every lock action turns its paths canonical in prepare. The table is keyed by `keyOf` from `core/lib/canonical.ts`, so case, Unicode form and short names of one note meet. `lock.set` locks every path or none, answering `locked` with no holder for a path another holder locks, renews the caller's own locks and cuts a longer time to `MAX_LOCK_MS`. One root plugin's chains hold at most `MAX_LOCKS_PER_ROOT` live locks, past which a set answers `failed` with `quota`. `lock.clear` from a plugin clears only its own chain's locks and answers the same whatever else holds the paths, since it needs no grant. A window clears any, the human taking a note over. `lock.held` names the paths asked about that any holder locks, as the caller spelled them. Locks live in memory for the run, expired ones go as they are read and another folder frees them all
+
+A known limit: a write that passed the guard before a `lock.set` on its note can still land after the set returned, since the guard answers before the luoshu's perform and the set takes no latch
+
+Roles: `lock.ts` policy holder, since it says yes or no and the router enforces, `header.ts` contract

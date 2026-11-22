@@ -236,13 +236,19 @@ describe('views and a theme', () => {
 describe('install-only fields and types', () => {
   it.each([
     ['a host entry', { ...minimal, entries: { host: 'host.js' } }],
-    ['a page entry', { ...minimal, entries: { worker: 'w.js', page: 'page.js' } }],
     ['guards', { ...minimal, capabilities: [{ type: 'guard.hook' }], guards: ['luoshu.write'] }],
     ['Node built-ins', { ...minimal, node: ['fs'] }],
     ['guard.hook', { ...minimal, capabilities: [{ type: 'guard.hook' }] }],
   ])('refuses %s from the plugin folder and takes it from the install', (_name, value) => {
     expect(folderManifest.safeParse(value).success).toBe(false)
     expect(installManifest.safeParse(value).success).toBe(true)
+  })
+
+  // No plugin's code runs in the editor page, hidden marks included, which runs as a first-party worker
+  it('refuses a page entry from the install and the plugin folder alike', () => {
+    const value = { ...minimal, entries: { worker: 'w.js', page: 'page.js' } }
+    expect(folderManifest.safeParse(value).success).toBe(false)
+    expect(installManifest.safeParse(value).success).toBe(false)
   })
 
   it('refuses guards without guard.hook', () => {
@@ -258,8 +264,6 @@ describe('install-only fields and types', () => {
   it.each([
     ['a host entry leaving the folder', { host: '../host.js' }],
     ['an absolute host entry', { host: '/host.js' }],
-    ['a page entry leaving the folder', { worker: 'w.js', page: '../page.js' }],
-    ['an absolute page entry', { worker: 'w.js', page: '/page.js' }],
   ])('refuses %s from the install', (_name, entries) => {
     expect(installManifest.safeParse({ ...minimal, entries }).success).toBe(false)
   })
