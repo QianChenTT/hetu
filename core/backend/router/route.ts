@@ -170,7 +170,7 @@ function handOn(c: Context, pending: Pending, id: string, info: PluginInfo, args
 
 // The plugins manager changed something: an open role call whose holder the table no longer names ends stale with
 // its sub-calls, as a narrowed grant stops what follows (D-606). Gate on or off, since the holder is found and not
-// judged
+// judged. A table that throws names no holder, so a fault there ends every open role call stale, fail-safe
 export function moved(c: Context): void {
   for (const way of [...c.ways.values()]) {
     for (const pending of [...way.made.values()]) {
