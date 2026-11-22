@@ -5,9 +5,14 @@ import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
-// A web contents as the guard sees it: events to answer and the window open handler
+// A web contents as the guard sees it: events to answer, the window open handler and the WebRTC policy
 class FakeContents extends EventEmitter {
   opener: ((details: { url: string }) => { action: string }) | null = null
+  webrtc = 'default'
+
+  setWebRTCIPHandlingPolicy(policy: string): void {
+    this.webrtc = policy
+  }
 
   setWindowOpenHandler(handler: (details: { url: string }) => { action: string }): void {
     this.opener = handler
@@ -52,6 +57,10 @@ describe('the window guards', () => {
     contents.emit('select-bluetooth-device', pick, [{ deviceId: 'a' }], (id: string) => picked.push(id))
     expect(pick.prevented).toBe(true)
     expect(picked).toEqual([''])
+  })
+
+  it('lets WebRTC send no UDP but through a proxy, so a frame reaches no STUN or TURN server over UDP', () => {
+    expect(guarded().webrtc).toBe('disable_non_proxied_udp')
   })
 
   it('gives a page the sandbox, isolation, no Node and no webview, with DevTools only in a run from the source', () => {

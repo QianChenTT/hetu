@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { allowed, NONCE_MARK, partition, ROLES, serve } from '../backend/runtime/sessions.ts'
+import type { Session } from 'electron'
+import { allowed, lockDown, NONCE_MARK, partition, ROLES, serve } from '../backend/runtime/sessions.ts'
 
 let root = ''
 
@@ -165,5 +166,81 @@ describe('the sessions', () => {
     const head = await serve('editor', get('hetu://editor/', 'HEAD'), root)
     expect(head.status).toBe(200)
     expect(await head.text()).toBe('')
+  })
+})
+
+// A session as lockDown sets it up, keeping the proxies it is given and answering each with the promise in answer
+class FakeSession {
+  proxies: object[] = []
+  answer: Promise<void> = Promise.resolve()
+  readonly webRequest = { onBeforeRequest() {} }
+  readonly protocol = { handle() {} }
+  setPermissionRequestHandler() {}
+  setPermissionCheckHandler() {}
+  setDevicePermissionHandler() {}
+  setSpellCheckerEnabled() {}
+  on() {}
+  setProxy(config: object): Promise<void> {
+    this.proxies.push(config)
+    return this.answer
+  }
+}
+
+const locked = (fake: FakeSession, role: keyof typeof ROLES | null) => lockDown(fake as unknown as Session, role, root)
+
+describe('the sessions\' proxy', () => {
+  it('puts every session behind one proxy on loopback port 1, with no direct way and loopback not bypassed', async () => {
+    for (const role of [null, ...Object.keys(ROLES)] as (keyof typeof ROLES | null)[]) {
+      const fake = new FakeSession()
+      await locked(fake, role)
+      expect(fake.proxies, String(role)).toEqual([{ mode: 'fixed_servers', proxyRules: 'socks5://127.0.0.1:1', proxyBypassRules: '<-loopback>' }])
+    }
+  })
+
+  it('is done only once the proxy is set, and fails when it can\'t be set', async () => {
+    const fake = new FakeSession()
+    let set = () => {}
+    fake.answer = new Promise(resolve => {
+      set = resolve
+    })
+    let done = false
+    const locking = locked(fake, 'editor').then(() => {
+      done = true
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(done).toBe(false)
+    set()
+    await locking
+    expect(done).toBe(true)
+    const refused = new FakeSession()
+    refused.answer = Promise.reject(new Error('no proxy'))
+    await expect(locked(refused, 'workers')).rejects.toThrow('no proxy')
+  })
+})
+
+// Every .ts file under a folder, by its path from there
+async function sources(dir: string, from = dir): Promise<string[]> {
+  const found: string[] = []
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) found.push(...await sources(full, from))
+    else if (entry.name.endsWith('.ts')) found.push(path.relative(from, full).split(path.sep).join('/'))
+  }
+  return found
+}
+
+describe('where sessions are made', () => {
+  // A session made anywhere else would get no proxy, no permission handlers and no request filter. Electron makes one
+  // for session.fromPartition, session.fromPath and a partition in a page's web preferences
+  it('makes them only in main\'s loop over the roles, each locked down there', async () => {
+    const backend = path.join(import.meta.dirname, '..', 'backend')
+    const made: string[] = []
+    for (const file of await sources(backend)) {
+      const lines = (await readFile(path.join(backend, file), 'utf8')).split('\n')
+      lines.forEach((line, at) => {
+        if (/\bfromPartition\s*\(|\bfromPath\s*\(|\bpartition\s*:/.test(line)) made.push(`${file}: ${line.trim()} / ${lines[at + 1]?.trim()}`)
+      })
+    }
+    expect(made).toEqual(['main.ts: sessions[role] = session.fromPartition(partition(role)) / await lockDown(sessions[role], role, pages, views)'])
   })
 })
