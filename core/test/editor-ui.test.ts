@@ -51,7 +51,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
   })
   const link = new CoreLink(core.bridge)
   link.start()
-  const value: SettingsValue = { layout: null, plain: false, theme: null, favorites: [], keys: {}, ...settings }
+  const value: SettingsValue = { layout: null, plain: false, theme: null, favorites: [], keyOwners: {}, ...settings }
   const drawn: string[] = []
   const opened: string[] = []
   // What the plugin's reach answered for each path the page resolved a note to
@@ -371,7 +371,7 @@ describe('keys in the design\'s order', () => {
     await beta.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'b' }] })
     expect(drawer.conflicts()).toEqual([{ key: 'Mod-k', plugins: ['alpha', 'beta'] }])
     expect(drawer.key(null, 'Mod-k')).toBe(false)
-    value.keys = { 'Mod-k': 'beta' }
+    value.keyOwners = { 'Mod-k': 'beta' }
     expect(drawer.key(null, 'Mod-k')).toBe(true)
     await settle()
     expect(alpha.events('editor.command')).toEqual([])
