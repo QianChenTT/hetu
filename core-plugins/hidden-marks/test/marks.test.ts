@@ -1,6 +1,6 @@
 import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { hiddenMarks, keepNearest, markdownSupport, type Mark } from '../src/marks.ts'
+import { type ElementKind, hiddenMarks, keepNearest, markdownSupport, type Mark } from '../src/marks.ts'
 
 // Each element's group named by its node and where it starts, as these notes keep them apart
 const byStart = (element: { name: string, from: number }) => `g${element.from}${element.name}`
@@ -31,18 +31,18 @@ describe('hidden marks', () => {
   it('styles a heading line and hides its marker with the space after it', () => {
     expect(sorted(marksOf('# Title'))).toEqual([
       { kind: 'hide', from: 0, to: 2, group: 'g0ATXHeading1', edge: 'open' },
-      { kind: 'line', from: 0, style: 'h1' },
+      { kind: 'line', from: 0, style: 'h1', group: 'g0ATXHeading1' },
     ])
   })
 
   it('draws a bullet in place of a list marker', () => {
-    expect(marksOf('- item')).toEqual([{ kind: 'widget', from: 0, to: 1, text: '•' }])
+    expect(marksOf('- item')).toEqual([{ kind: 'widget', from: 0, to: 1, text: '•', group: 'g0ListItem' }])
   })
 
   it('draws a rule as a line style and hides its dashes', () => {
     expect(sorted(marksOf('---'))).toEqual([
       { kind: 'hide', from: 0, to: 3, group: 'g0HorizontalRule' },
-      { kind: 'line', from: 0, style: 'rule' },
+      { kind: 'line', from: 0, style: 'rule', group: 'g0HorizontalRule' },
     ])
   })
 
@@ -65,7 +65,7 @@ describe('hidden marks', () => {
   it('hides a quote marker and styles the line', () => {
     expect(sorted(marksOf('> said'))).toEqual([
       { kind: 'hide', from: 0, to: 2, group: 'g0Blockquote', edge: 'open' },
-      { kind: 'line', from: 0, style: 'quote' },
+      { kind: 'line', from: 0, style: 'quote', group: 'g0Blockquote' },
     ])
   })
 
@@ -132,6 +132,13 @@ describe("an element's markers", () => {
     ])
   })
 
+  it("share their group with the element's line styles, so an Alt+click on a heading's or a block's text shows them", () => {
+    const groups = (text: string) => new Set(marksOf(text).map(mark => mark.group))
+    expect(groups('## T ##')).toEqual(new Set(['g0ATXHeading2']))
+    expect(groups('T\n=')).toEqual(new Set(['g0SetextHeading1']))
+    expect(groups('```\ncode\n```')).toEqual(new Set(['g0FencedCode']))
+  })
+
   it('are named once per element, with the node it is and where it starts', () => {
     const seen: { name: string, from: number }[] = []
     hiddenMarks(stateOf('**a** [b](c)'), [{ from: 0, to: 12 }], element => {
@@ -187,5 +194,25 @@ describe('the marks kept under a cap', () => {
     expect(kept.length).toBeGreaterThan(90)
     expect(kept).toContainEqual({ kind: 'mark', from: middle.from + 2, to: middle.to, style: 'strong' })
     expect(kept.some(mark => mark.kind === 'line')).toBe(false)
+  })
+})
+
+describe('an element the human chose to show', () => {
+  function shownOf(text: string, kind: ElementKind): Mark[] {
+    const state = stateOf(text)
+    return hiddenMarks(state, [{ from: 0, to: state.doc.length }], byStart, new Set([kind])).flatMap(element => element.marks)
+  }
+
+  it('keeps its style and hides none of its markdown, other elements hidden as before', () => {
+    expect(sorted(shownOf('**a** *b*', 'bold'))).toEqual([
+      { kind: 'mark', from: 0, to: 5, style: 'strong' },
+      { kind: 'hide', from: 6, to: 7, group: 'g6Emphasis', edge: 'open' },
+      { kind: 'mark', from: 6, to: 9, style: 'em' },
+      { kind: 'hide', from: 8, to: 9, group: 'g6Emphasis', edge: 'close' },
+    ])
+    expect(shownOf('# T', 'heading')).toEqual([{ kind: 'line', from: 0, style: 'h1', group: 'g0ATXHeading1' }])
+    expect(shownOf('- item', 'bullet')).toEqual([])
+    expect(hides(shownOf('[a](u) ![b](v)', 'link'))).toEqual([])
+    expect(hides(shownOf('```\ncode\n```', 'fence'))).toEqual([])
   })
 })

@@ -46,6 +46,8 @@ describe("the SDK's editor side", () => {
     expect(port.sent[2]).toMatchObject({ verb: 'editor.edit', args: { instance: 'n1', version: 0, changes: [1, [0, '!']] } })
     port.replies(3, { version: 1 })
     expect(await edit).toEqual({ version: 1 })
+    void editor.edit('n1', 1, [1], { anchor: 1, head: 1 })
+    expect(port.sent[3]).toMatchObject({ verb: 'editor.edit', args: { instance: 'n1', version: 1, changes: [1], selection: { anchor: 1, head: 1 } } })
   })
 
   it('throws a refusal as Refused with its code and the verb', async () => {

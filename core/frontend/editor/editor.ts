@@ -1,11 +1,11 @@
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
 import {
-  Annotation, type ChangeSet, EditorState, type Extension, Prec, StateEffect, StateField, Transaction, type TransactionSpec,
+  Annotation, type ChangeSet, EditorState, type Extension, Prec, StateEffect, StateField, type Text, Transaction, type TransactionSpec,
 } from '@codemirror/state'
-import { Decoration, type DecorationSet, EditorView, keymap } from '@codemirror/view'
+import { Decoration, type DecorationSet, EditorView, type KeyBinding, keymap } from '@codemirror/view'
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
-import { hiddenRules, hiddenText } from './hidden-rules.ts'
+import { hiddenRules, hiddenText, placeCaret } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
 import { lay } from './layers.ts'
 import { markdownSupport } from './markdown.ts'
@@ -47,14 +47,15 @@ const clearMarks = StateEffect.define<string>()
 type Shown = { owner: string, group: string }
 const reveal = StateEffect.define<Shown[]>()
 
-// The span of each of a plugin's groups, from its first hidden range to its last
-function hullsOf(sets: ReadonlyMap<string, readonly Mark[]> | undefined): Map<string, { from: number, to: number }> {
+// The span of each of a plugin's groups, from its first mark to its last, a line style taking its whole line
+function hullsOf(sets: ReadonlyMap<string, readonly Mark[]> | undefined, doc: Text): Map<string, { from: number, to: number }> {
   const hulls = new Map<string, { from: number, to: number }>()
   for (const marks of sets?.values() ?? []) {
     for (const mark of marks) {
-      if (mark.kind !== 'hide' || mark.group === undefined) continue
+      if (mark.group === undefined || mark.from > doc.length) continue
+      const span = mark.kind === 'line' ? doc.lineAt(mark.from) : mark
       const hull = hulls.get(mark.group)
-      hulls.set(mark.group, hull === undefined ? { from: mark.from, to: mark.to } : { from: Math.min(hull.from, mark.from), to: Math.max(hull.to, mark.to) })
+      hulls.set(mark.group, hull === undefined ? { from: span.from, to: span.to } : { from: Math.min(hull.from, span.from), to: Math.max(hull.to, span.to) })
     }
   }
   return hulls
@@ -66,7 +67,7 @@ export function revealClick(state: EditorState, pos: number): TransactionSpec | 
   const shown: Shown[] = []
   for (const [owner, sets] of state.field(pluginMarks).owned) {
     let best: { group: string, size: number } | null = null
-    for (const [group, hull] of hullsOf(sets)) {
+    for (const [group, hull] of hullsOf(sets, state.doc)) {
       if (pos < hull.from || pos > hull.to) continue
       if (best === null || hull.to - hull.from < best.size) best = { group, size: hull.to - hull.from }
     }
@@ -107,7 +108,7 @@ export const pluginMarks = StateField.define<{ owned: Owned, shown: readonly Sho
     if (shown.length > 0 && (moved || tr.selection !== undefined)) {
       const heads = tr.newSelection.ranges.map(range => range.head)
       const kept = shown.filter(one => {
-        const hull = hullsOf(owned.get(one.owner)).get(one.group)
+        const hull = hullsOf(owned.get(one.owner), tr.state.doc).get(one.group)
         return hull !== undefined && heads.some(head => head >= hull.from && head <= hull.to)
       })
       if (kept.length !== shown.length) moved = true
@@ -115,7 +116,7 @@ export const pluginMarks = StateField.define<{ owned: Owned, shown: readonly Sho
     }
     if (!moved) return value
     const all = [...owned].flatMap(([owner, sets]) => [...sets.values()].flat()
-      .filter(mark => mark.kind !== 'hide' || !shown.some(one => one.owner === owner && one.group === mark.group)))
+      .filter(mark => (mark.kind !== 'hide' && mark.kind !== 'widget') || !shown.some(one => one.owner === owner && one.group === mark.group)))
     return { owned, shown, drawn: all.length === 0 ? none : drawMarks(all, tr.state.doc) }
   },
   // The drawer's rules for hidden text read the hidden ranges, so no plugin's are atomic
@@ -141,6 +142,10 @@ function hiddenBy(owned: Owned, changes: ChangeSet): string[] {
   }
   return owners
 }
+
+// CodeMirror's own keys, less Mod-i, which selects the syntax node around the cursor and would keep italic's key from
+// reaching a plugin's binding
+export const editorKeys: readonly KeyBinding[] = [...defaultKeymap.filter(binding => binding.key !== 'Mod-i'), ...historyKeymap]
 
 type Open = { view: EditorView, element: HTMLElement, instance: Instance }
 
@@ -177,7 +182,7 @@ export class EditorViews implements Editors {
           markdownSupport(),
           hiddenRules,
           EditorView.lineWrapping,
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of(editorKeys),
           Prec.lowest(EditorView.domEventHandlers({ keydown: event => this.hooks.key(id, event) })),
           // A click into a note another slot shows makes it the current one
           EditorView.domEventHandlers({
@@ -224,8 +229,11 @@ export class EditorViews implements Editors {
       // Line breaks as one character, as positions count them
       text: () => view.state.doc.toString(),
       selection: () => view.state.selection.ranges.map(range => ({ anchor: range.anchor, head: range.head })),
-      apply: (changes, plugin) => view.dispatch({
-        changes, annotations: [fromPlugin.of(plugin), isolateHistory.of('full')], userEvent: 'input.plugin',
+      apply: (changes, plugin, selection) => view.dispatch({
+        changes,
+        annotations: [fromPlugin.of(plugin), isolateHistory.of('full')],
+        userEvent: 'input.plugin',
+        ...selection === undefined ? {} : { selection, effects: placeCaret.of(selection.head) },
       }),
       setMarks: (owner, set, marks) => view.dispatch({ effects: setMarks.of({ owner, set, marks }) }),
       clearMarks: owner => view.dispatch({ effects: clearMarks.of(owner) }),
