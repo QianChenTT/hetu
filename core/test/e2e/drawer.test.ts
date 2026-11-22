@@ -758,7 +758,7 @@ describe('hidden marks in the window', () => {
       return null
     }, [line, word] as const))!
     const bold = () => boxOf(0, 'bold')
-    const click = async (x: number, y: number, modifier?: 'Alt' | 'Control' | 'Shift') => {
+    const click = async (x: number, y: number, modifier?: 'Alt' | 'Control' | 'Meta' | 'Shift') => {
       if (modifier !== undefined) await editor.keyboard.down(modifier)
       await editor.mouse.click(x, y)
       if (modifier !== undefined) await editor.keyboard.up(modifier)
@@ -781,7 +781,9 @@ describe('hidden marks in the window', () => {
     // click starts away from the word, so the cursor in the word says the editor took the click before "nothing shown"
     // is checked
     const word = await bold()
-    for (const modifier of [undefined, 'Control', 'Shift'] as const) {
+    // On macOS a Control+click is a right-click that moves no cursor, the Ctrl click of Windows is a Cmd click there
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+    for (const modifier of [undefined, mod, 'Shift'] as const) {
       await away()
       await click(word.x + word.width / 2, word.y + word.height / 2, modifier)
       await until(async () => (await head()) > 4 && (await head()) < 8)
