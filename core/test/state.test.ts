@@ -1022,6 +1022,19 @@ describe('the retired first-party ids', () => {
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toMatch(/file-explorer|search/)
   })
+
+  // mcp was first party until a user installed it in the plugin folder
+  it('reads mcp in removed with the id dropped and every other switch kept, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...switchesIn, removed: ['mcp', 'git'] }))
+    const loaded = await store.load()
+    expect(loaded.checks).toContainEqual({ check: 'switches', result: 'ok' })
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.removedKnown).toBe(true)
+    expect(loaded.state.switches).toEqual(switchesIn)
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toMatch(/"mcp"/)
+  })
 })
 
 // The limits the design accepts: detect only against a program that knows hetu, threats 24, 25 and 55

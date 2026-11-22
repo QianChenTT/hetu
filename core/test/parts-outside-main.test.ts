@@ -50,6 +50,10 @@ export const listed: readonly Place[] = [
   { place: 'frontend/editor/bridge.ts', text: "? 'layout' :", hits: 1, why: 'the surface a layout.draw call draws on, the skeleton' },
   { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
   {
+    place: 'backend/boot/state.ts', text: "retiredFirstParty: readonly unknown[] = ['file-explorer', 'search', 'mcp']", hits: 1,
+    why: 'a reader dropping a retired first-party id from an old switches file (D-668)',
+  },
+  {
     place: 'frontend/editor/ui-port.ts', text: "OWN_LAYOUT = 'layout'", hits: 1,
     why: 'core picking the layout plugin when the human picked none, parked for Han: no fix leaves what a user sees the same',
   },
