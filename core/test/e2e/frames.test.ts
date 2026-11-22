@@ -1,3 +1,4 @@
+import { createSocket } from 'node:dgram'
 import { appendFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
@@ -76,6 +77,29 @@ window.addEventListener('message', function (event) {
     document.head.appendChild(style)
     var applied = getComputedStyle(document.querySelector('p')).color === 'rgb(1, 2, 3)'
     port.postMessage(JSON.stringify({ seen: [location.href, document.referrer, window.name].join(' '), parentDocument: parentDocument, applied: applied }))
+  }
+  port.postMessage(JSON.stringify({ hello: location.pathname }))
+})
+`
+// A frame's script that, sent ICE servers, opens a peer connection to each and offers, as an artifact sending a note
+// out through WebRTC would. It reports each connection's gathering state 3 s later
+const rtc = `
+window.addEventListener('message', function (event) {
+  if (event.source !== parent || !event.ports[0]) return
+  var port = event.ports[0]
+  port.onmessage = function (message) {
+    var data = JSON.parse(message.data)
+    if (!data || !Array.isArray(data.servers)) return
+    Promise.all(data.servers.map(function (server) {
+      var connection = new RTCPeerConnection({ iceServers: [server] })
+      connection.createDataChannel('out')
+      return connection.createOffer().then(function (offer) { return connection.setLocalDescription(offer) }).then(function () { return connection })
+    })).then(function (opened) {
+      setTimeout(function () {
+        port.postMessage(JSON.stringify({ tried: opened.map(function (connection) { return connection.iceGatheringState }) }))
+        opened.forEach(function (connection) { connection.close() })
+      }, 3000)
+    }, function (err) { port.postMessage(JSON.stringify({ failed: String(err) })) })
   }
   port.postMessage(JSON.stringify({ hello: location.pathname }))
 })
@@ -207,5 +231,34 @@ describe('view frames', () => {
     const editorProcess = processes.find(frame => frame.url === 'hetu://editor/')?.osProcessId
     const frameProcess = processes.find(frame => frame.url.startsWith('hetu://views/'))?.osProcessId
     expect(frameProcess).not.toBe(editorProcess)
+  })
+})
+
+// What the frame reported after its peer connections tried to reach the ICE servers it was sent
+async function rtcReport(worker: Worker, servers: object[]): Promise<{ tried?: string[], failed?: string }> {
+  await until(async () => (await messages(worker)).length === 1)
+  await post(worker, { servers })
+  const report = (data: unknown) => (data as { tried?: unknown }).tried !== undefined || (data as { failed?: unknown }).failed !== undefined
+  await until(async () => (await messages(worker)).some(report))
+  return (await messages(worker)).find(report) as { tried?: string[], failed?: string }
+}
+
+describe('WebRTC from a view frame', () => {
+  it('sends no STUN packet over UDP to a server on loopback, with every web contents sending no UDP outside a proxy', async () => {
+    const stun = createSocket('udp4')
+    let packets = 0
+    stun.on('message', () => packets++)
+    await new Promise<void>(resolve => stun.bind(0, '127.0.0.1', resolve))
+    try {
+      const { app, worker } = await started({ html: page('rtc.js'), files: { 'rtc.js': rtc } })
+      const report = await rtcReport(worker, [{ urls: `stun:127.0.0.1:${stun.address().port}` }])
+      expect(report).toEqual({ tried: [expect.any(String)] })
+      expect(packets).toBe(0)
+      const policies = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map(contents => contents.getWebRTCIPHandlingPolicy()))
+      expect(policies.length).toBeGreaterThanOrEqual(2)
+      expect(new Set(policies)).toEqual(new Set(['disable_non_proxied_udp']))
+    } finally {
+      stun.close()
+    }
   })
 })
