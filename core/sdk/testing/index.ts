@@ -507,7 +507,7 @@ export class FakeCore {
     for (const id of [...(this.manifest.requires ?? []), ...targets]) deps[id] = stateOf(id)
     if (this.pluginsManager.infos.get(this.manifest.id)?.place === 'utility') {
       for (const [role, spec] of Object.entries(roleActions)) {
-        if (spec.from === 'utility') deps[role] = stateOf(this.pluginsManager.roles.get(role))
+        if (spec.from === 'door') deps[role] = stateOf(this.pluginsManager.roles.get(role))
       }
     }
     return deps

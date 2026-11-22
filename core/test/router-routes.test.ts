@@ -90,7 +90,7 @@ describe('the namespace table', () => {
     const way = windowWay(router, { trusted })
     for (const [action, spec] of Object.entries(coreActions)) {
       const args = action === 'security.confirm' ? { requestId: 'req-1' } : undefined
-      if (spec.from === 'utility' || spec.from === 'pair' || !spec.args.safeParse(args).success) continue
+      if (spec.from === 'door' || spec.from === 'pair' || !spec.args.safeParse(args).success) continue
       const reply = await way.ask('trusted', action, args)
       if (spec.reads === true) expect([action, code(reply)]).not.toEqual([action, 'throttled'])
       else expect([action, code(reply)]).toEqual([action, 'throttled'])

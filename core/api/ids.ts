@@ -135,7 +135,7 @@ export type CoreModuleId = typeof coreModuleIds[number]
 // The door MCP clients come in through: core code, built beside main.js, that runs in a utility process of its own and
 // never in main: Node, no sandbox, none of main's environment and no data folder. It keeps the id it had as a core
 // plugin, so pairs, records and consent text read as before, and calls as its host half. It holds no grant: the role
-// door.handle and the core actions marked from utility are all it reaches, and the floor knows it by the port of the
+// door.handle and the core actions marked from door are all it reaches, and the floor knows it by the port of the
 // process the core started. Node's http, net, os and fs are all it imports
 export const doorId = 'mcp-http-handler'
 export const doorNode = frozen(['http', 'net', 'os', 'fs'] as const)

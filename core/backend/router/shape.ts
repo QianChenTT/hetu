@@ -123,14 +123,14 @@ function admits(way: Way, from: CoreFrom, parent: Pending | null): boolean {
   return from === 'any'
     || (from === 'windows' && caller.kind === 'window')
     || (from === 'trusted' && caller.kind === 'window' && caller.role === 'trusted')
-    || (from === 'utility' && isUtility(way))
+    || (from === 'door' && isDoor(way))
     || (from === 'pair' && rootCalled(parent))
 }
 
 // The port of the utility process the core started, as the plugins manager recorded it when it registered the port. No
 // id, place or half the caller names counts. The incarnation is not compared: the plugins manager ends every way of an
 // incarnation in release before it mints the next, so no way of an older one is left to call
-function isUtility(way: Way): boolean {
+function isDoor(way: Way): boolean {
   return way.via === 'utility'
 }
 

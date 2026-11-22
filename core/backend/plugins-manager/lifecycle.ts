@@ -261,7 +261,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
     for (const id of [...new Set([...(k.read.manifest?.requires ?? []), ...targets])].sort()) deps[id] = stateOf(id)
     if (k.place === 'utility') {
       for (const [action, spec] of Object.entries(roleActions)) {
-        if (spec.from !== 'utility') continue
+        if (spec.from !== 'door') continue
         const holder = this.holderOf(action)
         deps[action] = holder === null ? 'unavailable' : stateOf(holder)
       }

@@ -34,12 +34,12 @@ describe('the core actions', () => {
       'core.views': 'windows',
       'editor.frame': 'windows',
       'editor.frameGone': 'windows',
-      'core.refused': 'utility',
-      'core.bindFailed': 'utility',
+      'core.refused': 'door',
+      'core.bindFailed': 'door',
       'core.identityAsk': 'pair',
-      'core.identities': 'utility',
-      'core.consentAsk': 'utility',
-      'core.consentAnswer': 'utility',
+      'core.identities': 'door',
+      'core.consentAsk': 'door',
+      'core.consentAnswer': 'door',
     })
   })
 
@@ -324,7 +324,7 @@ describe('the provider actions', () => {
 describe('the role actions', () => {
   it('names door.handle alone, called by a utility half and served by the plugin holding door.handle', () => {
     expect(Object.fromEntries(Object.entries(roleActions).map(([action, spec]) => [action, [spec.from, spec.capability]]))).toEqual({
-      'door.handle': ['utility', 'door.handle'],
+      'door.handle': ['door', 'door.handle'],
     })
     for (const action of Object.keys(roleActions)) expect(serverOf(namespace(action))?.route).toBe('role')
     // Each call names the label it is made for, so what the holder does under it is judged for that pair
