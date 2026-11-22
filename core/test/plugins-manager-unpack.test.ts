@@ -203,11 +203,12 @@ describe('the caps', () => {
     const { problem, files } = await unpacked(entries)
     expect(problem).toBe('too-many')
     expect(files).toEqual([])
-    expect((await unpacked(entries.slice(0, 2000))).problem).toBeNull()
   })
 
-  it('counts folder entries as entries', async () => {
-    expect((await unpacked([{ name: 'a/' }, { name: 'b/' }, { name: 'c.txt' }], { entries: 2, bytes: 100 })).problem).toBe('too-many')
+  it('takes entries up to the cap, folder entries counted', async () => {
+    const entries = [{ name: 'a/' }, { name: 'b/' }, { name: 'c.txt' }]
+    expect((await unpacked(entries, { entries: 3, bytes: 100 })).problem).toBeNull()
+    expect((await unpacked(entries, { entries: 2, bytes: 100 })).problem).toBe('too-many')
   })
 
   it('takes bytes up to the cap and refuses one past it, across entries', async () => {
