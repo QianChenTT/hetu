@@ -122,7 +122,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       return {
         // The security controls are core modules alone, so neither the door nor a plugin is one
         id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason, security: false,
-        on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
+        on: row.from === 'door' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
         })),
@@ -215,7 +215,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
 
   list(): Listing[] {
     const rows: Listing[] = [...this.known.values()].map(k => ({
-      id: k.id, from: k.from === 'core' ? 'install' : 'folder', place: k.place, state: k.state, reason: k.reason, incarnation: k.live?.n ?? k.incarnations,
+      id: k.id, from: k.from === 'core' ? 'door' : 'folder', place: k.place, state: k.state, reason: k.reason, incarnation: k.live?.n ?? k.incarnations,
     }))
     for (const [id, reason] of this.strays) rows.push({ id, from: 'folder', place: 'sandboxed', state: 'refused', reason, incarnation: 0 })
     return rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : a.from < b.from ? -1 : 1))

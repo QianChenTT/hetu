@@ -348,13 +348,13 @@ export function stoppedCause(mode: StoppedMode): string {
   return mode.control === 'log' ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out'
 }
 
-// One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the install
+// One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the door
 // or the plugin folder) and where it runs (in the core, in main, in a utility process, in a sandboxed worker or in the
 // editor page), its state and why, whether it is a security control, the human's switch and, for a plugin-folder
 // plugin, each item it was granted
 export type ListedPlugin = {
   id: string
-  from: 'core' | 'install' | 'folder'
+  from: 'core' | 'door' | 'folder'
   place: 'core' | 'host' | 'utility' | 'sandboxed'
   state: PluginState
   reason: string | null

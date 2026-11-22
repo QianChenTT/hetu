@@ -41,10 +41,10 @@ describe('the door in the trusted window\'s list', () => {
     await made.pluginsManager.start()
     const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
     const list = await made.pluginsManager.serve({ callId: 'c', caller: trusted, root: trusted, action: 'security.list', args: {}, deadline: Date.now() + 1000 }) as SecurityList
-    expect(list.plugins.find(row => row.id === 'mcp-http-handler')).toMatchObject({ from: 'install', place: 'utility', state: 'ready', on: true, items: [] })
+    expect(list.plugins.find(row => row.id === 'mcp-http-handler')).toMatchObject({ from: 'door', place: 'utility', state: 'ready', on: true, items: [] })
     expect(list.plugins.filter(row => row.from === 'core').map(row => row.id)).not.toContain('mcp-http-handler')
     // One name for the door's row in the plugin list and the window's, and no security control
-    expect(made.pluginsManager.list().find(row => row.id === 'mcp-http-handler')).toMatchObject({ from: 'install', place: 'utility' })
+    expect(made.pluginsManager.list().find(row => row.id === 'mcp-http-handler')).toMatchObject({ from: 'door', place: 'utility' })
     expect(list.plugins.find(row => row.id === 'mcp-http-handler')?.security).toBe(false)
   })
 })

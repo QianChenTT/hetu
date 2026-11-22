@@ -73,7 +73,7 @@ describe('what the trusted window draws', () => {
 
   // A utility half stops and restarts within a run, so a human who freed the port it failed on brings it back here
   it('offers a utility half Stop while it runs and Restart once it stopped, crashed or failed, drawing why', () => {
-    const http = (over: Partial<ListedPlugin>) => plugin({ id: 'mcp-http-handler', from: 'install', place: 'utility', class: null, ...over })
+    const http = (over: Partial<ListedPlugin>) => plugin({ id: 'mcp-http-handler', from: 'door', place: 'utility', class: null, ...over })
     const actions = (over: Partial<ListedPlugin>) => screen(calm({ plugins: [http(over)] })).plugins[0].actions
     expect(actions({})).toEqual(['switch-off', 'stop', 'reset'])
     expect(actions({ state: 'starting' })).toEqual(['switch-off', 'stop', 'reset'])
