@@ -400,6 +400,13 @@ ${capabilityKey(change.capability)}`)
       || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
   }
 
+  // The end both checks share once a plugin passed the rest: refused for what it requires, else what this run holds
+  // it at
+  protected requiredOrHeld(k: Known): Status {
+    if (this.requiresProblem(k)) return refused('requires')
+    return k.held ?? ok
+  }
+
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
   // human switched off reads off whatever its check said and a failed check never reads as off
   // allowing is a build judged as allowUnsigned would name it, the build an update's Confirm allows
@@ -421,8 +428,7 @@ ${capabilityKey(change.capability)}`)
     // A host entry runs only in a utility process, for the ids core/api places there, and those run only as it, never
     // as a worker in its place
     if ((manifest.entries.host !== undefined) !== isOne(utilityIds, k.id)) return refused('place')
-    if (this.requiresProblem(k)) return refused('requires')
-    return k.held ?? ok
+    return this.requiredOrHeld(k)
   }
 
   // No signer is taken until provenance lands, so an entry naming one is refused, the first-party signer an older build
@@ -452,8 +458,7 @@ ${capabilityKey(change.capability)}`)
     }
     // Two entries holding one role come only from an edited state and carry no order, so neither serves
     if (this.roleTaken(id, entry.granted)) return refused('role-taken')
-    if (this.requiresProblem(k)) return refused('requires')
-    return k.held ?? ok
+    return this.requiredOrHeld(k)
   }
 
   protected moduleStatus(id: CoreModuleId): Status {
