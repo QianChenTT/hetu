@@ -73,7 +73,8 @@ export type CoreModulesOptions = {
 
 // What the plugins manager hands the modules at start, read again at each push: the newest grants snapshot, exec's view
 // of the grants, the notes folder picked, how long a module's start may take, where a fault goes, where each change
-// of a module's state is told and what the core does at the heartbeat's ask
+// of a module's state is told, what the core does at the heartbeat's ask and the start marker of each judging module,
+// written before its start and cleared once its start and first push returned
 export type Handed = {
   grants(): GrantsSnapshot
   exec(): ExecView
@@ -82,6 +83,8 @@ export type Handed = {
   fault(id: CoreModuleId, step: string): void
   changed(id: CoreModuleId, change: ModuleChange, reason: string | null): void
   heartbeat: HeartbeatCore
+  starting(id: CoreModuleId): Promise<void>
+  started(id: CoreModuleId): Promise<void>
 }
 
 // What each module requires, as its manifest said when it was a core plugin. History commits the notes the luoshu

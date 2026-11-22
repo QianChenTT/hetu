@@ -21,15 +21,14 @@ describe('hetu as an Electron app', () => {
     // Sandboxed and isolated with no Node: the page sees none of Node's globals
     expect(await window.evaluate(() => [typeof globalThis.require, typeof globalThis.process, typeof globalThis.Buffer])).toEqual(['undefined', 'undefined', 'undefined'])
     await until(async () => (await events(dataDir)).includes('core.ready'))
-    await until(async () => (await records(dataDir)).some(record => record.event === 'plugin.started' && record.plugin === 'search'))
+    await until(async () => (await records(dataDir)).some(record => record.event === 'plugin.started' && record.plugin === 'layout'))
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
     expect(all.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
-    // search ships in the install, is copied into the plugin folder and starts while the luoshu module is on, which
-    // answers unavailable until a folder is picked. The core modules start with the core, so no plugin record names one
-    expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'search', version: '0.1.0' })
+    // The layout ships in the install, is copied into the plugin folder and starts. The core modules start with the core,
+    // so no plugin record names one
+    expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'layout', version: '0.1.0' })
     expect(all.filter(record => (coreModuleIds as readonly unknown[]).includes(record.plugin))).toEqual([])
-    expect(all.some(record => record.event === 'plugin.waiting' && record.plugin === 'search')).toBe(false)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
       gate: 'on', 'grant-risk-classifier': 'on',
     })

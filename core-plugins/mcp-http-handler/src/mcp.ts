@@ -17,14 +17,15 @@ export type CallMcp = (
 const STATUSES: ReadonlySet<unknown> = new Set([200, 202, 400, 404])
 
 // What a refused call answers. MCP's refusals are no refusals at the door: none is recorded and the connection stays.
-// The body is fixed by the status and never names the code
-const BODIES: Readonly<Record<number, string>> = Object.freeze({
-  503: '{"error":"unavailable"}',
-  504: '{"error":"timeout"}',
-  429: '{"error":"throttled"}',
-  413: '{"error":"too large"}',
-  502: '{"error":"bad gateway"}',
+// The body is fixed by the status and never names the code. The pipe answers the same word in a JSON-RPC error
+export const refusedWords: Readonly<Record<number, string>> = Object.freeze({
+  503: 'unavailable',
+  504: 'timeout',
+  429: 'throttled',
+  413: 'too large',
+  502: 'bad gateway',
 })
+const BODIES: Readonly<Record<number, string>> = Object.freeze(Object.fromEntries(Object.entries(refusedWords).map(([status, word]) => [status, JSON.stringify({ error: word })])))
 
 const STATUS_OF: Readonly<Record<string, number>> = Object.freeze({
   unavailable: 503, starting: 503, 'policy-down': 503, 'switched-off': 503, stopped: 503, crashed: 503, 'not-granted': 503,

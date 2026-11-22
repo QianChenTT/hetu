@@ -1,14 +1,14 @@
 import path from 'node:path'
 import type { PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
-import { type Caller } from '../../api/envelope.ts'
+import { grantKeyOf, type Caller } from '../../api/envelope.ts'
 import { firstPartyIds } from '../../api/ids.ts'
 import { FIRST_PARTY_SIGNER, isNewer } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
 import type { Plugin, StateStore } from '../boot/header.ts'
-import { clear, clearFailedOnce, folders, stage, swapIn } from './folders.ts'
+import { clear, clearFailedOnce, clearStartMarker, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, type Read } from './verify.ts'
@@ -20,11 +20,13 @@ import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, togg
 export abstract class PluginsChanges extends PluginsInstall {
   // ---- the state
 
-  // A security request from a window, which the security view decides. The router has checked the caller is a window
+  // A security request from a window, which the security view decides. The router has checked the caller is a window.
+  // A revoke naming one session's field is taken as the revoke of its client, so its record names what it revokes
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
-    return this.requests.request(parsed.data, from)
+    const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
+    return this.requests.request(change, from)
   }
 
   // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
@@ -56,7 +58,10 @@ export abstract class PluginsChanges extends PluginsInstall {
     switch (change.kind) {
       case 'plugin.on':
       case 'plugin.off':
-        return this.switchPlugin(change.plugin, change.kind === 'plugin.on')
+        await this.switchPlugin(change.plugin, change.kind === 'plugin.on')
+        // Started with it switched off, the control's start marker holds nothing back any more
+        if (change.kind === 'plugin.off' && this.phase === 'stopped') await this.marking(clearStartMarker(this.dataDir, change.plugin)).catch(() => {})
+        return
       case 'plugin.approve':
         return this.approve(change.plugin, confirm)
       case 'plugin.remove':
@@ -290,8 +295,9 @@ export abstract class PluginsChanges extends PluginsInstall {
       return
     }
     const k = this.known.get(id)
-    if (k === undefined) throw new Error(`no plugin ${id}`)
-    if (k.from === 'install') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
+    // An expected guard has its switch whether it is installed or not, as the fail-safe's start with it switched off needs
+    if (k === undefined && !this.expected().includes(id)) throw new Error(`no plugin ${id}`)
+    if (k === undefined || k.from === 'install') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
     if (k.entry === null) throw new Error(`no entry for ${id}`)
     const entry = { ...k.entry, enabled: on }
     await this.store.writePlugin(id, entry)
