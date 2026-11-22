@@ -1,18 +1,14 @@
 import { z } from 'zod'
 import { isDotName, withoutIgnorable } from './names.ts'
+import { MAX_SCOPE_LENGTH, pathProblem, segmentsProblem } from './paths.ts'
 
-// Where they always were for the matcher's other callers. names.ts holds them apart from zod
-export { isDotName, withoutIgnorable }
-
-// The longest scope a grant may hold and the longest path the matcher takes. A longer path matches nothing
-export const MAX_SCOPE_LENGTH = 512
+// Where they always were for the matcher's other callers. names.ts and paths.ts hold them apart from zod
+export { isDotName, MAX_SCOPE_LENGTH, pathProblem, withoutIgnorable }
 
 const STAR = 0x2a
 const DOT = 0x2e
 // Glob syntax in other matchers, refused so a scope can't read one way on the approval screen and another in the gate
 const notInScope = /[\\:?[\]{}()!#]/u
-// What a canonical path never holds: another system's separator, a stream name or a control character
-const notInPath = /[\\:\p{Cc}]/u
 // Control characters and the bidi embeddings, overrides and isolates, which could hide text on the approval screen or
 // show it there in another order. Zero-width characters and the line separators are left to the screens, which show
 // them (#74)
@@ -22,13 +18,6 @@ const hiding = /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u
 // can't recompile the pattern
 export function hidesOnScreen(text: string): boolean {
   return hiding.test(text)
-}
-
-function segmentsProblem(text: string): string | null {
-  for (const segment of text.split('/')) {
-    if (segment === '' || segment === '.' || segment === '..') return 'an empty, . or .. segment'
-  }
-  return null
 }
 
 // Why a scope is outside the grammar, or null for one inside. Segments split on /, a * matches within one segment and
@@ -48,16 +37,6 @@ export function scopeProblem(scope: string): string | null {
     if (segment.endsWith('.') || segment.endsWith(' ')) return 'a trailing dot or space'
   }
   return null
-}
-
-// Why a path can't be matched, or null. A canonical path holds one of these only when a link in the luoshu leads to a
-// name on the disk that has it, and then the path matches nothing
-export function pathProblem(path: string): string | null {
-  if (typeof path !== 'string' || path === '') return 'empty'
-  if (path.length > MAX_SCOPE_LENGTH) return `longer than ${MAX_SCOPE_LENGTH} characters`
-  if (!path.isWellFormed()) return 'a lone surrogate'
-  if (notInPath.test(path)) return 'a character a canonical path never holds'
-  return segmentsProblem(path)
 }
 
 // ASCII letters fold and nothing else does. JavaScript's own case mapping folds the Kelvin sign into k and ß into ss,

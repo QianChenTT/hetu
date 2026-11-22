@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -9,7 +10,7 @@ import { LIST_PAGE } from '../api/actions.ts'
 import { API_VERSION } from '../api/manifest.ts'
 import { quotas } from '../api/storage.ts'
 import type { Call, Provider } from '../api/policy-jobs.ts'
-import { MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
+import { MemoryHistory, MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { tick } from './router-fakes.ts'
 import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
@@ -17,6 +18,7 @@ import { CoreLink } from '../frontend/editor/link.ts'
 import { Versions } from '../frontend/editor/versions.ts'
 import { Editor, type EditorClient } from '../sdk/editor.ts'
 import { fakeCore as editorCore } from './editor-fakes.ts'
+import { callOf as historyCall, cleanup as historyCleanup, place as historyPlace, started as historyStarted, type Asking as HistoryAsking } from './modules/history/helpers.ts'
 
 const cores: FakeCore[] = []
 afterEach(async () => {
@@ -166,6 +168,21 @@ describe('the fake core', () => {
       grants: [{ type: 'plugin.call', targets: ['reader'] }, { type: 'luoshu.read', paths: ['public/**'] }],
     })
     expect(reply).toEqual({ ok: true, result: ['public/a.md'] })
+  })
+
+  // A test caller that names onBehalf roots a chain for that pair, so what the plugin does under its call is judged on
+  // the pair's items too, keyed by the field up to its first #
+  it('judges a call under a test caller\'s call for a pair on the pair\'s grants as well', async () => {
+    const fake = core(undefined, { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] })
+    await fake.start(reader().plugin)
+    expect(await fake.call('reader.read', { path: 'notes/a.md' }, { onBehalf: 'client-1#1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.list', {}, { onBehalf: 'client-1#1' })).toEqual({ ok: true, result: [] })
+    const pairGrants: Capability[] = [{ type: 'luoshu.read', paths: ['notes/**', 'public/**'] }]
+    expect(await fake.call('reader.read', { path: 'notes/a.md' }, { onBehalf: 'client-1#1', pairGrants })).toEqual({ ok: true, result: 'a' })
+    expect(await fake.call('reader.list', {}, { onBehalf: 'client-1#2' })).toEqual({ ok: true, result: ['public/a.md'] })
+    expect(await fake.call('reader.read', { path: 'secret/b.md' }, { onBehalf: 'client-1#2' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.read', { path: 'notes/a.md' }, { onBehalf: 'client-2' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.read', { path: 'secret/b.md' })).toEqual({ ok: true, result: 'b' })
   })
 
   it('reports crashed with start-timeout when ready never comes', async () => {
@@ -845,5 +862,172 @@ describe('the fake core playing another plugin', () => {
     await expect(ctx.bindFailed('port-taken')).rejects.toMatchObject({ code: 'not-granted' })
     expect(made.coreCalls).toEqual([])
     expect(made.status()).toEqual({ state: 'ready', reason: null })
+  })
+})
+
+describe('the fake core\'s history', () => {
+  const commitGrant: Capability = { type: 'history', access: 'commit', paths: ['notes/**'] }
+  const readGrant: Capability = { type: 'history', access: 'read', paths: ['notes/**'] }
+  async function historian(capabilities: object[]) {
+    const fake = core(undefined, { capabilities })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    return { fake, ctx: box.ctx! }
+  }
+
+  it('commits the notes as the luoshu holds them, lists the commit and reads the text back at it', async () => {
+    const { fake, ctx } = await historian([commitGrant, readGrant])
+    const first = (await ctx.history.commit({ paths: ['notes/a.md'], message: 'first save' })).commit!
+    expect(first).toMatch(/^[0-9a-f]{40}$/)
+    await fake.luoshu.write('notes/a.md', 'a, edited')
+    const second = (await ctx.history.commit({ paths: ['notes/a.md'], message: 'second save\n' })).commit!
+    const date = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$/)
+    expect(await ctx.history.log({ path: 'notes/a.md' })).toEqual({
+      commits: [
+        { commit: second, author: 'reader', committer: 'reader', date, message: 'second save' },
+        { commit: first, author: 'reader', committer: 'reader', date, message: 'first save' },
+      ],
+    })
+    expect(await ctx.history.log({ path: 'notes/a.md', limit: 1 })).toMatchObject({ commits: [{ commit: second }] })
+    expect(await ctx.history.read({ path: 'notes/a.md', commit: first })).toEqual({ text: 'a', version: createHash('sha256').update('a').digest('hex') })
+    expect(await ctx.history.read({ path: 'notes/a.md', commit: second })).toMatchObject({ text: 'a, edited' })
+  })
+
+  it('answers a commit that changes nothing with null and writes nothing', async () => {
+    const { ctx } = await historian([commitGrant, readGrant])
+    const { commit } = await ctx.history.commit({ paths: ['notes/a.md'], message: 'save' })
+    expect(await ctx.history.commit({ paths: ['notes/a.md'], message: 'again' })).toEqual({ commit: null })
+    expect(await ctx.history.commit({ paths: ['notes/none.md'], message: 'nothing there' })).toEqual({ commit: null })
+    expect((await ctx.history.log({ path: 'notes/a.md' })).commits.map(entry => entry.commit)).toEqual([commit])
+  })
+
+  // Commits notes/a.md under each call to save, so a test caller's onBehalf makes it a call for a pair
+  async function saver(capabilities: object[]) {
+    const fake = core(undefined, { capabilities, provides: { actions: { save: {} } } })
+    const box: { ctx: PluginContext | null } = { ctx: null }
+    await fake.start(definePlugin({
+      start: ctx => {
+        box.ctx = ctx
+        ctx.provide('save', async call => (await call.ctx.history.commit({ paths: ['notes/a.md'], message: 'for a client' })).commit)
+      },
+    }))
+    return { fake, ctx: box.ctx! }
+  }
+
+  // The plugin's own call carries no pair, so its own grant holds it. A call under a test caller's call for a client
+  // needs the pair's commit grant too and names that caller as the committer
+  it('names the caller as the committer and the onBehalf it set as the author', async () => {
+    const { fake, ctx } = await saver([commitGrant, readGrant])
+    await ctx.history.commit({ paths: ['notes/a.md'], message: 'for an agent' }, { onBehalf: 'agent <x@example.com>' })
+    await fake.luoshu.write('notes/a.md', 'a, edited')
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-1', pairGrants: [commitGrant] })).toMatchObject({ ok: true })
+    expect((await ctx.history.log({ path: 'notes/a.md' })).commits.map(entry => [entry.author, entry.committer])).toEqual([
+      ['client-1', 'tester'],
+      ['agent x@example.com', 'reader'],
+    ])
+  })
+
+  it('refuses a commit under a call for a pair that holds no commit grant and writes nothing', async () => {
+    const { fake, ctx } = await saver([commitGrant, readGrant])
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-1', pairGrants: [readGrant] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await ctx.history.log({ path: 'notes/a.md' })).toEqual({ commits: [] })
+  })
+
+  it('commits under a call for a pair once the test names the pair\'s commit grant', async () => {
+    const { fake } = await saver([commitGrant, readGrant])
+    const reply = await fake.call('reader.save', {}, { onBehalf: 'client-1#1', pairGrants: [commitGrant] })
+    expect(reply).toEqual({ ok: true, result: expect.stringMatching(/^[0-9a-f]{40}$/) })
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-2' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
+  it('refuses a commit of a path outside the commit grant and writes nothing', async () => {
+    const { ctx } = await historian([commitGrant, { ...readGrant, paths: ['**'] }])
+    await expect(ctx.history.commit({ paths: ['notes/a.md', 'secret/b.md'], message: 'both' })).rejects.toMatchObject({ code: 'not-granted' })
+    expect(await ctx.history.log({ path: 'notes/a.md' })).toEqual({ commits: [] })
+  })
+
+  it('answers not-found for a commit it never made', async () => {
+    const { ctx } = await historian([commitGrant, readGrant])
+    await expect(ctx.history.read({ path: 'notes/a.md', commit: 'f'.repeat(40) })).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('refuses a commit to a plugin that holds only the read grant', async () => {
+    const { ctx } = await historian([readGrant])
+    await expect(ctx.history.commit({ paths: ['notes/a.md'], message: 'save' })).rejects.toMatchObject({ code: 'not-granted' })
+  })
+
+  it('refuses a log and a read to a plugin that holds only the commit grant', async () => {
+    const { ctx } = await historian([commitGrant])
+    const commit = (await ctx.history.commit({ paths: ['notes/a.md'], message: 'save' })).commit!
+    await expect(ctx.history.log({ path: 'notes/a.md' })).rejects.toMatchObject({ code: 'not-granted' })
+    await expect(ctx.history.read({ path: 'notes/a.md', commit })).rejects.toMatchObject({ code: 'not-granted' })
+  })
+})
+
+describe('the fake history against the history module', () => {
+  afterEach(historyCleanup)
+
+  // The same calls on both. Ids are named by the order they first came in and each date is checked and then set aside,
+  // so the answers equal field for field
+  it('answers each call as the history module does', async () => {
+    const where = await historyPlace()
+    const real = (await historyStarted(where)).provider
+    const memory = new MemoryHistory(new Map())
+    const write = async (name: string, text: string) => {
+      memory.notes.set(name, text)
+      await mkdir(path.dirname(path.join(where.notes, name)), { recursive: true })
+      await writeFile(path.join(where.notes, name), text)
+    }
+    // Each provider's own commits in the order it made them, for the reads that name one
+    const made = new Map<Provider, string[]>([[real, []], [memory, []]])
+    const answers = new Map<Provider, unknown[]>([[real, []], [memory, []]])
+    async function both(action: string, args: (ids: string[]) => object, as: HistoryAsking = {}): Promise<void> {
+      for (const provider of [real, memory]) {
+        const call = historyCall(action, args(made.get(provider)!), as)
+        const prepared = await provider.prepare(call)
+        const answer = 'scope' in prepared ? await provider.perform(call, prepared).catch((err: unknown) => ({ refused: err })) : { refused: prepared }
+        const id = (answer as { commit?: unknown }).commit
+        if (typeof id === 'string') made.get(provider)!.push(id)
+        answers.get(provider)!.push(answer)
+      }
+    }
+    const agent: Call['caller'] = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
+    const handler: Call['caller'] = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
+    await both('history.log', () => ({ path: 'a.md' }))
+    await both('history.commit', () => ({ paths: ['none.md'], message: 'nothing yet' }))
+    await write('a.md', 'note a')
+    await write('journal/b.md', 'note b')
+    await both('history.commit', () => ({ paths: ['a.md', 'journal/b.md', 'a.md'], message: 'both\n\n' }))
+    await write('a.md', 'note a, edited')
+    await both('history.commit', () => ({ paths: ['a.md'], message: 'for an agent' }), { onBehalf: 'agent <x@example.com>' })
+    await both('history.commit', () => ({ paths: ['a.md'], message: 'again' }))
+    memory.notes.delete('journal/b.md')
+    await rm(path.join(where.notes, 'journal', 'b.md'))
+    await write('journal/c.md', 'note c')
+    await both('history.commit', () => ({ paths: ['journal/b.md', 'journal/c.md'], message: 'b gone' }), { caller: agent, root: handler, onBehalf: 'claude-code#1' })
+    for (const at of ['a.md', 'journal', 'journal/b.md', 'none.md']) await both('history.log', () => ({ path: at }))
+    await both('history.log', () => ({ path: 'a.md', limit: 1 }))
+    await both('history.read', ids => ({ path: 'a.md', commit: ids[0] }))
+    await both('history.read', ids => ({ path: 'journal/b.md', commit: ids[0] }))
+    await both('history.read', ids => ({ path: 'journal/b.md', commit: ids[2] }))
+    await both('history.read', ids => ({ path: 'journal', commit: ids[0] }))
+    await both('history.read', () => ({ path: 'a.md', commit: 'f'.repeat(40) }))
+    const named = (list: unknown[]) => {
+      const order: string[] = []
+      return JSON.parse(JSON.stringify(list, (key, value: unknown) => {
+        if (key === 'date') {
+          // git's %aI writes UTC as Z on some builds and +00:00 on others
+          expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:\d\d)$/)
+          return 'date'
+        }
+        if (key !== 'commit' || typeof value !== 'string') return value
+        if (!order.includes(value)) order.push(value)
+        return order.indexOf(value)
+      })) as unknown[]
+    }
+    const expected = named(answers.get(real)!)
+    expect(named(answers.get(memory)!)).toEqual(expected)
+    expect(made.get(real)).toHaveLength(3)
   })
 })

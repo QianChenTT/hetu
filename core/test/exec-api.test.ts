@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { providerActions } from '../api/actions.ts'
 import { capability } from '../api/capabilities.ts'
-import { reasonCodes } from '../api/envelope.ts'
+import { reasonCodes, type Caller } from '../api/envelope.ts'
 import {
   commandKey, envNameProblem, EXEC_OUTPUT_BYTES, EXEC_RUNNING, HISTORY_FILE_BYTES, loadsCode, LOG_PAGE, MAX_COMMIT_MESSAGE,
   MAX_COMMIT_PATHS, MAX_LOG_PAGE,
 } from '../api/exec.ts'
+import { signatureOf } from '../api/policy-jobs.ts'
 import { capabilityText } from '../api/trusted.ts'
 
 const exec = (env: string[], commands: string[][] = [['git', 'status']]) => ({ type: 'exec', commands, env })
@@ -129,5 +130,25 @@ describe('the history and exec actions', () => {
 
   it('has a reason for a file that isn\'t text', () => {
     expect(reasonCodes).toContain('not-text')
+  })
+})
+
+// The history module and the SDK's fake core both name their commits by this one definition
+describe('the names a commit carries', () => {
+  const plugin = (id: string): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation: 1 })
+  const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
+  const head = (caller: Caller, root: Caller, onBehalf?: string) => ({ callId: 'c', caller, root, ...(onBehalf === undefined ? {} : { onBehalf }) })
+
+  it('names the caller as both with no onBehalf', () => {
+    expect(signatureOf(head(plugin('mcp'), plugin('mcp-http-handler')))).toEqual({ author: 'mcp', committer: 'mcp' })
+  })
+
+  it('names the root plugin as the committer and the field as the author on a chain for a pair', () => {
+    expect(signatureOf(head(plugin('mcp'), plugin('mcp-http-handler'), 'claude <x@example.com>'))).toEqual({ author: 'claude x@example.com', committer: 'mcp-http-handler' })
+  })
+
+  it('names the caller as the committer and a window\'s onBehalf as the author', () => {
+    expect(signatureOf(head(editor, editor, 'a person'))).toEqual({ author: 'a person', committer: 'window.editor' })
+    expect(signatureOf(head(plugin('mcp'), editor, '<>'))).toEqual({ author: 'mcp', committer: 'mcp' })
   })
 })
