@@ -69,7 +69,7 @@ type Connection = {
   readonly incarnation: number
   readonly port: PortLike
   bindings: Map<string, string>
-  keys: boolean
+  keystream: boolean
   // Whether it asked for the range each editor draws and the stamp of the last range it was sent, by instance
   viewports: boolean
   readonly ranges: Map<string, number>
@@ -150,7 +150,7 @@ export class Drawer {
     }
     if (held !== undefined) this.drop(held)
     const conn: Connection = {
-      plugin, incarnation, port, bindings: new Map(), answering: null, keys: false, viewports: false, ranges: new Map(), marked: new Set(), sets: new Map(), told: new Set(),
+      plugin, incarnation, port, bindings: new Map(), answering: null, keystream: false, viewports: false, ranges: new Map(), marked: new Set(), sets: new Map(), told: new Set(),
       spent: { start: this.clock(), marks: 0, chars: 0, nodes: 0 },
     }
     this.connections.set(plugin, conn)
@@ -250,9 +250,9 @@ export class Drawer {
     }
     if (open === undefined) return false
     for (const conn of this.connections.values()) {
-      if (!conn.keys) continue
+      if (!conn.keystream) continue
       void this.reachOf(conn.plugin, open.path).then(reach => {
-        if (this.live(conn) && this.readsWith(reach, open) && reach.verbs.includes('ui.keys')) {
+        if (this.live(conn) && this.readsWith(reach, open) && reach.verbs.includes('ui.keystream')) {
           conn.port.postMessage(JSON.stringify(event({ topic: 'editor.key', instance: open.id, key })))
         }
       })
@@ -289,7 +289,7 @@ export class Drawer {
     if (!this.live(conn)) return
     this.ui.held(conn.plugin, held.verbs)
     if (!held.verbs.includes('ui.command')) [conn.bindings, conn.answering] = [new Map(), null]
-    if (!held.verbs.includes('ui.keys')) conn.keys = false
+    if (!held.verbs.includes('ui.keystream')) conn.keystream = false
     for (const id of [...conn.marked]) {
       const instance = this.find(id)
       const reach = instance === undefined ? none : await this.reachOf(conn.plugin, instance.path)
@@ -319,7 +319,7 @@ export class Drawer {
     conn.marked.clear()
     conn.sets.clear()
     conn.bindings = new Map()
-    conn.keys = false
+    conn.keystream = false
     conn.viewports = false
     conn.ranges.clear()
   }
@@ -510,8 +510,8 @@ export class Drawer {
         conn.bindings = new Map(bindings)
         return null
       }
-      case 'editor.keys':
-        conn.keys = call.args.on
+      case 'editor.keystream':
+        conn.keystream = call.args.on
         return null
       // An ask sends the range each note it reads is drawn at now, one it was sent already excepted. A stop forgets what
       // was sent, so the next ask sends the ranges of then

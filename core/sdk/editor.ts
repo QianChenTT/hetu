@@ -23,7 +23,8 @@ export type EditorClient = {
   edit(instance: string, version: number, changes: ChangeJson, selection?: { anchor: number, head: number }): Promise<{ version: number }>
   // Replaces every binding. The command named comes back as a command event
   bind(bindings: { key: string, command: string }[]): Promise<void>
-  keys(on: boolean): Promise<void>
+  // Starts or stops key events, each key pressed in a note the plugin reads. Needs ui.keystream
+  keystream(on: boolean): Promise<void>
   // Asks for the range each open note's editor draws as viewport events, of the notes the plugin reads, or stops them
   viewports(on: boolean): Promise<void>
   // Opens a note in the editor. Needs ui.view and luoshu.read on the path and on the note it resolves to, a list or
@@ -63,7 +64,7 @@ export class Editor implements EditorClient {
     // them again
     if (this.bindings !== null) this.send('editor.bind', { bindings: this.bindings }).catch(() => {})
     // Rejected when this page goes too or refuses it, so it sends no keys until the next connect asks again
-    if (this.stream) this.send('editor.keys', { on: true }).catch(() => {})
+    if (this.stream) this.send('editor.keystream', { on: true }).catch(() => {})
     // Rejected when this page goes too or refuses it, so it sends no viewport ranges until the next connect asks again
     if (this.ranges) this.send('editor.viewports', { on: true }).catch(() => {})
     for (const hook of this.connected) hook()
@@ -124,9 +125,9 @@ export class Editor implements EditorClient {
     await this.send('editor.bind', { bindings: this.bindings })
   }
 
-  async keys(on: boolean): Promise<void> {
+  async keystream(on: boolean): Promise<void> {
     this.stream = on
-    await this.send('editor.keys', { on })
+    await this.send('editor.keystream', { on })
   }
 
   async viewports(on: boolean): Promise<void> {

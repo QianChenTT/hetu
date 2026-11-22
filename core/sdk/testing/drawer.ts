@@ -326,8 +326,8 @@ export class FakeDrawer {
         need('ui.command')
         this.commands = new Set(call.args.bindings.map(binding => binding.command))
         return null
-      case 'editor.keys':
-        need('ui.keys')
+      case 'editor.keystream':
+        need('ui.keystream')
         return null
       // An ask sends the range of each note the plugin reads, one sent already excepted. A stop forgets what was sent
       case 'editor.viewports':

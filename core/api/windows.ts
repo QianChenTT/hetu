@@ -17,7 +17,7 @@ export const windowGrants: Readonly<Record<WindowRole, readonly Capability[]>> =
     { type: 'ui.layout' },
     { type: 'ui.decoration' },
     { type: 'ui.command' },
-    { type: 'ui.keys' },
+    { type: 'ui.keystream' },
     { type: 'storage' },
   ],
   trusted: [],

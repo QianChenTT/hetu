@@ -21,7 +21,7 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   'ui.decoration': 'held',
   'ui.command': 'held',
   'ui.layout': 'held',
-  'ui.keys': 'held',
+  'ui.keystream': 'held',
   'ui.edit': 'paths',
   'ui.read': 'paths',
   'lock.set': 'paths',
