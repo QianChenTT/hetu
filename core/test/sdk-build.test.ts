@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
 import { buildHost, buildPlugin, checkBundle, checkHostImports } from '../sdk/build/esbuild.ts'
 
-const layout = path.join(import.meta.dirname, '..', '..', 'core-plugins', 'layout')
 const dirs: string[] = []
 
 afterEach(async () => {
@@ -107,10 +106,6 @@ describe('a host half\'s imports', () => {
 })
 
 describe('checking a manifest', () => {
-  it('passes layout\'s manifest', async () => {
-    expect(await checkManifest(layout)).toEqual([])
-  })
-
   it('refuses an unknown capability, a duplicate key and a missing entry once built', async () => {
     const unknown = await folder({ 'hetu-plugin.json': manifest({ capabilities: [{ type: 'luoshu.teleport' }] }) })
     expect((await checkManifest(unknown)).length).toBeGreaterThan(0)
@@ -122,9 +117,14 @@ describe('checking a manifest', () => {
   })
 })
 
-describe('layout as it ships', () => {
+describe('a worker on the SDK', () => {
   it('builds into one script under the data: URL cap with no zod and no Node', async () => {
-    const outputs = await buildPlugin(layout, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
+    const sdk = path.join(import.meta.dirname, '..', 'sdk', 'index.ts').split(path.sep).join('/')
+    const dir = await folder({
+      'hetu-plugin.json': manifest(),
+      'src/worker.ts': `import { definePlugin } from '${sdk}'\nexport default definePlugin({ start() {} })\n`,
+    })
+    const outputs = await buildPlugin(dir, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
     expect(outputs).toHaveLength(1)
     expect(outputs[0].bytes).toBeLessThan(1.5 * 1024 * 1024)
     expect(outputs[0].inputs.filter(input => input.includes('zod') || input.startsWith('node:'))).toEqual([])

@@ -70,7 +70,7 @@ const files = shipped()
 
 describe('retired names', () => {
   it('has files to check in every shipped folder', () => {
-    for (const dir of ['core/api/', 'core/lib/', 'core/sdk/', 'core/frontend/', 'core/backend/', 'core-plugins/layout/src/']) {
+    for (const dir of ['core/api/', 'core/lib/', 'core/sdk/', 'core/frontend/', 'core/backend/', 'core-plugins/mcp-http-handler/src/']) {
       expect(files.some(file => file.startsWith(dir)), dir).toBe(true)
     }
   })

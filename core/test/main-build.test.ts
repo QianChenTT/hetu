@@ -38,15 +38,12 @@ describe('the main bundle', () => {
     expect(await readFile(path.join(out, 'main.js'), 'utf8')).toMatch(/from ["']electron["']/)
   })
 
-  it('writes hetu\'s own layout into the install as its one first-party copy, a worker holding ui.layout and storage', async () => {
+  it('writes no plugin into the install but the core plugin, layout and hidden marks included', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'layout')
-    expect(Object.keys(list.plugins).sort()).toEqual(['hidden-marks', 'layout', 'mcp-http-handler'])
-    expect(list.plugins.layout).toEqual({ path: 'plugins/layout', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
-    expect(await checkManifest(root, { built: true })).toEqual([])
+    expect(Object.keys(list.plugins)).toEqual(['mcp-http-handler'])
+    for (const id of ['layout', 'hidden-marks']) await expect(stat(path.join(out, 'plugins', id))).rejects.toThrow('ENOENT')
   })
 
   // The build takes source only from this repository, so nothing outside it can name another folder for it
@@ -88,16 +85,6 @@ describe('the main bundle', () => {
     const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
     expect(Object.keys(module)).toEqual(['default'])
     expect((module.default as { kind: string }).kind).toBe('hetu-plugin')
-  })
-
-  it('writes hidden marks into the install as a first-party copy, a worker holding ui.read and ui.decoration', async () => {
-    const out = await outDir()
-    await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'hidden-marks')
-    expect(list.plugins['hidden-marks']).toEqual({ path: 'plugins/hidden-marks', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
-    expect(await checkManifest(root, { built: true })).toEqual([])
   })
 
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {

@@ -3,30 +3,6 @@
   "clones": [
     {
       "files": [
-        "core-plugins/hidden-marks/src/marks.ts",
-        "core/frontend/editor/markdown.ts"
-      ],
-      "hash": "78c62332412b7dd5",
-      "at": [
-        "core-plugins/hidden-marks/src/marks.ts:18-38",
-        "core/frontend/editor/markdown.ts:10-29"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core-plugins/layout/src/worker.ts",
-        "core-plugins/layout/src/worker.ts"
-      ],
-      "hash": "3fdcca0406eae1c9",
-      "at": [
-        "core-plugins/layout/src/worker.ts:153-157",
-        "core-plugins/layout/src/worker.ts:169-173"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
         "core/api/actions.ts",
         "core/api/install.ts"
       ],

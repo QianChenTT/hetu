@@ -50,25 +50,6 @@ describe('the first-party reconcile', () => {
     expect(made.pluginsManager.view()).toBe(2)
   })
 
-  // Hidden marks ran in the editor page as a core plugin before it became a first-party worker, so a data folder from
-  // then holds it in the record of the install's core plugins and nothing in the plugin folder. Its own manifest, so
-  // the grants it ships with reach ready
-  it('copies a plugin the last run held as a core plugin as it copies any first-party plugin, with no update heard', async () => {
-    const real = JSON.parse(await readFile(path.join(import.meta.dirname, '..', '..', 'core-plugins', 'hidden-marks', 'hetu-plugin.json'), 'utf8')) as Record<string, unknown>
-    const marks = filesFor(real)
-    const made = await harness({ install: installWith({ 'hidden-marks': marks }) })
-    await writeInstalled(made.dataDir, { 'hidden-marks': { version: '0.1.0', hash: 'c'.repeat(64) } })
-    await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'hidden-marks')).toBe('ready')
-    expect((await new StateStore(made.dataDir).load()).state.plugins['hidden-marks'].granted).toEqual([
-      { type: 'ui.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }, { type: 'ui.decoration' }, { type: 'ui.command' }, { type: 'ui.view' },
-      { type: 'storage' },
-    ])
-    expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'hidden-marks', version: '0.1.0' }])
-    expect(made.link.events('plugin.updated')).toEqual([])
-    expect(Object.keys(await readInstalled(made.dataDir))).toEqual([])
-  })
-
   it('copies nothing the human removed, whose tombstone stands', async () => {
     const made = await harness({ install: installWith({ git: gitFiles(), notify: filesFor(workerManifest('notify')) }), switches: { removed: ['git'] } })
     await made.pluginsManager.start()

@@ -69,7 +69,6 @@ export const retiredNames: readonly RetiredName[] = [
       { place: 'core/backend/plugins-manager/changes.ts', text: 'slot-on', why: 'the pass once the grant risk classifier is switched on again carries the stored cause slot-on' },
       { place: 'core/api/ui.ts', why: layoutSlot },
       { place: 'core/frontend/editor/', why: layoutSlot },
-      { place: 'core-plugins/layout/src/', why: layoutSlot },
     ],
   },
   {
