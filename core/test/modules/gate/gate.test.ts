@@ -371,4 +371,10 @@ describe('coverage', () => {
     expect(scopeRules['events.subscribe']).toBe('topics')
     expect(scopeRules['plugin.call']).toBe('target')
   })
+
+  // The router finds the role's plugin through the plugin table and never asks the gate about the item, which is held
+  // whole
+  it('holds door.handle whole', () => {
+    expect(scopeRules['door.handle']).toBe('held')
+  })
 })

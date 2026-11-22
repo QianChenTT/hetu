@@ -9,7 +9,7 @@ import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { actionPathProblem } from './paths.ts'
 import { hidesOnScreen, MAX_SCOPE_LENGTH } from './scope.ts'
-import type { ViewSpec } from './manifest.ts'
+import { MAX_LIST, type ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
 import type { ThemeSpec } from './ui.ts'
 
@@ -306,9 +306,27 @@ const providerTable = {
 } satisfies Record<string, ProviderAction>
 export const providerActions = lookup<ProviderAction>(providerTable)
 
+// A role: an action the core names and the one plugin holding capability serves, delivered to it as this same action.
+// from is who may call it, which the floor decides as for a core action and never the gate
+export type RoleAction = { readonly from: CoreFrom, readonly capability: CapabilityType, readonly args: z.ZodType }
+
+const roleTable = {
+  // A request that passed every check at the door: its body as text and its mcp- headers, on behalf of the label the
+  // door named. The plugin answers a status and a body, which the door checks
+  'door.handle': {
+    from: 'utility',
+    capability: 'door.handle',
+    args: z.strictObject({
+      body: z.string(),
+      headers: z.record(z.string(), z.string()).refine(headers => Object.keys(headers).length <= MAX_LIST, 'too many headers'),
+    }),
+  },
+} satisfies Record<string, RoleAction>
+export const roleActions = lookup<RoleAction>(roleTable)
+
 // Each action's args as a caller writes them, from the literal tables before lookup widens their keys to strings
 type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in keyof T]: z.input<T[A]['args']> }
-export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
+export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable> & ArgsOf<typeof roleTable>
 
 // A security change waiting for the human: its kind and the plugin it names or that raised it, null for a change no
 // plugin is named in. A window draws it as a notice that opens the trusted window

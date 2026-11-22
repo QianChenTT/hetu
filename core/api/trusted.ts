@@ -31,6 +31,8 @@ export function capabilityText(granted: Capability): string {
       return `exec of ${granted.commands.map(command => JSON.stringify(command)).join(', ')}${granted.env.length > 0 ? ` with ${granted.env.map(quoted).join(', ')} from your environment` : ''}`
     case 'plugin.call':
       return `plugin.call to ${granted.targets.map(quoted).join(', ')}`
+    case 'door.handle':
+      return 'door.handle, answering every request MCP clients send through hetu\'s door'
     default:
       return granted.type
   }

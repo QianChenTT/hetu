@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { capabilityText } from '../api/trusted.ts'
 import {
   capabilities, capability, capabilityKey, capabilityTypes, type Capability, folderCapabilities, folderCapability,
-  installOnlyTypes, isInstallOnly, MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, text,
+  installOnlyTypes, isInstallOnly, MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, pairCapability, text,
 } from '../api/capabilities.ts'
 
 const raw = (text: string) => JSON.parse(text)
@@ -30,6 +30,7 @@ const everyType = [
   { type: 'guard.hook' },
   { type: 'log.read' },
   { type: 'lock.set', paths: ['projects/**'] },
+  { type: 'door.handle' },
 ]
 
 describe('the fixed list', () => {
@@ -37,6 +38,7 @@ describe('the fixed list', () => {
     expect(capabilityTypes).toEqual([
       'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
       'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
+      'door.handle',
     ])
   })
 
@@ -63,6 +65,16 @@ describe('the fixed list', () => {
     expect(capability.safeParse({ type: 'lock.set' }).success).toBe(false)
     expect(capability.safeParse({ type: 'lock.set', paths: ['notes/../a.md'] }).success).toBe(false)
     expect(capabilityText({ type: 'lock.set', paths: ['projects/**'] })).toBe('lock.set on "projects/**"')
+  })
+
+  // The role the door calls: held whole, asked for by a plugin-folder plugin and never by a pair, its Confirm saying what
+  // it serves
+  it('takes door.handle with no scope, from the plugin folder, never for a pair, and says what it serves', () => {
+    expect(capability.safeParse({ type: 'door.handle', targets: ['mcp'] }).success).toBe(false)
+    expect(folderCapability.safeParse({ type: 'door.handle' }).success).toBe(true)
+    expect(isInstallOnly('door.handle')).toBe(false)
+    expect(pairCapability.safeParse({ type: 'door.handle' }).success).toBe(false)
+    expect(capabilityText({ type: 'door.handle' })).toBe('door.handle, answering every request MCP clients send through hetu\'s door')
   })
 
   it('takes ui.read only with paths and shows them', () => {
