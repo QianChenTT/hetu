@@ -110,7 +110,8 @@ function parsedRelease(bytes: Buffer): z.infer<typeof releaseAnswer> {
   return checked.data
 }
 
-async function answer<T>(work: () => Promise<T>): Promise<T | { problem: FetchProblem }> {
+// What the work answers, or the problem of the refusal it threw
+async function problemOnRefusal<T>(work: () => Promise<T>): Promise<T | { problem: FetchProblem }> {
   try {
     return await work()
   } catch (err) {
@@ -125,7 +126,7 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
   if (link === null) return { problem: 'not-github' }
   const which = link.tag === null ? 'latest' : `tags/${encodeURIComponent(link.tag)}`
   const url = `${API}/repos/${link.owner}/${link.repo}/releases/${which}`
-  return answer(async () => {
+  return problemOnRefusal(async () => {
     const bytes = await getFromGitHub(url, RELEASE_WANTED, limitsOf(releaseLimits, options.limits), options).catch((err: unknown) => {
       // The API's 404 is a repo or a release it doesn't have
       throw err instanceof FetchRefused && err.problem === 'not-found' ? new FetchRefused('no-release') : err
@@ -150,7 +151,7 @@ export type Downloaded = { problem: null, bytes: Buffer, verified: boolean } | {
 export async function downloadZip(zip: ReleaseZip, options: FetchOptions = {}): Promise<Downloaded> {
   const limits = limitsOf(zipLimits, options.limits)
   if (zip.size > limits.bytes) return { problem: 'too-big' }
-  return answer(async () => {
+  return problemOnRefusal(async () => {
     const bytes = await getFromGitHub(zip.url, ZIP_WANTED, limits, options)
     if (zip.digest !== null && createHash('sha256').update(bytes).digest('hex') !== zip.digest) throw new FetchRefused('digest-mismatch')
     return { problem: null, bytes, verified: zip.digest !== null }
