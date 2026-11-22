@@ -7,13 +7,13 @@ const call = (verb: string, args: unknown, id = 1) => JSON.stringify({ v: 1, kin
 
 describe("the bridge's verbs", () => {
   it('names each verb with what it needs: a read of the note, ui.edit on it for an edit and a ui item', () => {
-    expect(editorVerbs).toEqual(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys', 'editor.viewports'])
+    expect(editorVerbs).toEqual(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keystream', 'editor.viewports'])
     expect(verbNeeds['editor.instances']).toEqual({ read: false, edit: false, ui: null })
     expect(verbNeeds['editor.read']).toEqual({ read: true, edit: false, ui: null })
     expect(verbNeeds['editor.decorate']).toEqual({ read: true, edit: false, ui: 'ui.decoration' })
     expect(verbNeeds['editor.edit']).toEqual({ read: true, edit: true, ui: null })
     expect(verbNeeds['editor.bind']).toEqual({ read: false, edit: false, ui: 'ui.command' })
-    expect(verbNeeds['editor.keys']).toEqual({ read: false, edit: false, ui: 'ui.keys' })
+    expect(verbNeeds['editor.keystream']).toEqual({ read: false, edit: false, ui: 'ui.keystream' })
     // The range goes only to a plugin that reads its note, checked at each send, so the ask needs nothing of its own
     expect(verbNeeds['editor.viewports']).toEqual({ read: false, edit: false, ui: null })
   })
@@ -93,7 +93,7 @@ describe('a call on the bridge', () => {
     expect(parseBridgeCall(call('editor.edit', { instance: 'n1', version: 0, changes: [3], selection: { anchor: 3, head: 3 } }))?.args)
       .toEqual({ instance: 'n1', version: 0, changes: [3], selection: { anchor: 3, head: 3 } })
     expect(parseBridgeCall(call('editor.bind', { bindings: [{ key: 'Mod-Shift-k', command: 'kill' }] }))?.verb).toBe('editor.bind')
-    expect(parseBridgeCall(call('editor.keys', { on: true }))?.verb).toBe('editor.keys')
+    expect(parseBridgeCall(call('editor.keystream', { on: true }))?.verb).toBe('editor.keystream')
     expect(parseBridgeCall(call('editor.viewports', { on: false }))?.args).toEqual({ on: false })
   })
 
@@ -116,7 +116,7 @@ describe('a call on the bridge', () => {
     ['a binding on a bare letter', call('editor.bind', { bindings: [{ key: 'k', command: 'kill' }] })],
     ['a binding with Shift alone', call('editor.bind', { bindings: [{ key: 'Shift-k', command: 'kill' }] })],
     ['65 bindings', call('editor.bind', { bindings: Array.from({ length: MAX_BINDINGS + 1 }, () => ({ key: 'Mod-k', command: 'kill' })) })],
-    ['a key stream switch that is no boolean', call('editor.keys', { on: 'yes' })],
+    ['a key stream switch that is no boolean', call('editor.keystream', { on: 'yes' })],
     ['a viewport switch that is no boolean', call('editor.viewports', { on: 1 })],
     ['a viewport switch naming a note', call('editor.viewports', { on: true, instance: 'n1' })],
   ])('answers null for %s', (_name, text) => {

@@ -47,6 +47,7 @@ const typesAllowed: readonly { place: string, text: string, why: string }[] = [
   { place: 'backend/plugins-manager/lifecycle.ts', text: "item.type === 'plugin.call' ? item.targets", why: 'a plugin\'s plugin.call targets are dependencies its lifecycle waits on' },
   { place: 'backend/plugins-manager/changes.ts', text: "capability.type === 'exec' && !off", why: 'exec is handed each plugin\'s own exec items to check a command against' },
   { place: 'backend/router/shape.ts', text: "capability: 'plugin.call'", why: 'a plugin call is judged under plugin.call' },
+  { place: 'backend/boot/state.ts', text: "type: 'ui.keystream'", why: 'an entry written before the rename reads ui.keys under the new name' },
 ]
 
 describe('the class rules in the classifier alone', () => {

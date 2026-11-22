@@ -111,7 +111,7 @@ describe("the SDK's editor side", () => {
     const bound = editor.bind([{ key: 'Mod-k', command: 'kill' }])
     first.replies(1, null)
     await bound
-    const streaming = editor.keys(true)
+    const streaming = editor.keystream(true)
     first.replies(2, null)
     await streaming
     const asking = editor.viewports(true)
@@ -123,7 +123,7 @@ describe("the SDK's editor side", () => {
     await expect(reading).rejects.toMatchObject({ code: 'unavailable' })
     expect(next.sent.map(call => [call.verb, call.args])).toEqual([
       ['editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] }],
-      ['editor.keys', { on: true }],
+      ['editor.keystream', { on: true }],
       ['editor.viewports', { on: true }],
     ])
     // A late reply on the old port settles nothing

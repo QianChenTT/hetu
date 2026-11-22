@@ -571,7 +571,7 @@ describe("the bridge's drawer end", () => {
     // A plugin that writes the note on disk still edits it in the editor only with ui.edit
     ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], write: ['a.md'] }],
     ['editor.bind', { bindings: [] }, { read: ['a.md'], verbs: ['ui.decoration'] }],
-    ['editor.keys', { on: true }, { read: ['a.md'], verbs: ['ui.command'] }],
+    ['editor.keystream', { on: true }, { read: ['a.md'], verbs: ['ui.command'] }],
   ])('refuses %s %j without what it needs', async (verb, args, held) => {
     const { drawer } = started({ alpha: held })
     const alpha = port()
@@ -583,7 +583,7 @@ describe("the bridge's drawer end", () => {
     ['editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] }, { read: ['a.md'], verbs: ['ui.decoration'] }],
     ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], edit: ['a.md'] }],
     ['editor.bind', { bindings: [] }, { verbs: ['ui.command'] }],
-    ['editor.keys', { on: true }, { verbs: ['ui.keys'] }],
+    ['editor.keystream', { on: true }, { verbs: ['ui.keystream'] }],
   ])('answers %s with what it needs', async (verb, args, held) => {
     const { drawer } = started({ alpha: held })
     const alpha = port()
@@ -760,7 +760,7 @@ describe("the bridge's drawer end", () => {
   })
 
   it('sends keys only to a plugin that turned its key stream on', async () => {
-    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.keys'] } })
+    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.keystream'] } })
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     drawer.key('n1', 'a')
@@ -838,10 +838,10 @@ describe("the bridge's drawer end", () => {
 
   it('streams keys only for instances whose notes the plugin reads', async () => {
     const notes = [note('n1', 'a.md', 'a'), note('n2', 'secret.md', 's')]
-    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.keys'] } }, notes)
+    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.keystream'] } }, notes)
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
-    await alpha.call('editor.keys', { on: true })
+    await alpha.call('editor.keystream', { on: true })
     drawer.key('n1', 'a')
     drawer.key('n2', 'b')
     drawer.key(null, 'c')

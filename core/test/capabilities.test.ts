@@ -18,7 +18,7 @@ const everyType = [
   { type: 'ui.layout' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
-  { type: 'ui.keys' },
+  { type: 'ui.keystream' },
   { type: 'ui.edit', paths: ['**'] },
   { type: 'ui.read', paths: ['**'] },
   { type: 'events.subscribe', topics: ['luoshu.changed', 'search.indexed'] },
@@ -35,7 +35,7 @@ const everyType = [
 describe('the fixed list', () => {
   it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2, and ui.edit', () => {
     expect(capabilityTypes).toEqual([
-      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
+      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream',
       'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
     ])
   })
