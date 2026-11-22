@@ -91,7 +91,7 @@ export function isInstallOnly(type: string): boolean {
   return (installOnlyTypes as readonly string[]).includes(type)
 }
 
-export const folderCapability = capability.refine(granted => !isInstallOnly(granted.type), 'a type only core plugins hold')
+export const folderCapability = capability.refine(granted => !isInstallOnly(granted.type), 'a type only the core holds')
 
 // The types a pair's item may hold: reading, listing, writing and locking notes and their history. The gate holds a pair
 // to these and an ask names no other, so nothing a pair is given reaches a plugin, runs a command or subscribes to a
