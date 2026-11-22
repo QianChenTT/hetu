@@ -172,8 +172,9 @@ export function callOf(pending: Pending, args: unknown, live?: LiveCall): Call {
 
 // A call a new grants snapshot no longer covers, with every call under it revoked the same way. A plugin callee is sent
 // cancel and the caller answered code at once, as is a call not yet in perform. A provider in perform hears the call's
-// signal: one that stops answers code once its perform throws, a single write finishes and answers as it would. A call
-// under it still in perform is no longer its sub-call, so the call answering doesn't stop it
+// signal and the call answers code once its perform ends, thrown or not, so a single write that finishes lands and
+// its result is dropped. A call under it still in perform is no longer its sub-call, so the call answering doesn't
+// stop it
 export function revoke(c: Context, pending: Pending, code: RefusalCode): void {
   if (pending.done || pending.revoked !== null) return
   for (const child of [...pending.children]) {

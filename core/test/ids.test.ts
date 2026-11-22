@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   coreModuleIds, coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, utilityIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
+  failSafeControls,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -81,6 +82,15 @@ describe('policy jobs, providers and guards', () => {
     }
   })
 
+  // A start that throws, hangs or finds a guard missing stops hetu for these alone. The classifier, recording and the
+  // security view only guard, so hetu starts on without them
+  it('lists the controls the fail-safe at start covers: every judging module and every guard core/api expects, once each', () => {
+    expect(failSafeControls()).toEqual([...judgingModuleIds, ...new Set(Object.values(guards).flat())])
+    expect(failSafeControls()).toEqual(['gate', 'flood-control'])
+    expect(failSafeControls(() => ['leases'])).toEqual(['gate', 'flood-control', 'leases'])
+    for (const id of guardingModuleIds) expect(failSafeControls(() => ['leases'])).not.toContain(id)
+  })
+
   it("names the provider of every namespace", () => {
     expect(providers).toEqual({
       luoshu: 'luoshu', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', net: 'net',
@@ -127,7 +137,7 @@ describe('reserved ids', () => {
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
     'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler',
-    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout', 'hidden-marks',
+    'mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks',
   ]
 
   it('holds exactly the reserved ids', () => {
@@ -135,7 +145,7 @@ describe('reserved ids', () => {
   })
 
   it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout', 'hidden-marks'])
+    expect(firstPartyIds).toEqual(['mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'])
   })
 
   it.each(expected)('reserves %j', id => {
@@ -147,7 +157,7 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes'])(
+  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes', 'file-explorer', 'search'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)

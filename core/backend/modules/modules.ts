@@ -170,7 +170,7 @@ export class CoreModules implements Holder {
     try {
       const first = coreModuleIds.filter(judging)
       const rest = coreModuleIds.filter(id => !judging(id))
-      await this.bring(first)
+      await this.marked(first)
       if (first.some(id => this.startFailed.has(id) || this.pushFailed.has(id))) {
         for (const id of rest) if (!lasting.has(id)) this.unbegun.add(id)
       } else await this.bring(rest)
@@ -188,6 +188,28 @@ export class CoreModules implements Holder {
       if (!this.off.has(id)) await this.begin(id)
     }
     for (const id of ids) this.push(id)
+  }
+
+  // The judging modules each begun and handed what it needs before the next begins, each marked on disk from before
+  // its start until its first push returned. A start that hangs main leaves the marker of that one alone. A marker
+  // that can't be written or cleared is a fault and the start goes on
+  private async marked(ids: readonly CoreModuleId[]): Promise<void> {
+    for (const id of ids) {
+      if (this.closed) break
+      if (this.off.has(id)) continue
+      await this.mark(id, 'starting')
+      await this.begin(id)
+      this.push(id)
+      await this.mark(id, 'started')
+    }
+  }
+
+  private async mark(id: CoreModuleId, step: 'starting' | 'started'): Promise<void> {
+    try {
+      await this.handed?.[step](id)
+    } catch {
+      this.fault(id, 'marker')
+    }
   }
 
   // The human's switches as they now stand. A module switched off is closed where it has a close and its lookups answer

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hashOf, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { entryFor, filesFor, hashOf, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -320,20 +320,23 @@ self.onmessage = event => {
     return page
   }
 
+  // A bundled reader of every note, in an install of the test's own under a first-party id hetu doesn't build yet
   it('shows the screen and the plugin\'s own Raises line on the Confirm of a restore of a bundled plugin the human narrowed', async () => {
+    const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
+    const installDir = await temp()
+    await writeInstall(installDir, { git: { files: filesFor(workerManifest('git', { capabilities: [readAll] }), { 'worker.js': idle }), firstParty: true } })
     const dataDir = await temp()
     const store = new StateStore(dataDir)
     await store.writeSwitches(defaultSwitches())
     await store.writeLuoshu({ folder: await temp() })
-    const app = await launch(dataDir)
+    const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'search' }))
-    const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
-    expect((await ask(editor, 'security.request', { change: { kind: 'grant.narrow', plugin: 'search', capability: readAll } })).ok).toBe(true)
-    expect((await new StateStore(dataDir).load()).state.plugins.search).toMatchObject({ class: 0 })
-    expect((await ask(editor, 'security.request', { change: { kind: 'plugin.restore', plugin: 'search' } })).ok).toBe(true)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'git' }))
+    expect((await ask(editor, 'security.request', { change: { kind: 'grant.narrow', plugin: 'git', capability: readAll } })).ok).toBe(true)
+    expect((await new StateStore(dataDir).load()).state.plugins.git).toMatchObject({ class: 0 })
+    expect((await ask(editor, 'security.request', { change: { kind: 'plugin.restore', plugin: 'git' } })).ok).toBe(true)
     const page = await trustedWindow(app, editor)
-    await until(async () => (await page.locator('#root').innerText()).includes('Raises search from class 0, Contained to class 1, Reader'))
+    await until(async () => (await page.locator('#root').innerText()).includes('Raises git from class 0, Contained to class 1, Reader'))
     expect(await page.locator('#root').innerText()).toContain('Class 1, Reader')
   })
 

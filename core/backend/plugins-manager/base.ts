@@ -177,7 +177,8 @@ export abstract class PluginsBase {
   protected readonly minted = new Map<string, number>()
   protected readonly lastPolicyJobs = new Map<string, PolicyJobState>()
   protected readonly waiters: (() => void)[] = []
-  // Restart marker writes under way, which shutdown waits for, so none is cut off when the process ends
+  // Restart marker writes and start marker writes and clears under way, which shutdown and a clean Quit wait for, so
+  // none is cut off when the process ends
   protected readonly markerWork = new Set<Promise<void>>()
   protected state: SecurityState
   protected removedKnown: boolean
@@ -290,11 +291,19 @@ ${capabilityKey(change.capability)}`)
 
   // A policy job or guard role: a core module as it reads, starting until the modules are started, off only by the
   // human's switch and failed while the module's last push threw or once the stopped mode closed it. Nothing that runs
-  // holds a guard role, so each is absent
+  // holds a guard role, so an expected guard reads off by the human's switch, which the router skips and absent otherwise
   policyJob(id: string): PolicyJobState {
-    if (!isModule(id)) return 'absent'
+    if (!isModule(id)) return isOne(this.state.switches.off, id) && this.expected().includes(id) ? 'off' : 'absent'
     const state = this.modules.state(id)
     return state === 'stopped' ? 'failed' : state
+  }
+
+  // A start marker's write or clear, kept among the marker work until it ends either way
+  protected marking(work: Promise<void>): Promise<void> {
+    const ended = work.catch(() => {})
+    this.markerWork.add(ended)
+    void ended.then(() => this.markerWork.delete(ended))
+    return work
   }
 
   view(): number {

@@ -60,7 +60,8 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect(code(await search.ask('exec.run', { command: build }))).toBe('not-granted')
   })
 
-  it('lets a write in perform finish on the grant it was judged on', async () => {
+  // The write lands, as a single write finishes once begun and its caller hears stale all the same
+  it('answers a write in perform stale once its grant goes, whatever its provider returns after the abort', async () => {
     const { luoshu, search, gate, snapshot } = made()
     let open!: () => void
     luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
@@ -73,7 +74,7 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect(search.repliesTo(id)).toEqual([])
     open()
     const reply = await search.reply(id)
-    expect([reply.ok, luoshu.files.get('notes/a.md')]).toEqual([true, 'x'])
+    expect([code(reply), luoshu.files.get('notes/a.md')]).toEqual(['stale', 'x'])
     expect(luoshu.performed[0].call.signal?.aborted).toBe(true)
   })
 
@@ -227,7 +228,7 @@ function under() {
 }
 
 describe('the calls under a call a new grants snapshot no longer covers', () => {
-  it('answers the call stale and lets a write under it finish and answer its result', async () => {
+  it('answers the call stale and a write under it stale once the write finishes', async () => {
     const { luoshu, scribe, counter, gate, snapshot } = under()
     const id = scribe.call('word-count.count', {})
     const got = await counter.delivered('word-count.count')
@@ -243,8 +244,50 @@ describe('the calls under a call a new grants snapshot no longer covers', () => 
     expect(counter.repliesTo(write)).toEqual([])
     open()
     const reply = await counter.reply(write)
-    expect([reply.ok, luoshu.files.get('notes/a.md')]).toEqual([true, 'x'])
+    expect([code(reply), luoshu.files.get('notes/a.md')]).toEqual(['stale', 'x'])
     expect(luoshu.performed[0].call.signal?.aborted).toBe(true)
+  })
+
+  it('answers a listing under it stale, no name it found reaching the caller', async () => {
+    const { luoshu, scribe, counter, gate, snapshot } = under()
+    gate.grants['word-count'] = [...gate.grants['word-count'], { type: 'luoshu.read', paths: ['notes/**'] }]
+    luoshu.files.set('notes/a.md', 'x')
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const list = counter.call('luoshu.list', {}, { parent: got.callId })
+    await tick(20)
+    expect(luoshu.performed).toHaveLength(1)
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    open()
+    const reply = await counter.reply(list)
+    expect(code(reply)).toBe('stale')
+    expect(JSON.stringify(reply)).not.toContain('notes/a.md')
+  })
+
+  // Its own grant still covers the path, so only the revoke can refuse it
+  it('refuses the second ask of a write under it once it was revoked', async () => {
+    const { luoshu, scribe, counter, gate, snapshot } = under()
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    let asked: unknown
+    luoshu.perform_ = call => {
+      asked = call.judge!(['notes/a.md'])
+      return null
+    }
+    const write = counter.call('luoshu.write', { path: 'notes/a.md', text: 'x' }, { parent: got.callId })
+    await tick(20)
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    open()
+    await counter.reply(write)
+    expect(asked).toEqual({ code: 'stale' })
   })
 
   it('kills an exec run under it, the run answering stale', async () => {

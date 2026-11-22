@@ -1,19 +1,19 @@
-import type { CoreStatus, HeldRequest, ListedPlugin, SecurityList } from '../../api/actions.ts'
+import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
-import { coreModuleIds, firstPartyIds, guardableActions, isSecurityControl, judgingModuleIds } from '../../api/ids.ts'
+import { coreModuleIds, failSafeControls, firstPartyIds, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
 import type { Served } from '../router/header.ts'
-import { readFailedOnce } from './folders.ts'
+import { clearStartMarker, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
 import { type ConnectAsked } from './connects.ts'
 import { viewsOf } from './reads.ts'
 import { PluginsChanges } from './changes.ts'
-import { type PluginsManagerOptions, type Listing, isOne } from './base.ts'
+import { type PluginsManagerOptions, type Listing, isModule, isOne } from './base.ts'
 
 export { bootOrder, type Listing, type PluginsManagerOptions, type UpdateOutcome } from './base.ts'
 
@@ -241,9 +241,17 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
     }
     // The controls that judge yes or no go first and alone. Nothing the core runs holds a guard, so an expected guard the
-    // human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins
-    const guards = [...new Set(guardableActions.flatMap(action => this.guardsFor(action)))]
-    const guard = guards.find(id => !isOne(this.state.switches.off, id) && this.policyJob(id) !== 'on')
+    // human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
+    // read from policyJob as the router reads it
+    const controls = failSafeControls(action => this.guardsFor(action))
+    // A start marker the run before left names the control whose start hung main, which goes to the fail-safe. One of a
+    // control the human switched off is left from a clear that failed, holds nothing back and is cleared
+    const markers = await readStartMarkers(this.dataDir, controls)
+    const off = markers.filter(id => isOne(this.state.switches.off, id))
+    for (const id of off) await this.marking(clearStartMarker(this.dataDir, id)).catch(() => {})
+    const hung = markers.find(id => !off.includes(id))
+    if (hung !== undefined) return this.enterStopped({ control: hung, why: 'start-failed', reason: START_HUNG, again: false })
+    const guard = controls.find(id => !isModule(id) && this.policyJob(id) !== 'on' && this.policyJob(id) !== 'off')
     if (guard !== undefined) return this.enterStopped({ control: guard, why: 'start-failed', reason: this.policyJob(guard), again: false })
     await this.modules.start(this.state.switches.off, {
       grants: () => this.grantsSnapshot(),
@@ -258,11 +266,13 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         kill: plugin => this.missed(plugin, false),
         limit: (plugin, name) => this.limitOf(plugin, name),
       },
+      starting: id => this.marking(writeStartMarker(this.dataDir, id)),
+      started: id => this.marking(clearStartMarker(this.dataDir, id)),
     })
     // A control that judges yes or no and failed at start stops hetu in the stopped mode before any other module began
     // or any plugin runs, where the human quits, tries again or starts with it switched off. No restart marker is
     // written, so it never starts again on its own
-    const failed = judgingModuleIds.find(id => this.modules.state(id) === 'failed')
+    const failed = controls.filter(isModule).find(id => this.modules.state(id) === 'failed')
     if (failed !== undefined) return this.enterStopped({ control: failed, why: 'start-failed', reason: this.modules.reason(failed), again: false })
     this.phase = 'all'
     this.replan()

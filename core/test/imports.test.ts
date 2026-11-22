@@ -331,7 +331,7 @@ describe('the check itself', () => {
     ['core/backend/providers/luoshu/luoshu.ts', "import type { Exec } from '../exec/header.ts'", 'core/backend/providers/luoshu/luoshu.ts (luoshu) imports core/backend/providers/exec/header.ts (exec)'],
     ['core/backend/router/router.ts', "import { x } from '../../test/hold.ts'", 'core/backend/router/router.ts imports tooling core/test/hold.ts'],
     ['core/lib/disk.ts', "const fs = await import('node:fs')", 'core/lib/disk.ts: <dynamic import>'],
-    ['core-plugins/search/src/index.ts', "import { x } from 'hetu-core/lib/disk.ts'", 'core-plugins/search/src/index.ts (plugin) imports core/lib/disk.ts (lib)'],
+    ['core-plugins/layout/src/worker.ts', "import { x } from 'hetu-core/lib/disk.ts'", 'core-plugins/layout/src/worker.ts (plugin) imports core/lib/disk.ts (lib)'],
   ])('refuses %s importing past the arrows: %j', (file, source, problem) => {
     expect(problemsOf(file, source)).toEqual([problem])
   })
@@ -381,9 +381,9 @@ describe('the check itself', () => {
     expect(problemsOf('core/frontend/trusted/view.ts', "import { x } from 'hetu-core/lib/disk.ts'")).toEqual([
       'core/frontend/trusted/view.ts (page:trusted) imports core/lib/disk.ts (lib)',
     ])
-    expect(problemsOf('core-plugins/search/src/index.ts', "import { definePlugin } from '@hetu/sdk'")).toEqual([])
-    expect(problemsOf('core-plugins/search/src/index.ts', "import { buildPlugin } from '@hetu/sdk/esbuild'")).toEqual([
-      'core-plugins/search/src/index.ts imports tooling core/sdk/build/',
+    expect(problemsOf('core-plugins/layout/src/worker.ts', "import { definePlugin } from '@hetu/sdk'")).toEqual([])
+    expect(problemsOf('core-plugins/layout/src/worker.ts', "import { buildPlugin } from '@hetu/sdk/esbuild'")).toEqual([
+      'core-plugins/layout/src/worker.ts imports tooling core/sdk/build/',
     ])
   })
 

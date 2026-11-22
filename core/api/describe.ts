@@ -1,4 +1,5 @@
 import type { Change, ClassRaised } from './changes.ts'
+import { grantKeyOf } from './envelope.ts'
 import { isSecurityControl } from './ids.ts'
 import { classNames } from './policy-jobs.ts'
 import { capabilityText } from './trusted.ts'
@@ -83,9 +84,10 @@ export function describeChange(change: Change): Described {
         text: `${quoted(change.plugin)} moved from ${className(change.from)} to ${className(change.to)} with no Confirm on screen`,
         notes: [`Why: ${why(change)}`, 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it'],
       }
-    // The field is what the root plugin set on its calls, in quotes as data
+    // The field is what the root plugin set on its calls, in quotes as data. A revoke names the client it revokes, the
+    // field up to its first #
     case 'identity.revoke':
-      return { text: `Revoke ${quoted(change.field)} under ${change.root}`, notes: ['It loses every item at once and asks for nothing again until hetu quits'] }
+      return { text: `Revoke ${quoted(grantKeyOf(change.field))} under ${change.root}`, notes: ['It loses every item at once and asks for nothing again until hetu quits'] }
     case 'identity.ask':
       return {
         text: `Give ${quoted(change.field)} under ${change.root} what it asks for through ${change.plugin}`,
@@ -95,13 +97,15 @@ export function describeChange(change: Change): Described {
           'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
         ],
       }
-    // Where the client comes from first, then what it calls itself, where it gets its answer and the field it gets last,
-    // each in quotes as data. The field's place last is where the trusted window finds it to draw apart
+    // Where the client comes from first, then what it calls itself, where it gets its answer or that it runs on this
+    // computer and the field it gets last, each in quotes as data. The field's place last is where the trusted window
+    // finds it to draw apart
     case 'consent.ask': {
       const from = change.clientHost === null ? `the client ${quoted(change.client)}` : `the client from ${quoted(change.clientHost)}`
       const named = change.name === null ? 'with no name' : `named ${quoted(change.name)}`
+      const reached = change.redirectHost === null ? 'a program on this computer reaching hetu over the local pipe' : `which returns to ${quoted(change.redirectHost)}`
       return {
-        text: `Connect ${from} ${named}, which returns to ${quoted(change.redirectHost)}, through ${change.plugin} as ${quoted(change.field)}`,
+        text: `Connect ${from} ${named}, ${reached}, through ${change.plugin} as ${quoted(change.field)}`,
         notes: [
           'Any program on this computer can connect under that client id and that name, so confirm only a connect you started just now',
           'It reaches no note yet. It asks for items later and each ask waits for your Confirm',
