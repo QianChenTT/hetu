@@ -4,8 +4,9 @@ import { IterMode, type SyntaxNode } from '@lezer/common'
 import { Emoji, GFM, type MarkdownConfig, parser, Subscript, Superscript } from '@lezer/markdown'
 import type { EditorClient } from '@hetu/sdk'
 
-// Markdown's markers hidden and its text styled, as marks the drawer draws. Each element's hidden markers share one
-// group, so an Alt+click shows them together. Each says whether it opens or closes the element. The text itself never
+// Markdown's markers hidden and its text styled, as marks the drawer draws. Each element's hidden markers, line styles
+// and bullet share one group, so an Alt+click on any of it shows the markers together. Each marker says whether it opens
+// or closes the element. The text itself never
 // changes and the raw view always shows the markers
 
 export type Mark = Parameters<EditorClient['decorate']>[3][number]
@@ -63,26 +64,45 @@ function quoteOf(node: SyntaxNode): SyntaxNode {
   return node
 }
 
-// The elements in the ranges given, each element's hidden markers in the group groupOf names
-export function hiddenMarks(state: EditorState, ranges: readonly { from: number, to: number }[], groupOf: (element: Named) => string): Element[] {
+// The elements whose markdown the human may choose to show in the plugin's settings, by the node each is
+const kindOf: Readonly<Record<string, string>> = Object.freeze({
+  StrongEmphasis: 'bold', Emphasis: 'italic', Strikethrough: 'strike', InlineCode: 'code', Highlight: 'highlight', ListItem: 'bullet',
+  Blockquote: 'quote', HorizontalRule: 'rule', Link: 'link', Image: 'link', FencedCode: 'fence',
+})
+export const elementKinds = Object.freeze(['bold', 'italic', 'strike', 'code', 'highlight', 'heading', 'bullet', 'quote', 'rule', 'link', 'fence'] as const)
+export type ElementKind = typeof elementKinds[number]
+
+// The elements in the ranges given, each element's hidden markers in the group groupOf names. An element of a kind in
+// shown keeps its style and hides nothing
+export function hiddenMarks(
+  state: EditorState, ranges: readonly { from: number, to: number }[], groupOf: (element: Named) => string, shown: ReadonlySet<ElementKind> = new Set(),
+): Element[] {
+  const showing = (owner: SyntaxNode) => shown.has((/Heading\d$/.test(owner.name) ? 'heading' : kindOf[owner.name]) as ElementKind)
   const elements = new Map<string, Element>()
-  const groups = new Map<Element, string>()
+  const groups = new Map<string, string>()
   const elementOf = (node: SyntaxNode) => {
     const key = `${node.name} ${node.from}`
     let element = elements.get(key)
     if (element === undefined) elements.set(key, element = { from: node.from, to: node.to, marks: [] })
     return element
   }
+  const groupFor = (owner: SyntaxNode) => {
+    const key = `${owner.name} ${owner.from}`
+    let group = groups.get(key)
+    if (group === undefined) groups.set(key, group = groupOf({ name: owner.name, from: owner.from, to: owner.to }))
+    return group
+  }
   const hide = (owner: SyntaxNode, from: number, to: number, edge?: 'open' | 'close') => {
-    if (to <= from) return
-    const element = elementOf(owner)
-    let group = groups.get(element)
-    if (group === undefined) groups.set(element, group = groupOf({ name: owner.name, from: owner.from, to: owner.to }))
-    element.marks.push(edge === undefined ? { kind: 'hide', from, to, group } : { kind: 'hide', from, to, group, edge })
+    if (to <= from || showing(owner)) return
+    const group = groupFor(owner)
+    elementOf(owner).marks.push(edge === undefined ? { kind: 'hide', from, to, group } : { kind: 'hide', from, to, group, edge })
   }
   // A marker at its element's start opens it and any other closes it
   const edgeAt = (owner: SyntaxNode, from: number) => (from === owner.from ? 'open' : 'close')
-  const line = (owner: SyntaxNode, at: number, style: LineStyle) => elementOf(owner).marks.push({ kind: 'line', from: state.doc.lineAt(at).from, style })
+  // A line style shares its element's group, so the element's text is the element on an Alt+click too
+  const line = (owner: SyntaxNode, at: number, style: LineStyle) => {
+    elementOf(owner).marks.push({ kind: 'line', from: state.doc.lineAt(at).from, style, group: groupFor(owner) })
+  }
   const text = (from: number, to: number) => state.doc.sliceString(from, to)
   const end = ranges.reduce((most, range) => Math.max(most, range.to), 0)
   const tree = ensureSyntaxTree(state, end, PARSE_MS) ?? syntaxTree(state)
@@ -129,7 +149,7 @@ export function hiddenMarks(state: EditorState, ranges: readonly { from: number,
             line(quoteOf(node), node.from, 'quote')
             break
           case 'ListMark':
-            if (parent.parent?.name === 'BulletList') elementOf(node).marks.push({ kind: 'widget', from: node.from, to: node.to, text: '•' })
+            if (parent.parent?.name === 'BulletList' && !showing(parent)) elementOf(node).marks.push({ kind: 'widget', from: node.from, to: node.to, text: '•', group: groupFor(parent) })
             break
           case 'HorizontalRule':
             hide(node, node.from, node.to)

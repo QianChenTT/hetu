@@ -116,7 +116,8 @@ const hitAt = (editor: Page, x: number, y: number) => editor.evaluate(([px, py])
   const at = document.elementFromPoint(px as number, py as number)
   return { inEditor: at?.closest('.cm-content') !== null, inTitle: at?.closest('.hetu-title') !== null }
 }, [x, y])
-const viewButton = (editor: Page) => editor.locator('#editors .hetu-surface .hetu-button')
+// The fixture's button and not hidden marks' Marks button, its settings item in the status row of every run
+const viewButton = (editor: Page) => editor.locator('#editors .hetu-surface .hetu-button', { hasText: 'Press ' })
 
 async function withLayout(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
   const made = await started({ ...setup, plugins: { ...setup.plugins, tiles: { granted: layoutGrants } } })

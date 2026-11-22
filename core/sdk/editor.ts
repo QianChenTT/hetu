@@ -17,8 +17,10 @@ export type EditorClient = {
   read(instance: string): Promise<BridgeResults['editor.read']>
   // Replaces the plugin's set of marks of that name, made for version and mapped to the text as it is now
   decorate(instance: string, version: number, set: string, marks: Mark[]): Promise<void>
-  // A change list as CodeMirror's ChangeSet.toJSON writes it, made for version and rebased over what changed since
-  edit(instance: string, version: number, changes: ChangeJson): Promise<{ version: number }>
+  // A change list as CodeMirror's ChangeSet.toJSON writes it, made for version and rebased over what changed since. A
+  // selection places the cursor after it, taken only in answer to the command the human just invoked on that note at
+  // its version and inside the range the edit changed
+  edit(instance: string, version: number, changes: ChangeJson, selection?: { anchor: number, head: number }): Promise<{ version: number }>
   // Replaces every binding. The command named comes back as a command event
   bind(bindings: { key: string, command: string }[]): Promise<void>
   keys(on: boolean): Promise<void>
@@ -108,8 +110,9 @@ export class Editor implements EditorClient {
     await this.send('editor.decorate', { instance, version, set, marks })
   }
 
-  edit(instance: string, version: number, changes: ChangeJson): Promise<{ version: number }> {
-    return this.send('editor.edit', { instance, version, changes }) as Promise<{ version: number }>
+  edit(instance: string, version: number, changes: ChangeJson, selection?: { anchor: number, head: number }): Promise<{ version: number }> {
+    const args = selection === undefined ? { instance, version, changes } : { instance, version, changes, selection: { anchor: selection.anchor, head: selection.head } }
+    return this.send('editor.edit', args) as Promise<{ version: number }>
   }
 
   async bind(bindings: { key: string, command: string }[]): Promise<void> {

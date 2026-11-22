@@ -559,7 +559,7 @@ describe("the fake drawer's ranges and commands", () => {
     drawer.viewport(first, 2, 12)
     const second = drawer.openNote('notes/b.md', 'two')
     await until(() => ranges(heard).length === 3)
-    expect(heard).toEqual([opened(first), range(first, 0, 0, 11), range(first, 1, 2, 12), opened(second), range(second, 0, 0, 3)])
+    expect(heard).toEqual([opened(first), range(first, 0, 0, 11), expect.objectContaining({ topic: 'editor.changed' }), range(first, 1, 2, 12), opened(second), range(second, 0, 0, 3)])
   })
 
   it("sends the range the editor still draws in the note's version when sent, after an edit past it", async () => {
@@ -1017,7 +1017,8 @@ describe('the fake history against the history module', () => {
       const order: string[] = []
       return JSON.parse(JSON.stringify(list, (key, value: unknown) => {
         if (key === 'date') {
-          expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$/)
+          // git's %aI writes UTC as Z on some builds and +00:00 on others
+          expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:\d\d)$/)
           return 'date'
         }
         if (key !== 'commit' || typeof value !== 'string') return value
