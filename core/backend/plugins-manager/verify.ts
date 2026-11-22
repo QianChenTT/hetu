@@ -22,8 +22,8 @@ export const unread: Read = Object.freeze({ files: Object.freeze([]), hash: null
 
 // Every file a manifest names as an entry
 export function entryPaths(manifest: InstallManifest): string[] {
-  const { worker, frames, host, page } = manifest.entries
-  return [worker, host, page, ...Object.values(frames ?? {})].filter((entry): entry is string => typeof entry === 'string')
+  const { worker, frames, host } = manifest.entries
+  return [worker, host, ...Object.values(frames ?? {})].filter((entry): entry is string => typeof entry === 'string')
 }
 
 function manifestOf(files: readonly PluginFile[], id: string, from: 'install' | 'folder'): Pick<Read, 'manifest' | 'problem'> {

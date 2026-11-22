@@ -7,7 +7,7 @@ import { PluginsManager } from '../backend/plugins-manager/plugins-manager.ts'
 import { readInstalled, writeInstalled } from '../backend/plugins-manager/folders.ts'
 import type { Landing } from '../backend/plugins-manager/header.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, fakeLuoshu, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, tempBase, until,
+  allowAll, cleanup, coreInstall, entryFor, fakeLuoshu, filesFor, harness, hostManifest, reasonOf, stateOf, tempBase, until,
   workerManifest, type Listing,
 } from './plugins-manager-fakes.ts'
 
@@ -15,12 +15,12 @@ afterEach(cleanup)
 
 const host = (id: string, extra: object = {}): Listing => ({ files: filesFor(hostManifest(id, extra)) })
 const HTTP = 'mcp-http-handler'
-const MARKS = 'hidden-marks'
-// The core plugins an install holds: http, whose host entry runs in a utility process, and hidden-marks, a page plugin
-// ready once checked
+const NET = 'net'
+// The core plugin an install holds: http, whose host entry runs in a utility process. net is a core plugin designed and
+// not built, refused anywhere but a host half in main, which the core runs none of
 const http = (extra: object = {}): Listing => host(HTTP, extra)
-const marks = (): Listing => ({ files: filesFor(manifest(MARKS, { entries: { page: 'page.js' } })) })
-const both = (): Record<string, Listing> => ({ ...coreInstall(), [HTTP]: http(), [MARKS]: marks() })
+const net = (): Listing => ({ files: filesFor(workerManifest(NET)) })
+const withHttp = (): Record<string, Listing> => ({ ...coreInstall(), [HTTP]: http() })
 const wrongHash = 'b'.repeat(64)
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 
@@ -28,7 +28,7 @@ describe('the start order', () => {
   it('starts the core modules before any plugin, then the install\'s plugins, then folder plugins in graph order', async () => {
     const luoshu = fakeLuoshu()
     const made = await harness({
-      install: both(),
+      install: withHttp(),
       folder: {
         outline: filesFor(workerManifest('outline', { requires: ['luoshu'] })),
         indexer: filesFor(workerManifest('indexer', { requires: ['outline'] })),
@@ -48,7 +48,7 @@ describe('the start order', () => {
     await pluginsManager.start()
     expect(runtime.order()).toEqual([HTTP, 'notes-tool', 'outline', 'indexer'])
     expect(serving).toEqual([true, true, true, true])
-    for (const id of [HTTP, MARKS, 'outline', 'indexer']) expect(stateOf(pluginsManager, id)).toBe('ready')
+    for (const id of [HTTP, 'outline', 'indexer']) expect(stateOf(pluginsManager, id)).toBe('ready')
   })
 
   it('mints each port and registers it with the router in the same step, before the half starts', async () => {
@@ -117,15 +117,13 @@ describe('the start order', () => {
 })
 
 describe('core plugins', () => {
-  it('refuses one whose bytes fail the install list, which reads tampered, and starts the rest', async () => {
-    const { pluginsManager, runtime, link } = await harness({ install: { ...both(), [HTTP]: { ...http(), hash: wrongHash } } })
+  it('refuses one whose bytes fail the install list, which reads tampered and stops nothing else', async () => {
+    const { pluginsManager, runtime, link } = await harness({ install: { ...withHttp(), [HTTP]: { ...http(), hash: wrongHash } } })
     await pluginsManager.start()
     expect(stateOf(pluginsManager, HTTP)).toBe('refused')
     expect(reasonOf(pluginsManager, HTTP)).toBe('tampered')
     expect(runtime.order()).toEqual([])
-    expect(stateOf(pluginsManager, MARKS)).toBe('ready')
     expect(link.events('plugin.checked')).toContainEqual({ plugin: HTTP, from: 'install', result: 'tampered' })
-    expect(link.events('plugin.checked')).toContainEqual({ plugin: MARKS, from: 'install', result: 'ok' })
     expect(pluginsManager.stopped()).toBe(null)
   })
 
@@ -145,7 +143,7 @@ describe('core plugins', () => {
     expect(none.pluginsManager.policyJob('gate')).toBe('on')
     expect(none.pluginsManager.stopped()).toBe(null)
     expect(none.link.events('install.checked')).toEqual([{ result: 'absent' }])
-    const bad = await harness({ install: both() })
+    const bad = await harness({ install: withHttp() })
     await writeFile(path.join(bad.installDir, INSTALL_LIST), '{"format":1,"plugins":{},"plugins":{}}')
     await bad.pluginsManager.start()
     expect(bad.pluginsManager.stopped()).toEqual({ control: 'install', why: 'tampered', reason: null, again: false })
@@ -157,24 +155,24 @@ describe('core plugins', () => {
   it('reads the list from its own folder when it has one, never from the plugins\' folder', async () => {
     const base = path.join(await tempBase(), 'list')
     await mkdir(base, { recursive: true })
-    const made = await harness({ install: both(), pluginsManager: { listDir: base } })
+    const made = await harness({ install: withHttp(), pluginsManager: { listDir: base } })
     await made.pluginsManager.start()
     expect(made.link.events('install.checked')).toEqual([{ result: 'absent' }])
-    expect(made.pluginsManager.plugin(MARKS)).toBe(null)
+    expect(made.pluginsManager.plugin(HTTP)).toBe(null)
     const moved = path.join(await tempBase(), 'list')
     await mkdir(moved, { recursive: true })
-    const listed = await harness({ install: both(), before: async ({ installDir }) => {
+    const listed = await harness({ install: withHttp(), before: async ({ installDir }) => {
       await writeFile(path.join(moved, INSTALL_LIST), await readFile(path.join(installDir, INSTALL_LIST)))
       await writeFile(path.join(installDir, INSTALL_LIST), '{"format":1,"plugins":{}}')
     }, pluginsManager: { listDir: moved } })
     await listed.pluginsManager.start()
     expect(listed.link.events('install.checked')).toEqual([{ result: 'ok' }])
-    expect(stateOf(listed.pluginsManager, MARKS)).toBe('ready')
+    expect(stateOf(listed.pluginsManager, HTTP)).toBe('ready')
   })
 
   it('switched off by the human, reads off and starts nothing, even when its check failed too', async () => {
     const { pluginsManager, runtime, link } = await harness({
-      install: { ...both(), [HTTP]: { ...http(), hash: wrongHash } },
+      install: { ...withHttp(), [HTTP]: { ...http(), hash: wrongHash } },
       switches: { off: [HTTP] },
     })
     await pluginsManager.start()
@@ -186,7 +184,7 @@ describe('core plugins', () => {
 
   it('in dev mode loads its bytes unhashed from the install and nothing more', async () => {
     const { pluginsManager, runtime, link } = await harness({
-      install: { ...coreInstall(), [HTTP]: { ...http(), hash: wrongHash }, [MARKS]: { ...marks(), hash: wrongHash } },
+      install: { ...coreInstall(), [HTTP]: { ...http(), hash: wrongHash }, [NET]: { ...net(), hash: wrongHash } },
       switches: { devMode: [HTTP] },
     })
     await pluginsManager.start()
@@ -194,12 +192,12 @@ describe('core plugins', () => {
     expect(link.events('plugin.checked')).toContainEqual({ plugin: HTTP, from: 'install', result: 'dev' })
     // The code still came from the install. Another plugin's failed check still holds
     expect(runtime.started.find(start => start.id === HTTP)?.half).toBe('utility')
-    expect(reasonOf(pluginsManager, MARKS)).toBe('tampered')
+    expect(reasonOf(pluginsManager, NET)).toBe('tampered')
   })
 
   it('with skipVerification loads mismatched bytes and still refuses an unsigned plugin and a broken manifest', async () => {
     const { pluginsManager, link } = await harness({
-      install: { ...coreInstall(), [HTTP]: { ...http(), hash: wrongHash }, [MARKS]: { files: { 'hetu-plugin.json': '{}' }, version: '1.0.0' } },
+      install: { ...coreInstall(), [HTTP]: { ...http(), hash: wrongHash }, [NET]: { files: { 'hetu-plugin.json': '{}' }, version: '1.0.0' } },
       folder: { outline: filesFor(workerManifest('outline')) },
       entries: { outline: signed({ signer: null }) },
       switches: { skipVerification: true },
@@ -208,20 +206,20 @@ describe('core plugins', () => {
     expect(stateOf(pluginsManager, HTTP)).toBe('ready')
     expect(link.events('plugin.checked')).toContainEqual({ plugin: HTTP, from: 'install', result: 'skipped' })
     expect(reasonOf(pluginsManager, 'outline')).toBe('unsigned')
-    expect(reasonOf(pluginsManager, MARKS)).toBe('invalid')
+    expect(reasonOf(pluginsManager, NET)).toBe('invalid')
   })
 
   // Only a host half in main could hold a policy job, a provider or a guard. The core runs none. An expected guard
   // nothing holds stops hetu in the fail-safe at start, the provider nothing
   it('refuses a policy job, provider or guard id with place, whatever its entries', async () => {
     const { pluginsManager, runtime } = await harness({
-      install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, 'hidden-marks': host('hidden-marks') },
-      pluginsManager: { guardsFor: () => ['hidden-marks'] },
+      install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, [HTTP]: http() },
+      pluginsManager: { guardsFor: () => [HTTP] },
     })
     await pluginsManager.start()
-    for (const id of ['net', 'hidden-marks']) expect(reasonOf(pluginsManager, id)).toBe('place')
-    expect(pluginsManager.policyJob('hidden-marks')).toBe('absent')
-    expect(pluginsManager.stopped()).toMatchObject({ control: 'hidden-marks', why: 'start-failed' })
+    for (const id of ['net', HTTP]) expect(reasonOf(pluginsManager, id)).toBe('place')
+    expect(pluginsManager.policyJob(HTTP)).toBe('absent')
+    expect(pluginsManager.stopped()).toMatchObject({ control: HTTP, why: 'start-failed' })
     expect(runtime.order()).toEqual([])
     const unguarded = await harness({ install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) } } })
     await unguarded.pluginsManager.start()
@@ -231,24 +229,23 @@ describe('core plugins', () => {
 
   it('refuses a host entry outside a utility process and a utility id with no host entry, place', async () => {
     const { pluginsManager, runtime } = await harness({
-      install: { ...coreInstall(), [MARKS]: host(MARKS), [HTTP]: { files: filesFor(workerManifest(HTTP)) } },
+      install: { ...coreInstall(), [NET]: host(NET), [HTTP]: { files: filesFor(workerManifest(HTTP)) } },
     })
     await pluginsManager.start()
-    expect(reasonOf(pluginsManager, MARKS)).toBe('place')
+    expect(reasonOf(pluginsManager, NET)).toBe('place')
     expect(reasonOf(pluginsManager, HTTP)).toBe('place')
     expect(runtime.order()).toEqual([])
   })
 
   it('refuses a plugin that requires a policy job holder and a core plugin that requires a folder plugin', async () => {
     const { pluginsManager } = await harness({
-      install: { ...coreInstall(), [MARKS]: marks(), [HTTP]: http({ requires: ['outline'] }) },
+      install: { ...coreInstall(), [HTTP]: http({ requires: ['outline'] }) },
       folder: { outline: filesFor(workerManifest('outline', { requires: ['gate'] })) },
       entries: { outline: signed() },
     })
     await pluginsManager.start()
     expect(reasonOf(pluginsManager, HTTP)).toBe('requires')
     expect(reasonOf(pluginsManager, 'outline')).toBe('requires')
-    expect(stateOf(pluginsManager, MARKS)).toBe('ready')
   })
 
   // A security control is no dependency: it judges or guards and serves nothing a plugin could wait on
@@ -317,12 +314,11 @@ describe('starting', () => {
 
 describe('an app update to a core plugin', () => {
   it('writes plugin.updated, clears the plugin\'s cache and passes previousVersion, then marks the new version', async () => {
-    const made = await harness({ install: both() })
-    await writeInstalled(made.dataDir, { [HTTP]: { version: '0.9.0', hash: 'c'.repeat(64) }, [MARKS]: { version: '1.0.0', hash: (await readInstalledHash(made, MARKS)) } })
+    const made = await harness({ install: withHttp() })
+    await writeInstalled(made.dataDir, { [HTTP]: { version: '0.9.0', hash: 'c'.repeat(64) } })
     await mkdir(path.join(made.dataDir, 'cache', HTTP), { recursive: true })
     await writeFile(path.join(made.dataDir, 'cache', HTTP, 'index'), 'old')
     await made.pluginsManager.start()
-    // hidden-marks had no change, so nothing is recorded for it
     expect(made.link.events('plugin.updated')).toEqual([{ plugin: HTTP, from: '0.9.0', to: '1.0.0' }])
     const events = made.link.records.map(record => `${record.event} ${record.fields.plugin ?? ''}`)
     expect(events.indexOf(`plugin.updated ${HTTP}`)).toBeLessThan(events.indexOf(`plugin.started ${HTTP}`))
@@ -375,17 +371,12 @@ describe('an app update to a core plugin', () => {
   })
 
   it('reads no update on a first start, with no marker from a run before', async () => {
-    const made = await harness({ install: both() })
+    const made = await harness({ install: withHttp() })
     await made.pluginsManager.start()
     expect(made.link.events('plugin.updated')).toEqual([])
-    expect(Object.keys(await readInstalled(made.dataDir)).sort()).toEqual([MARKS, HTTP])
+    expect(Object.keys(await readInstalled(made.dataDir)).sort()).toEqual([HTTP])
   })
 })
-
-async function readInstalledHash(made: { installDir: string }, id: string): Promise<string> {
-  const list = JSON.parse(await readFile(path.join(made.installDir, INSTALL_LIST), 'utf8')) as { plugins: Record<string, { hash: string }> }
-  return list.plugins[id].hash
-}
 
 // PluginsManager is used for its type in the harness. Kept so a rename shows here too
 export type { PluginsManager }

@@ -118,7 +118,7 @@ export type Known = {
 export type Staged = { dir: string, read: Read }
 
 // The order core plugins start in, each after the core modules. A requirement still starts before its dependent
-export const bootOrder = frozen(['net', 'mcp-http-handler', 'hidden-marks'] as const)
+export const bootOrder = frozen(['net', 'mcp-http-handler'] as const)
 
 export const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at
@@ -135,7 +135,6 @@ export function placeOf(id: string, read: Read, from: 'install' | 'folder'): Plu
   const entries = read.manifest?.entries
   if (entries === undefined) return from === 'install' ? 'host' : 'sandboxed'
   if (entries.host !== undefined) return from === 'install' && isOne(utilityIds, id) ? 'utility' : 'host'
-  if (entries.worker === undefined && entries.page !== undefined) return 'page'
   return 'sandboxed'
 }
 

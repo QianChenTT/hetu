@@ -127,9 +127,8 @@ export function failSafeControls(guardsOf: (action: GuardableAction) => readonly
 export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
-// Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the
-// editor page. net is designed and not built
-export const corePluginIds = frozen(['mcp-http-handler', 'net', 'hidden-marks'] as const)
+// Core plugins, which load only from the install: mcp-http-handler in a utility process. net is designed and not built
+export const corePluginIds = frozen(['mcp-http-handler', 'net'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
@@ -137,7 +136,7 @@ export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
 // the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
-export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout'] as const)
+export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,
