@@ -11,12 +11,12 @@ import { clear, clearFailedOnce, clearStartMarker, folders, stage, swapIn } from
 import { plan, type Node } from './graph.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, type Read } from './verify.ts'
-import { PluginsInstall } from './install.ts'
+import { PluginsInventory } from './inventory.ts'
 import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, toggled, bare } from './base.ts'
 
 // The changes: the queue of held requests, applying a change the human confirmed or that narrows and the staged
 // updates, each written through the state store
-export abstract class PluginsChanges extends PluginsInstall {
+export abstract class PluginsChanges extends PluginsInventory {
   // ---- the state
 
   // A security request from a window, which the security view decides. The router has checked the caller is a window.

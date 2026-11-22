@@ -9,7 +9,7 @@ import { type Known, osFiles, placeOf } from './base.ts'
 import { PluginsClasses } from './classes.ts'
 
 // The door and the plugin folder: the door's code and every plugin found read once and verified before it runs
-export abstract class PluginsInstall extends PluginsClasses {
+export abstract class PluginsInventory extends PluginsClasses {
   // ---- the door
 
   // The door's code as the build wrote it, read once like a plugin's bytes. What it may do is fixed in code, so no
