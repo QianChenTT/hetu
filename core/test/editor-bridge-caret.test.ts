@@ -28,6 +28,7 @@ function opened(text: string) {
       applied.push(selection)
     },
     setMarks() {},
+    select() {},
     clearMarks() {},
   }
   const typed = (from: number, insert: string) => {

@@ -751,7 +751,7 @@ describe("the fake drawer's ranges and commands", () => {
         const id = `n${notes.length + 1}`
         const made: Instance = {
           id, path: at, versions: new Versions(text.length), text: () => text, selection: () => selections.get(id) ?? [{ anchor: 0, head: 0 }],
-          apply() {}, setMarks() {}, clearMarks() {},
+          apply() {}, select() {}, setMarks() {}, clearMarks() {},
         }
         notes.push(made)
         real.opened(made)

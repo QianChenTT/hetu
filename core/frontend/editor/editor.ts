@@ -25,6 +25,8 @@ export type ViewHooks = {
   changed(instance: Instance, changes: ChangeSet, remote: boolean, hid: string[]): void
   // A key CodeMirror's own keymaps left, for the plugins' bindings. True when one took it
   key(instance: string, event: KeyboardEvent): boolean
+  // Any key, click or touch of the human's in the note's editor, before CodeMirror or a binding handles it
+  touched(instance: string): void
   // The human moved into another open note
   focused?(instance: string): void
   // The range of the text the editor draws moved, told once as it is made and again each time it moves. CodeMirror's
@@ -168,6 +170,8 @@ export class EditorViews implements Editors {
     element.className = 'editor'
     element.hidden = true
     this.host.append(element)
+    element.addEventListener('keydown', () => this.hooks.touched(id), true)
+    element.addEventListener('pointerdown', () => this.hooks.touched(id), true)
     // A note saved with CRLF keeps it: CodeMirror counts a line break as one place whichever it is
     const separator: Extension = text.includes('\r\n') ? EditorState.lineSeparator.of('\r\n') : []
     let instance: Instance | null = null
@@ -234,6 +238,14 @@ export class EditorViews implements Editors {
         annotations: [fromPlugin.of(plugin), isolateHistory.of('full')],
         userEvent: 'input.plugin',
         ...selection === undefined ? {} : { selection, effects: placeCaret.of(selection.head) },
+      }),
+      // Kept out of undo, its selection history included, and scrolled into view
+      select: selection => view.dispatch({
+        selection,
+        effects: placeCaret.of(selection.head),
+        annotations: Transaction.addToHistory.of(false),
+        userEvent: 'select.plugin',
+        scrollIntoView: true,
       }),
       setMarks: (owner, set, marks) => view.dispatch({ effects: setMarks.of({ owner, set, marks }) }),
       clearMarks: owner => view.dispatch({ effects: clearMarks.of(owner) }),

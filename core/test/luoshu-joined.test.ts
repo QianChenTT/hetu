@@ -273,6 +273,7 @@ describe('an open note judged on where it is, never on the spelling it was opene
             versions.push(changes)
           },
           setMarks() {},
+          select() {},
           clearMarks() {},
         })
       },

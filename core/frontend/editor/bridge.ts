@@ -30,6 +30,8 @@ export type Instance = {
   // A plugin's edit as one transaction, kept apart in undo, with the cursor it places. The page's update then pushes it
   // to versions
   apply(changes: ChangeSet, plugin: string, selection?: { anchor: number, head: number }): void
+  // A plugin's cursor with no change to the text and no undo step
+  select(selection: { anchor: number, head: number }): void
   // Replaces the owner's set of that name
   setMarks(owner: string, set: string, marks: Mark[]): void
   clearMarks(owner: string): void
@@ -81,9 +83,9 @@ type Connection = {
   readonly told: Set<string>
   // What it had the drawer do in the second that started at start
   spent: { start: number, marks: number, chars: number, nodes: number }
-  // The last command the human invoked through its binding, which one edit may place the cursor in answer to: its note,
-  // version and selection and when the key came. Any other key, a binding changed, a refused edit with a cursor and
-  // ANSWER_MS gone close it, as a move of the caret or a change does at the edit
+  // The last command the human invoked through its binding, which one edit with a cursor or one select may answer: its
+  // note, version and selection and when the key came. Any other key, a click in the note, a binding changed, a select
+  // or a refused edit with a cursor and ANSWER_MS gone close it, as a move of the caret or a change does at the call
   answering: { instance: string, version: number, selection: string, at: number } | null
 }
 
@@ -103,6 +105,9 @@ export class Drawer {
   private reaches = new Map<string, Promise<Reach>>()
   // The instances the human opened, the only ones ui.read reaches
   private readonly human = new Set<string>()
+  // The instances opened with no key or click of the human's in their editor since and no select taken on them, where
+  // one select from any plugin may move the cursor
+  private readonly opening = new Set<string>()
   // The range each open instance's editor draws as the page last told it, with the version it was measured at and a
   // stamp, so a plugin is sent each range once
   private readonly viewports = new Map<string, Drawn>()
@@ -171,6 +176,7 @@ export class Drawer {
   }
 
   opened(instance: Instance): void {
+    this.opening.add(instance.id)
     for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
   }
 
@@ -191,6 +197,7 @@ export class Drawer {
 
   closed(instance: string): void {
     this.human.delete(instance)
+    this.opening.delete(instance)
     this.viewports.delete(instance)
     for (const conn of this.connections.values()) {
       conn.told.delete(instance)
@@ -221,6 +228,13 @@ export class Drawer {
     }
   }
 
+  // The human's key, click or touch in the instance's editor, before anything handles it: no select at open is taken on
+  // the note from now on and no plugin's command answers on it any more
+  touched(instance: string): void {
+    this.opening.delete(instance)
+    for (const conn of this.connections.values()) if (conn.answering?.instance === instance) conn.answering = null
+  }
+
   // A key in the editor, named as keys.ts names it, after the core keys. The plugin bound to it hears its command,
   // with the note's instance, the selection at the key and its version only when it reads the note. True says the key
   // was taken. A key two plugins bind goes to the one the human picked in the views menu, else to neither.
@@ -228,6 +242,7 @@ export class Drawer {
   key(instance: string | null, key: string): boolean {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
+    if (instance !== null) this.opening.delete(instance)
     for (const conn of this.connections.values()) conn.answering = null
     const bound = [...this.connections.values()].filter(conn => conn.bindings.has(key))
     const picked = this.settings().keys[key]
@@ -503,9 +518,27 @@ export class Drawer {
         this.edited(instance.id, plugin)
         return { version: instance.versions.version }
       }
-      // Not served yet
-      case 'editor.select':
-        throw new Refusal('not-granted')
+      // Taken as the note opens, before the human touched it, or in answer to the human's key as an edit's cursor is,
+      // anywhere in the note since it changes no range
+      case 'editor.select': {
+        const asked = conn.answering
+        conn.answering = null
+        const instance = await this.reached(plugin, call.args.instance, needs.edit)
+        const { version, selection } = call.args
+        const opening = this.opening.has(instance.id)
+        if (!opening) {
+          const late = asked === null || this.clock() - asked.at > ANSWER_MS
+          if (late || asked.instance !== instance.id || asked.version !== version) throw new Refusal('not-granted')
+        }
+        if (instance.versions.version !== version) throw new Refusal('stale')
+        if (!opening && JSON.stringify(instance.selection()) !== asked?.selection) throw new Refusal('not-granted')
+        const length = instance.text().length
+        if (selection.anchor > length || selection.head > length) throw new Refusal('invalid')
+        if (!this.live(conn)) throw new Refusal('stopped')
+        this.opening.delete(instance.id)
+        instance.select(selection)
+        return { version }
+      }
       case 'editor.bind': {
         const bindings = call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command] as const)
         if (bindings.some(([key]) => RESERVED_KEYS.includes(key))) throw new Refusal('invalid')

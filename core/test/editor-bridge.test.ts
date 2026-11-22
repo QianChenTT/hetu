@@ -32,6 +32,7 @@ function note(id: string, path: string, text: string, selection = [{ anchor: 1, 
       sets.set(set, given)
       marks.set(owner, sets)
     },
+    select() {},
     clearMarks(owner) {
       marks.delete(owner)
     },

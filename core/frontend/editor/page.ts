@@ -103,6 +103,7 @@ function start(bridge: Bridge): void {
       const name = keyName(event, mac)
       return name !== null && drawer !== null && drawer.key(instance, name)
     },
+    touched: instance => drawer?.touched(instance),
     focused: () => {
       drawTitle()
       drawNoteBar()
