@@ -4,9 +4,10 @@ import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
+import { firstPartyIds } from '../../api/ids.ts'
 import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 // Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
@@ -43,7 +44,10 @@ export default definePlugin({
 // entry is what the human's approval left beside the grant, such as the class and the items asking at their first use
 type Fixture = { granted: Capability[], manifest?: object, files?: Record<string, string>, entry?: Partial<Plugin> }
 
-async function started(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, folder: string }> {
+// install holds first-party plugins by the grant each manifest asks for
+type Setup = { notes?: Record<string, string>, plugins?: Record<string, Fixture>, install?: Record<string, Capability[]> }
+
+async function started(setup: Setup): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, folder: string }> {
   const folder = await temp()
   for (const [name, text] of Object.entries(setup.notes ?? {})) {
     await mkdir(path.dirname(path.join(folder, name)), { recursive: true })
@@ -61,15 +65,25 @@ async function started(setup: { notes?: Record<string, string>, plugins?: Record
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built!.text, ...plugin.files }))
     await store.writePlugin(id, await entryFor(root, { granted: plugin.granted, ...plugin.entry }))
   }
-  const app = await launch(dataDir)
+  // The install plugins in an install of the test's own, which the first start copies in with no entry seeded, so the
+  // copy derives the class and the items asking at first use itself
+  const extra: Record<string, string> = {}
+  if (setup.install !== undefined) {
+    const installDir = await temp()
+    await writeInstall(installDir, Object.fromEntries(Object.entries(setup.install).map(([id, granted]) =>
+      [id, { files: filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }), firstParty: true }])))
+    extra.HETU_INSTALL_DIR = installDir
+  }
+  const app = await launch(dataDir, extra)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'core.ready'))
-  for (const id of Object.keys(setup.plugins ?? {})) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  for (const id of [...Object.keys(setup.plugins ?? {}), ...Object.keys(setup.install ?? {})]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor, dataDir, folder }
 }
 
+// A plugin's worker. The first-party plugins share one host page, which holds only the one plugin a test installs
 async function pluginWorker(app: ElectronApplication, id: string): Promise<Worker> {
-  const page = await workersPage(app, id)
+  const page = await workersPage(app, (firstPartyIds as readonly string[]).includes(id) ? 'first-party' : id)
   await until(() => page.workers().length === 1)
   return page.workers()[0] as Worker
 }
@@ -394,31 +408,36 @@ async function putBack(folder: string): Promise<void> {
   execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
 }
 
+// The first-party id the writer is installed under
+const WRITER = 'git'
+
 describe('a plugin writing notes', () => {
-  // Write on every note is class 4 and asks at its first use
+  // Write on every note is class 4 and asks at its first use. Carried in the install as first-party under an id hetu
+  // doesn't build yet, so its first start copies it in and derives the class and the first use from its grant
   it('asks once in the trusted window before its first write, writing nothing before the Confirm, then moves and removes unasked', async () => {
     const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta' }
     const granted = [listAll, readAll, writeAll]
-    const { app, editor, dataDir, folder } = await started({ notes, plugins: { writer: { granted, entry: { class: 4, firstUse: [writeAll] } } } })
+    const { app, editor, dataDir, folder } = await started({ notes, install: { [WRITER]: granted } })
     try {
-      expect((await new StateStore(dataDir).load()).state.plugins.writer).toMatchObject({ class: 4, granted, firstUse: [writeAll] })
-      const writer = await pluginWorker(app, 'writer')
+      expect(await logged(dataDir, 'plugin.copied', { plugin: WRITER })).toBe(true)
+      expect((await new StateStore(dataDir).load()).state.plugins[WRITER]).toMatchObject({ class: 4, granted, firstUse: [writeAll] })
+      const writer = await pluginWorker(app, WRITER)
 
       // The first write asks, writes nothing before the Confirm and answers needs-confirm
       expect(await write(writer, 'inbox/new.md')).toBe('needs-confirm')
       expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
-      const notice = editor.getByRole('button', { name: 'The plugin "writer" asks to use something for the first time' })
+      const notice = editor.getByRole('button', { name: `The plugin "${WRITER}" asks to use something for the first time` })
       await notice.waitFor()
       await tick(PAST_DELAY)
       await notice.click()
       const page = await pageAt(app, 'hetu://trusted/')
       await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
-      await until(async () => (await page.locator('#root').innerText()).includes('Let writer use luoshu.write on "**"'))
+      await until(async () => (await page.locator('#root').innerText()).includes(`Let ${WRITER} use luoshu.write on "**"`))
       expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
       await tick(PAST_DELAY)
       await page.getByRole('button', { name: 'Confirm' }).click()
-      await until(() => logged(dataDir, 'security.applied', { kind: 'item.on', target: 'writer' }))
-      expect((await new StateStore(dataDir).load()).state.plugins.writer?.firstUse).toEqual([])
+      await until(() => logged(dataDir, 'security.applied', { kind: 'item.on', target: WRITER }))
+      expect((await new StateStore(dataDir).load()).state.plugins[WRITER]?.firstUse).toEqual([])
       expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
 
       // The same write again, now the item is on, then a move into another folder and a remove
@@ -428,7 +447,7 @@ describe('a plugin writing notes', () => {
       expect(await remove(writer, 'inbox/b.md')).toBe('ok')
       expect(await files(folder)).toEqual(['a.md', 'notes/renamed.md'])
       // Asked once only
-      expect((await records(dataDir)).filter(record => record.event === 'security.applied' && record.kind === 'item.on' && record.target === 'writer')).toHaveLength(1)
+      expect((await records(dataDir)).filter(record => record.event === 'security.applied' && record.kind === 'item.on' && record.target === WRITER)).toHaveLength(1)
     } finally {
       await putBack(folder)
     }
