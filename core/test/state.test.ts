@@ -1025,6 +1025,15 @@ describe('the retired tombstones', () => {
     expect(await readFile(switchesPath(), 'utf8')).not.toContain('removed')
   })
 
+  it('writes the switches back without removed once, at the upgrade after the read', async () => {
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...switchesIn, removed: ['layout'] }))
+    const loaded = await store.load()
+    expect(await store.upgrade(loaded.state)).toEqual([{ check: 'switches' }])
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('removed')
+    expect((await store.load()).state.switches).toEqual(switchesIn)
+    expect(await store.upgrade(loaded.state)).toEqual([])
+  })
+
   it('reads removed in a format 2 file with it dropped', async () => {
     await plant(switchesPath(), JSON.stringify({ format: 2, ...switchesIn, removed: ['layout'] }))
     const loaded = await store.load()

@@ -120,7 +120,7 @@ const dropped = z.array(z.unknown()).max(MAX_LISTED, { abort: true }).optional()
 // recording in off and never written again. watchdog and leases in off are core plugins that are gone and hidden-marks
 // one that became a first-party plugin, each read with the id dropped and written back without it once, the drop recorded
 // by boot. removed held the tombstones of the first-party plugins the human removed, which went with the first-party
-// plugins, so it is read and dropped
+// plugins, so it is read and dropped and the switches written back without it once
 const droppedOff = ['watchdog', 'leases', 'hidden-marks'] as const
 const switchesFields = {
   ...switches.shape, recordNothing: z.boolean().optional(), off: list(z.enum([...coreModuleIds, ...corePluginIds, ...droppedOff])),
@@ -386,7 +386,7 @@ export class StateStore {
     checks.push({ check: 'switches', result: switchesRead.result })
     let dropped: string[] = []
     if (switchesRead.value) ({ switches: state.switches, dropped } = switchesOf(withoutFormat(switchesRead.value)))
-    if (switchesRead.older === true || dropped.length > 0) this.older.push({ check: 'switches' })
+    if (switchesRead.older === true || dropped.length > 0 || switchesRead.value?.removed !== undefined) this.older.push({ check: 'switches' })
 
     // Absent is a luoshu not picked yet
     const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile, this.luoshuOlder)
