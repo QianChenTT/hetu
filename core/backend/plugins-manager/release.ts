@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { FetchRefused, getFromGitHub, onGitHub, type Fetch, type FetchLimits, type FetchProblem, type Wanted } from './github.ts'
 
@@ -56,8 +57,9 @@ export function githubLink(pasted: string): GitHubLink | null {
   return { owner, repo, tag: tag.join('/') }
 }
 
-// A .zip asset of a release, as the human picks it
-export type ReleaseZip = { name: string, size: number, url: string }
+// A .zip asset of a release, as the human picks it, with the sha256 GitHub computed when it was uploaded as lower case
+// hex, or null when GitHub gave none
+export type ReleaseZip = { name: string, size: number, url: string, digest: string | null }
 
 export type Release = { problem: null, tag: string, zips: ReleaseZip[] } | { problem: FetchProblem }
 
@@ -69,8 +71,21 @@ const releaseAnswer = z.object({
     // uploaded once whole. An upload under way is starter
     state: z.string(),
     browser_download_url: z.string(),
+    // sha256:<hex>, computed by GitHub at upload, null for an asset uploaded before GitHub kept one
+    digest: z.string().nullable().optional(),
   })),
 })
+
+const SHA256 = /^sha256:([0-9a-f]{64})$/i
+
+// The sha256 a digest names as lower case hex, or null when GitHub gave none or one of another kind. A sha256 that
+// isn't 64 hex digits is no answer GitHub gives
+function sha256Of(digest: string | null | undefined): string | null {
+  if (digest === null || digest === undefined || !digest.toLowerCase().startsWith('sha256:')) return null
+  const hex = SHA256.exec(digest)?.[1]
+  if (hex === undefined) throw new FetchRefused('bad-answer')
+  return hex.toLowerCase()
+}
 
 const API = 'https://api.github.com'
 // The answer GitHub's docs ask a client to accept and the API version whose release shape is read here
@@ -112,7 +127,7 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
     const release = parsedRelease(bytes)
     const zips = release.assets
       .filter(asset => asset.state === 'uploaded' && asset.name.toLowerCase().endsWith('.zip'))
-      .map(asset => ({ name: asset.name, size: asset.size, url: asset.browser_download_url }))
+      .map(asset => ({ name: asset.name, size: asset.size, url: asset.browser_download_url, digest: sha256Of(asset.digest) }))
     // An answer that points a download off GitHub's hosts would steer main elsewhere, so none of it is offered
     if (zips.some(zip => !onGitHub(zip.url))) throw new FetchRefused('off-github')
     if (zips.length === 0) throw new FetchRefused('no-zip')
@@ -122,9 +137,14 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
 
 export type Downloaded = { problem: null, bytes: Buffer } | { problem: FetchProblem }
 
-// The bytes of a picked zip, refused before any request when the release says it is past the cap
+// The bytes of a picked zip, refused before any request when the release says it is past the cap and after the
+// download when they don't hash to the sha256 the release gave
 export async function downloadZip(zip: ReleaseZip, options: FetchOptions = {}): Promise<Downloaded> {
   const limits = { ...zipLimits, ...options.limits }
   if (zip.size > limits.bytes) return { problem: 'too-big' }
-  return answer(async () => ({ problem: null, bytes: await getFromGitHub(zip.url, ZIP_WANTED, limits, options) }))
+  return answer(async () => {
+    const bytes = await getFromGitHub(zip.url, ZIP_WANTED, limits, options)
+    if (zip.digest !== null && createHash('sha256').update(bytes).digest('hex') !== zip.digest) throw new FetchRefused('digest-mismatch')
+    return { problem: null, bytes }
+  })
 }

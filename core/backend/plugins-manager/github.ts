@@ -16,13 +16,15 @@ export type FetchLimits = { bytes: number, ms: number }
 // not-found: a picked file answered 404, gone since its release was read
 // no-zip: the release holds no .zip asset uploaded whole
 // too-big: past the byte cap
+// digest-mismatch: the downloaded bytes don't hash to the sha256 the release gave for them
 // rate-limited: GitHub's rate limit for this address, 60 API requests an hour with no token
 // offline: no connection to GitHub, or one that broke
 // timed-out: past the time limit
 // cancelled: the caller stopped it
 // bad-answer: a status or a body GitHub doesn't answer for a release or a file
 export const fetchProblems = Object.freeze([
-  'not-github', 'off-github', 'no-release', 'not-found', 'no-zip', 'too-big', 'rate-limited', 'offline', 'timed-out', 'cancelled', 'bad-answer',
+  'not-github', 'off-github', 'no-release', 'not-found', 'no-zip', 'too-big', 'digest-mismatch', 'rate-limited', 'offline',
+  'timed-out', 'cancelled', 'bad-answer',
 ] as const)
 export type FetchProblem = typeof fetchProblems[number]
 
@@ -34,6 +36,7 @@ export const fetchProblemWords: Readonly<Record<FetchProblem, string>> = Object.
   'not-found': 'GitHub no longer has that file. Paste the link again to see what the release holds now',
   'no-zip': 'That release holds no .zip file to install from',
   'too-big': 'That zip is bigger than a plugin may be',
+  'digest-mismatch': 'The downloaded zip does not match the checksum GitHub lists for it, so it was not kept. Try again',
   'rate-limited': 'GitHub is limiting requests from this network for now. Try again in an hour or install from a downloaded zip',
   'offline': 'GitHub could not be reached. Check the connection and try again',
   'timed-out': 'GitHub took too long to answer. Try again',

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { fetchProblems, fetchProblemWords, type Fetch } from '../backend/plugins-manager/github.ts'
 import { downloadZip, githubLink, releaseZips, type ReleaseZip } from '../backend/plugins-manager/release.ts'
@@ -68,8 +69,8 @@ describe('a release\'s zips', () => {
       problem: null,
       tag: 'v1.0.0',
       zips: [
-        { name: 'outline.zip', size: 1200, url: download('outline.zip') },
-        { name: 'Notes.ZIP', size: 30, url: download('Notes.ZIP') },
+        { name: 'outline.zip', size: 1200, url: download('outline.zip'), digest: null },
+        { name: 'Notes.ZIP', size: 30, url: download('Notes.ZIP'), digest: null },
       ],
     })
     expect(calls.map(call => call.url)).toEqual(['https://api.github.com/repos/o/r/releases/latest'])
@@ -119,7 +120,7 @@ describe('a release\'s zips', () => {
 })
 
 describe('a picked zip', () => {
-  const zip: ReleaseZip = { name: 'outline.zip', size: 6, url: download('outline.zip') }
+  const zip: ReleaseZip = { name: 'outline.zip', size: 6, url: download('outline.zip'), digest: null }
 
   it('is downloaded from its link and answered as its bytes', async () => {
     const { fetch, calls } = fake(() => new Response(new Uint8Array([80, 75, 3, 4, 0, 0]), { status: 200 }))
@@ -151,9 +152,46 @@ describe('a picked zip', () => {
   })
 })
 
+describe('a zip\'s sha256 digest', () => {
+  const bytes = new Uint8Array([80, 75, 3, 4, 1, 2])
+  const hex = createHash('sha256').update(bytes).digest('hex')
+  const zip: ReleaseZip = { name: 'a.zip', size: 6, url: download('a.zip'), digest: hex }
+  const served = () => fake(() => new Response(bytes, { status: 200 })).fetch
+
+  it('is read from the release, lowercased, and left null when GitHub gives none or one of another kind', async () => {
+    const { fetch } = fake(() => json(release([
+      asset('a.zip', 6, { digest: `sha256:${hex.toUpperCase()}` }), asset('b.zip', 6, { digest: null }), asset('c.zip', 6),
+      asset('d.zip', 6, { digest: `sha512:${'ab'.repeat(64)}` }),
+    ])))
+    const got = await releaseZips('https://github.com/o/r', { fetch })
+    expect(got.problem === null && got.zips.map(each => each.digest)).toEqual([hex, null, null, null])
+  })
+
+  it('refuses a release whose sha256 digest is not 64 hex digits', async () => {
+    for (const digest of ['sha256:abc', `sha256:${'g'.repeat(64)}`, `sha256:${hex}0`, 'sha256:']) {
+      const { fetch } = fake(() => json(release([asset('a.zip', 6, { digest })])))
+      expect(await releaseZips('https://github.com/o/r', { fetch }), digest).toEqual({ problem: 'bad-answer' })
+    }
+  })
+
+  it('is checked against the bytes downloaded, which are answered when they match', async () => {
+    const got = await downloadZip(zip, { fetch: served() })
+    expect(got.problem === null && [...got.bytes]).toEqual([...bytes])
+  })
+
+  it('refuses bytes that don\'t match it as digest-mismatch', async () => {
+    const other = createHash('sha256').update('other').digest('hex')
+    expect(await downloadZip({ ...zip, digest: other }, { fetch: served() })).toEqual({ problem: 'digest-mismatch' })
+  })
+
+  it('leaves the bytes unchecked when the release gave none', async () => {
+    expect((await downloadZip({ ...zip, digest: null }, { fetch: served() })).problem).toBeNull()
+  })
+})
+
 describe('a failed fetch', () => {
   const failing = (answer: () => Response | Promise<Response>) => fake(answer).fetch
-  const zip: ReleaseZip = { name: 'a.zip', size: 1, url: download('a.zip') }
+  const zip: ReleaseZip = { name: 'a.zip', size: 1, url: download('a.zip'), digest: null }
   const status = (code: number, headers: Record<string, string> = {}) => () => new Response('{"message":"x"}', { status: code, headers })
 
   it('answers no-release for a repo or a tag GitHub doesn\'t have', async () => {
