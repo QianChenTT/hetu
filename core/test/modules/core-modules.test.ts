@@ -92,7 +92,11 @@ function fakes() {
     start: async () => maybe('exec.start'),
     close: () => maybe('exec.close'),
   }
-  const lock: Lock = { provider: provider(), guard: { check: () => 'allow' }, role: { open: () => maybe('lock.open') } }
+  const lock: Lock = {
+    provider: provider(),
+    guard: { check: () => 'allow' },
+    role: { open: () => maybe('lock.open'), release: () => maybe('lock.release') },
+  }
   const options: Partial<CoreModulesOptions> = { gate, storage, luoshu, history, exec, lock }
   return { options, seen, throws, gate, storage, luoshu, history, exec, lock }
 }
@@ -285,6 +289,50 @@ describe('the core modules', () => {
     folder = path.join(base, 'other')
     modules.picked()
     expect(opened).toEqual([{ folder: notes, dataDir, installDir }, { folder: path.join(base, 'other'), dataDir, installDir }])
+  })
+
+  // A lock no guard holds any more is no lock, so every plugin that heard it locked hears it unlocked. On again the
+  // table starts empty and nothing is told
+  it('tell the lock to release every lock when it is switched off or fails and nothing when it is on again', async () => {
+    const { options, seen, throws } = fakes()
+    const modules = made(options)
+    const { handed, changes } = handing(notes)
+    await modules.start([], handed)
+    const released = () => seen.filter(what => what === 'lock.release').length
+    expect(released()).toBe(0)
+    await modules.apply(['lock'])
+    expect(released()).toBe(1)
+    await modules.apply([])
+    expect(modules.state('lock')).toBe('on')
+    expect(released()).toBe(1)
+    throws.add('lock.open')
+    modules.picked()
+    expect(modules.state('lock')).toBe('failed')
+    expect(released()).toBe(2)
+    throws.delete('lock.open')
+    modules.picked()
+    expect(modules.state('lock')).toBe('on')
+    expect(released()).toBe(2)
+    expect(changes).toContain('lock recovered')
+  })
+
+  it('tell each lock unlocked once the lock is switched off and hold none when it is on again', async () => {
+    const published: string[] = []
+    const modules = made({
+      publish: (owner, topic, at, fields) => published.push(`${owner}.${topic} ${at} ${fields?.locked}`),
+      history: fakes().options.history,
+    })
+    await modules.start([], handing(notes).handed)
+    expect(await ask(modules.provider('lock')!, 'lock.set', { paths: ['a.md', 'b.md'], ms: 60_000 })).toEqual({ ms: 60_000 })
+    await new Promise(resolve => { setImmediate(resolve) })
+    published.length = 0
+    await modules.apply(['lock'])
+    expect(published).toEqual(['lock.changed a.md false', 'lock.changed b.md false'])
+    await modules.apply([])
+    await new Promise(resolve => { setImmediate(resolve) })
+    expect(published).toHaveLength(2)
+    expect(await ask(modules.provider('lock')!, 'lock.held', { paths: ['a.md', 'b.md'] })).toMatchObject({ paths: [] })
+    modules.close()
   })
 
   // The guard answers through shutdown and the stopped mode while the luoshu is closed, as flood control does

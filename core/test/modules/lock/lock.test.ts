@@ -448,3 +448,25 @@ describe('lock.changed', () => {
     expect(check(lock, ['a.md'], { root: editor })).toBe('allow')
   })
 })
+
+describe('the lock released', () => {
+  // Its module switched off or failed: no guard holds any lock, so each is told unlocked at once, an expired one not yet
+  // told included, and the table starts empty
+  it('tells every lock unlocked at once, frees them all and tells nothing locked again', async () => {
+    const { lock, told, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
+    await ask(lock, 'lock.set', { paths: ['b.md'], ms: 60_000 }, { root: editor })
+    pass(1000)
+    await flushed()
+    told.length = 0
+    lock.role.release()
+    expect(told).toEqual([unlocked('a.md'), unlocked('b.md')])
+    await flushed()
+    expect(told).toHaveLength(2)
+    expect(check(lock, ['b.md'], agent('claude-code#1'))).toBe('allow')
+    expect(await ask(lock, 'lock.held', { paths: ['a.md', 'b.md'] }, { root: plugin('git') })).toMatchObject({ paths: [] })
+    lock.role.release()
+    await flushed()
+    expect(told).toHaveLength(2)
+  })
+})

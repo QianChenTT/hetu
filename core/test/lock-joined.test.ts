@@ -116,6 +116,7 @@ function breaking(): Lock & { throws: boolean } {
         if (made.throws) throw new Error('the lock crashed')
         real.role.open(opening)
       },
+      release: () => real.role.release(),
     },
   }
   return made

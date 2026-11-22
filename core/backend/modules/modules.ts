@@ -397,6 +397,7 @@ export class CoreModules implements Holder {
       any = true
       const change: ModuleChange = now === 'on' ? (was === 'failed' ? 'recovered' : 'started') : now === 'failed' ? 'failed' : 'stopped'
       const reason = now === 'failed' ? this.reason(id) : change === 'stopped' ? (now === 'off' ? 'off' : why) : null
+      if (id === 'lock' && was === 'on') this.release()
       try {
         this.handed?.changed(id, change, reason)
       } catch {
@@ -404,6 +405,16 @@ export class CoreModules implements Holder {
       }
     }
     return any
+  }
+
+  // The lock left on, switched off or failed: no guard holds its locks, so each is told unlocked and it starts empty
+  // when on again
+  private release(): void {
+    try {
+      this.lockOf.role.release()
+    } catch {
+      this.fault('lock', 'release')
+    }
   }
 
   private fault(id: CoreModuleId, step: string): void {

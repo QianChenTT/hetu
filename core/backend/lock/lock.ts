@@ -37,21 +37,24 @@ export function createLock(options: LockOptions): Lock {
   let opening: (Opening & { folder: string }) | null = null
   const wall = options.wall ?? (() => Date.now())
 
-  // Told once the step that noticed it ended. A publish that throws loses its event and never fails the step
-  function tell(path: string, change: LockFields): void {
+  // Told once the step that noticed it ended, or at once where no lock action or guard step runs. A publish that throws
+  // loses its event and never fails the step
+  function tell(path: string, change: LockFields, atOnce = false): void {
     const { publish } = options
     if (publish === undefined) return
-    queueMicrotask(() => {
+    const told = () => {
       try {
         publish(path, change)
       } catch {
         // The lock is already set or gone, only the event is lost
       }
-    })
+    }
+    if (atOnce) told()
+    else queueMicrotask(told)
   }
   // The end in wall time, read now, so it says when the lock ends whatever the wall clock does later
   const tellLocked = (entry: Held, now: number) => tell(entry.path, { locked: true, until: Math.round(wall() + entry.endsAt - now) })
-  const tellUnlocked = (entry: Held) => tell(entry.path, { locked: false, until: null })
+  const tellUnlocked = (entry: Held, atOnce = false) => tell(entry.path, { locked: false, until: null }, atOnce)
 
   function live(key: string, now: number): Held | undefined {
     const entry = table.get(key)
@@ -176,6 +179,11 @@ export function createLock(options: LockOptions): Lock {
           table.clear()
         }
         opening = next.folder === null ? null : { ...next, folder: next.folder }
+      },
+      // Each lock told unlocked at once, an expired one not yet told included, then none is held
+      release(): void {
+        for (const entry of table.values()) tellUnlocked(entry, true)
+        table.clear()
       },
     },
   }
