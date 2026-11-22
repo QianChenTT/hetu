@@ -89,12 +89,34 @@ async function connected<T>(work: () => Promise<T>, signal: AbortSignal, stopped
   }
 }
 
-// Rejects once the signal aborts, so a read waiting on a body that stalls ends with the time limit
-function abortion(signal: AbortSignal): Promise<never> {
-  return new Promise((_resolve, reject) => {
-    if (signal.aborted) reject(signal.reason)
-    else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+// One request's stop: the caller's signal or the time limit, whichever comes first. stopped rejects then, so a read
+// waiting on a body that stalls ends too. end removes every listener and the timer once the request is over
+type Stop = { signal: AbortSignal, stopped: Promise<never>, timedOut: () => boolean, end: () => void }
+
+function stopFor(ms: number, caller: AbortSignal | undefined): Stop {
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort(new DOMException('past the time limit', 'TimeoutError'))
+  }, ms)
+  const onCaller = () => controller.abort(caller?.reason)
+  if (caller?.aborted === true) onCaller()
+  else caller?.addEventListener('abort', onCaller, { once: true })
+  let onStop: () => void = () => undefined
+  const stopped = new Promise<never>((_resolve, reject) => {
+    onStop = () => reject(controller.signal.reason)
+    if (controller.signal.aborted) onStop()
+    else controller.signal.addEventListener('abort', onStop, { once: true })
   })
+  // Read only through the race, so a rejection nobody waits for isn't reported as unhandled
+  stopped.catch(() => undefined)
+  const end = () => {
+    clearTimeout(timer)
+    caller?.removeEventListener('abort', onCaller)
+    controller.signal.removeEventListener('abort', onStop)
+  }
+  return { signal: controller.signal, stopped, timedOut: () => timedOut, end }
 }
 
 // The body's bytes, refused past the cap as counted, whatever its Content-Length said
@@ -176,18 +198,16 @@ async function throughRedirects(url: string, wanted: Wanted, signal: AbortSignal
 
 // GETs a URL from GitHub's hosts, its body as bytes. Throws FetchRefused
 export async function getFromGitHub(url: string, wanted: Wanted, limits: FetchLimits, options: { fetch?: Fetch, signal?: AbortSignal }): Promise<Buffer> {
-  const deadline = AbortSignal.timeout(limits.ms)
-  const signal = options.signal === undefined ? deadline : AbortSignal.any([deadline, options.signal])
-  const stopped = abortion(signal)
-  // Read only through the race, so a rejection nobody waits for isn't reported as unhandled
-  stopped.catch(() => undefined)
+  const stop = stopFor(limits.ms, options.signal)
   try {
-    const response = await throughRedirects(url, wanted, signal, options.fetch ?? nodeFetch, stopped)
-    return await answered(response, limits.bytes, signal, stopped)
+    const response = await throughRedirects(url, wanted, stop.signal, options.fetch ?? nodeFetch, stop.stopped)
+    return await answered(response, limits.bytes, stop.signal, stop.stopped)
   } catch (err) {
     if (err instanceof FetchRefused) throw err
     if (options.signal?.aborted === true) throw new FetchRefused('cancelled')
-    if (deadline.aborted) throw new FetchRefused('timed-out')
+    if (stop.timedOut()) throw new FetchRefused('timed-out')
     throw err
+  } finally {
+    stop.end()
   }
 }

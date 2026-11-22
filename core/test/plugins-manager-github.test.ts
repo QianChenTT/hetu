@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { getEventListeners } from 'node:events'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FetchRefused, getFromGitHub, githubHosts, onGitHub, type Fetch } from '../backend/plugins-manager/github.ts'
 import { releaseZips } from '../backend/plugins-manager/release.ts'
 
@@ -90,6 +91,41 @@ describe('a redirect', () => {
     const loop = routes({ [ASSET]: moved(ASSET) })
     expect(await problemOf(getFromGitHub(ASSET, want, limits, { fetch: loop.fetch }))).toBe('bad-answer')
     expect(loop.calls).toHaveLength(6)
+  })
+})
+
+describe('a request that ended', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // A fetch that never answers and rejects once its request is aborted. Each fetch here keeps the signal it was handed
+  const handed: AbortSignal[] = []
+  const hangs: Fetch = (_url, init) => new Promise((_resolve, reject) => {
+    if (init.signal) handed.push(init.signal)
+    init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+  })
+  const answering = (answer: () => Response): Fetch => async (url, init) => {
+    if (init.signal) handed.push(init.signal)
+    return routes({ [ASSET]: answer }).fetch(url, init)
+  }
+
+  it('leaves no listener on the signal of its caller or the one it handed fetch, answered, refused or past its time limit', async () => {
+    const caller = new AbortController()
+    for (const [fetch, ms] of [[answering(ok()), 1000], [answering(() => new Response(null, { status: 500 })), 1000], [hangs, 10]] as const) {
+      handed.length = 0
+      await problemOf(getFromGitHub(ASSET, want, { bytes: 1024, ms }, { fetch, signal: caller.signal }))
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0)
+      expect(handed).toHaveLength(1)
+      expect(getEventListeners(handed[0], 'abort'), String(ms)).toHaveLength(0)
+    }
+  })
+
+  it('leaves no timer running', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await getFromGitHub(ASSET, want, limits, { fetch: routes({ [ASSET]: ok() }).fetch })
+    await problemOf(getFromGitHub(ASSET, want, limits, { fetch: routes({ [ASSET]: () => new Response(null, { status: 500 }) }).fetch }))
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 
