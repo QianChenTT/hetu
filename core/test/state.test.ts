@@ -322,7 +322,7 @@ describe('writing', () => {
       off: switchable,
       devMode: ids,
       execAnyCommand: ids,
-      removed: ['mcp', 'git', 'artifacts', 'notify'],
+      removed: ['git', 'artifacts', 'notify', 'layout'],
       limits: { all: {}, plugins: Object.fromEntries(ids.map(id => [id, { heartbeatMs: 9000 }])) },
     }
     await store.writeSwitches(switches)

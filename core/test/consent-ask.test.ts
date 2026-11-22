@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreActions, type SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
@@ -6,9 +7,9 @@ import { describeChange } from '../api/describe.ts'
 import type { Caller } from '../api/envelope.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
 import type { Call } from '../api/policy-jobs.ts'
-import { StateStore } from '../backend/boot/state.ts'
+import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { connectChange, Connects, type ConnectAsked } from '../backend/plugins-manager/connects.ts'
-import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest } from './plugins-manager-fakes.ts'
+import { allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, workerManifest } from './plugins-manager-fakes.ts'
 
 // A client's connect a utility half asks for: the consent.ask kind, its words, the request the plugins manager holds
 // for it and the answer the same plugin collects
@@ -199,19 +200,22 @@ const mcpWorker: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnati
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
 const LABEL = `${CLAUDE}#3`
 
-// mcp as the install's own copy in the plugin folder, mcp-http-handler as the install's plugin, a clock the test moves
-// and the input delay a test names
+// mcp in the plugin folder approved unsigned by its hash, mcp-http-handler as the install's plugin, a clock the test
+// moves and the input delay a test names
 async function started(delayMs = 0) {
   const clock = { now: 1000 }
   const gate = allowAll()
   const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
   const made = await harness({
     install: {
-      ...coreInstall(), mcp: { files: mcp, firstParty: true },
+      ...coreInstall(),
       'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp },
-    entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1 }) },
+    entries: { mcp: root => entryFor(root, { signer: null, granted: [read], class: 1 }) },
+    before: async ({ dataDir }) => {
+      await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(path.join(dataDir, 'plugins', 'mcp'))] })
+    },
     modules: { gate },
     pluginsManager: { clock: () => clock.now, confirmDelayMs: delayMs },
   })
