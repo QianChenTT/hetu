@@ -25,10 +25,12 @@ function fakeEditors() {
 }
 
 // A luoshu of notes by path, each with its version, and the window's storage space. A read answers the path the note
-// is at, and links names other spellings that resolve to a note, as a junction or another case does
+// is at and links names other spellings that resolve to a note, as a junction or another case does. A write of a path
+// in locked answers locked until lock.clear frees it
 function started(files: Record<string, string> = { 'a.md': 'note a' }, links: Record<string, string> = {}) {
   const notes = new Map(Object.entries(files).map(([path, text]) => [path, { text, version: `v-${text}` }]))
   const space = new Map<string, unknown>()
+  const locked = new Set<string>()
   const ok = (result?: unknown): Answer => ({ ok: true, result })
   const core = fakeCore({
     'events.subscribe': () => ok({ standing: [] }),
@@ -40,9 +42,14 @@ function started(files: Record<string, string> = { 'a.md': 'note a' }, links: Re
     },
     'luoshu.write': args => {
       const { path, text, baseVersion } = args as { path: string, text: string, baseVersion?: string }
+      if (locked.has(path)) return { ok: false, refusal: { code: 'locked' } }
       if (notes.get(path)?.version !== baseVersion) return { ok: false, refusal: { code: 'stale' } }
       notes.set(path, { text, version: `v-${text}` })
       return ok({ version: `v-${text}` })
+    },
+    'lock.clear': args => {
+      for (const path of (args as { paths: string[] }).paths) locked.delete(path)
+      return ok(null)
     },
     'storage.get': args => ok(space.get((args as { key: string }).key) ?? null),
     'storage.set': args => {
@@ -65,7 +72,7 @@ function started(files: Record<string, string> = { 'a.md': 'note a' }, links: Re
   made.start()
   // Someone else saves a note, as an outside program or another plugin would
   const saveOutside = (path: string, text: string) => notes.set(path, { text, version: `v-${text}` })
-  return { core, notes: made, files: notes, space, views, told, clock, saveOutside }
+  return { core, notes: made, files: notes, space, views, told, clock, saveOutside, locked }
 }
 
 const keyOf = (path: string) => `draft${createHash('sha256').update(path).digest('hex').slice(0, 56)}`
@@ -262,6 +269,73 @@ describe('saving', () => {
     release()
     await saving
     expect(notes.opened.get(instance)?.dirty).toBe(true)
+  })
+})
+
+// The human is the policy, so taking a note over is one click and the refusal names no holder
+describe('a locked note', () => {
+  it('keeps the text as a draft and tells locked with no holder when a lock holds the note', async () => {
+    const { notes, views, space, told, locked, files } = started()
+    locked.add('a.md')
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('locked')
+    expect(space.get(keyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'mine', at: 1000, edits: [] })
+    expect(told).toEqual([{ kind: 'locked', instance, path: 'a.md' }])
+    expect(files.get('a.md')?.text).toBe('note a')
+  })
+
+  it("takes the note over by clearing that note's lock alone as the window, then saves it again", async () => {
+    const { notes, views, space, core, locked, files } = started({ 'a.md': 'note a', 'b.md': 'note b' }, { 'A.md': 'a.md' })
+    locked.add('a.md')
+    locked.add('b.md')
+    await notes.open('b.md')
+    const instance = await notes.open('A.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('locked')
+    expect(await notes.takeOver(instance)).toBe('saved')
+    expect(core.calls('lock.clear').map(call => call.args)).toEqual([{ paths: ['a.md'] }])
+    expect([...locked]).toEqual(['b.md'])
+    expect(core.calls('luoshu.write')).toHaveLength(2)
+    expect(files.get('a.md')?.text).toBe('mine')
+    expect(notes.opened.get(instance)).toMatchObject({ dirty: false, version: 'v-mine' })
+    expect(space.has(keyOf('a.md'))).toBe(false)
+  })
+
+  // A second click while the first runs or after it would save again on the old version and answer stale
+  it('takes a note over once per locked answer, a second take over doing nothing until the next locked answer', async () => {
+    const { notes, views, core, told, locked } = started()
+    locked.add('a.md')
+    const instance = await notes.open('a.md')
+    expect(await notes.takeOver(instance)).toBe(null)
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    await notes.save(instance)
+    expect(await Promise.all([notes.takeOver(instance), notes.takeOver(instance)])).toEqual(['saved', null])
+    expect(await notes.takeOver(instance)).toBe(null)
+    expect(core.calls('lock.clear')).toHaveLength(1)
+    expect(core.calls('luoshu.write')).toHaveLength(2)
+    expect(told.map(notice => notice.kind)).toEqual(['locked'])
+    locked.add('a.md')
+    views.type(instance, 'mine again')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('locked')
+    expect(await notes.takeOver(instance)).toBe('saved')
+  })
+
+  it('tells the refusal and saves nothing more when the clear is refused', async () => {
+    const { notes, views, core, told, locked } = started()
+    core.answers['lock.clear'] = () => ({ ok: false, refusal: { code: 'unavailable' } })
+    locked.add('a.md')
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    await notes.save(instance)
+    expect(await notes.takeOver(instance)).toBe('refused')
+    expect(core.calls('luoshu.write')).toHaveLength(1)
+    expect(told.at(-1)).toEqual({ kind: 'refused', instance, path: 'a.md', code: 'unavailable' })
   })
 })
 
