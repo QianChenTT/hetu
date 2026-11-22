@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import type { CoreAction, EventAction, ProviderAction } from '../../api/actions.ts'
+import type { CoreAction, EventAction, ProviderAction, RoleAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { grantKeyOf, reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
@@ -95,11 +95,12 @@ export type Target =
   | { kind: 'bus', spec: EventAction }
   | { kind: 'served', part: Part }
   | { kind: 'provider', provider: Part, spec: ProviderAction }
+  | { kind: 'role', spec: RoleAction }
   | { kind: 'plugin', target: string, name: string }
 
 // also is a provider action's second requirement: its capability over the paths at these places in the scope
 export type Kind =
-  | { kind: 'action' | 'served' | 'free' }
+  | { kind: 'action' | 'served' | 'free' | 'role' }
   | { kind: 'power', capability: CapabilityType, scope: Scope, also?: { capability: CapabilityType, at: readonly number[] } }
 
 export type No = { code: RefusalCode, reason?: ReasonCode, request?: string }
@@ -283,6 +284,16 @@ export class Context {
     try {
       const info = this.tableOf().plugin(id)
       return info !== null && typeof info === 'object' && isOne(pluginStates, info.state) ? info : null
+    } catch {
+      return null
+    }
+  }
+
+  // The plugin holding a role's item, null for none, for a table with no role method and for one that throws
+  role(action: string): string | null {
+    try {
+      const id = this.tableOf().role?.(action)
+      return typeof id === 'string' ? id : null
     } catch {
       return null
     }

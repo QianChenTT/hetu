@@ -248,6 +248,9 @@ export type PluginTable = {
   view(): number
   // null for no such plugin
   plugin(id: string): PluginInfo | null
+  // The one plugin holding a role's item by the role's action: its entry on and the item not switched off, gate on or
+  // off, since finding it is routing and not judging. null for none. A table with no role method holds no role
+  role?(action: string): string | null
   limits(): HumanLimits
 }
 

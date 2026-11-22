@@ -1,4 +1,4 @@
-import { coreActions, coreTopics, ends, eventActions, providerActions, type EventAction } from '../../api/actions.ts'
+import { coreActions, coreTopics, ends, eventActions, providerActions, roleActions, type CoreFrom, type EventAction } from '../../api/actions.ts'
 import { callEnvelope, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { qualifiedName, serverOf } from '../../api/ids.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
@@ -43,8 +43,10 @@ export function shape(c: Context, way: Way, message: unknown): Shaped {
   const dot = action.indexOf('.')
   const target = targetOf(serverOf(action.slice(0, dot)), action, dot)
   if (target === null) return refuse('invalid')
-  // The contract's schema for an action of the core, a plugin's and a served part's arguments opaque
-  const schema = target.kind === 'action' || target.kind === 'bus' || target.kind === 'provider' ? target.spec.args.safeParse(parsed.data.args) : null
+  // The contract's schema for an action of the core or a role, a plugin's and a served part's arguments opaque
+  const schema = target.kind === 'action' || target.kind === 'bus' || target.kind === 'provider' || target.kind === 'role'
+    ? target.spec.args.safeParse(parsed.data.args)
+    : null
   if (schema !== null && !schema.success) return refuse('invalid')
   const args = schema !== null ? schema.data : parsed.data.args
 
@@ -68,28 +70,26 @@ function targetOf(server: ReturnType<typeof serverOf>, action: string, dot: numb
     const spec = coreActions[action]
     return spec === undefined ? null : { kind: 'action', part: server.part, spec, each: server.each === true }
   }
+  if (server.route === 'role') {
+    const spec = roleActions[action]
+    return spec === undefined ? null : { kind: 'role', spec }
+  }
   const spec = providerActions[action]
   return spec === undefined ? null : { kind: 'provider', provider: server.part, spec }
 }
 
-// 3 floor: who may call a core action, security.* included, the trusted window held to core actions and the free
-// actions that skip the gate. Never asks the gate
+// 3 floor: who may call a core action or a role, security.* included, the trusted window held to core actions and the
+// free actions that skip the gate. Never asks the gate
 export function floorOf(c: Context, way: Way, target: Target, args: unknown, parent: Pending | null): Kind | No {
   const { caller } = way
   const trusted = caller.kind === 'window' && caller.role === 'trusted'
-  if (target.kind === 'action') {
-    const { from } = target.spec
-    const admitted = from === 'any'
-      || (from === 'windows' && caller.kind === 'window')
-      || (from === 'trusted' && trusted)
-      || (from === 'utility' && isUtility(c, way))
-      || (from === 'pair' && rootCalled(parent))
-    // A from with no rule here refuses every caller
-    if (!admitted) return { code: 'not-granted' }
+  if (target.kind === 'action' || target.kind === 'role') {
+    if (!admits(c, way, target.spec.from, parent)) return { code: 'not-granted' }
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. The reads the contract marks answer
-    if (trusted && target.spec.reads !== true && !c.armed(caller)) return { code: 'throttled' }
-    return { kind: 'action' }
+    const reads = target.kind === 'action' && target.spec.reads === true
+    if (trusted && !reads && !c.armed(caller)) return { code: 'throttled' }
+    return { kind: target.kind }
   }
   if (target.kind === 'bus') return eventsFloor(c, caller, target.spec, args)
   // The trusted window holds core actions and the core topics only and never note content
@@ -113,6 +113,16 @@ export function floorOf(c: Context, way: Way, target: Target, args: unknown, par
   // A plugin's own halves call each other freely
   if (caller.kind === 'plugin' && caller.id === target.target) return { kind: 'free' }
   return { kind: 'power', capability: 'plugin.call', scope: frozen({ target: target.target }) }
+}
+
+// Whether the caller is one the action's from names. A from with no rule here refuses every caller
+function admits(c: Context, way: Way, from: CoreFrom, parent: Pending | null): boolean {
+  const { caller } = way
+  return from === 'any'
+    || (from === 'windows' && caller.kind === 'window')
+    || (from === 'trusted' && caller.kind === 'window' && caller.role === 'trusted')
+    || (from === 'utility' && isUtility(c, way))
+    || (from === 'pair' && rootCalled(parent))
 }
 
 // A plugin's host half in its utility process: a way register made, so a port the plugins manager minted, bound to a

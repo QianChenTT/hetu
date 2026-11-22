@@ -1,9 +1,10 @@
-import type { EventAction } from '../../api/actions.ts'
+import { roleActions, type EventAction } from '../../api/actions.ts'
 import { answer as answerSchema, calleeRefusalCodes, VERSION } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
+import type { PluginInfo } from '../../api/policy-jobs.ts'
 import type { Served } from './header.ts'
 import { no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Writable, type Target, type Kind } from './context.ts'
-import { charge, admitted, stop, result, thrown, finish, early, callOf, liveOf } from './open-calls.ts'
+import { charge, admitted, stop, result, thrown, finish, early, callOf, liveOf, revoke } from './open-calls.ts'
 import { judge, judgeAll, judgeDelivery, askable, provide, setScope } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
 
@@ -47,6 +48,7 @@ async function run(c: Context, pending: Pending, target: Target, args: unknown, 
     return serve(c, pending, c.served.get(target.part), args, target.kind === 'action' && target.spec.live === true)
   }
   if (target.kind === 'provider') return provide(c, pending, target.provider, args, kind)
+  if (target.kind === 'role') return role(c, pending, args)
   return deliver(c, pending, target, args, kind)
 }
 
@@ -115,11 +117,8 @@ async function serve(c: Context, pending: Pending, served: Served | undefined, a
 // 6 route to a plugin's declared <target>.<name>, then 8 decide and 10 perform by the callee. Only a caller that
 // passed precheck learns here whether the target is there, starting or declares the action
 function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: 'plugin' }>, args: unknown, kind: Kind): void {
-  const info = c.info(target.target)
-  if (info?.state === 'starting') return finish(c, pending, no('starting'))
-  // Calls to an unresponsive plugin time out at once
-  if (info?.state === 'unresponsive') return finish(c, pending, no('timeout'))
-  if (info === null || info.state !== 'ready') return finish(c, pending, no('unavailable'))
+  const info = ready(c, pending, target.target)
+  if (info === null) return
   const declared = Object.hasOwn(info.actions, target.name) ? info.actions[target.name] : undefined
   if (typeof declared !== 'object' || declared === null) return finish(c, pending, no('not-found'))
   const { caller } = pending
@@ -128,7 +127,33 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
   if (!own && from !== undefined && !(caller.kind === 'plugin' && Array.isArray(from) && from.includes(caller.id))) {
     return finish(c, pending, no('not-granted'))
   }
-  const callee = c.ways.get(keyOf({ kind: 'plugin', id: target.target, half: info.serves, incarnation: info.incarnation }))
+  handOn(c, pending, target.target, info, args, kind)
+}
+
+// 6 route to the one plugin the plugin table names as holding the role's item, then 10 perform by it, delivered as the
+// role's own action. The floor decided the caller, so no gate step judges the call. What the holder does under it is
+// judged as any call is. The record names the holder as the call's target
+function role(c: Context, pending: Pending, args: unknown): void {
+  const holder = c.role(pending.action)
+  if (holder === null) return finish(c, pending, no('unavailable'))
+  setScope(pending, frozen({ target: holder }))
+  const info = ready(c, pending, holder)
+  if (info !== null) handOn(c, pending, holder, info, args, { kind: 'role' })
+}
+
+// The plugin's row while it can take a call. A plugin starting, unresponsive or not ready answers the call and gives
+// null
+function ready(c: Context, pending: Pending, id: string): PluginInfo | null {
+  const info = c.info(id)
+  if (info?.state === 'ready') return info
+  // Calls to an unresponsive plugin time out at once
+  finish(c, pending, no(info?.state === 'starting' ? 'starting' : info?.state === 'unresponsive' ? 'timeout' : 'unavailable'))
+  return null
+}
+
+// 8 decide for a call with power, then the call goes down the serving half's way, which the callee's answer comes back on
+function handOn(c: Context, pending: Pending, id: string, info: PluginInfo, args: unknown, kind: Kind): void {
+  const callee = c.ways.get(keyOf({ kind: 'plugin', id, half: info.serves, incarnation: info.incarnation }))
   if (callee === undefined || !callee.open || callee.send === null) return finish(c, pending, no('unavailable'))
   if (kind.kind === 'power') {
     const refused = judgeDelivery(c, pending, kind)
@@ -141,6 +166,18 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
     v: VERSION, kind: 'call', callId: pending.callId, caller: pending.caller, action: pending.action, args,
     deadline: pending.deadline, ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf, root: pending.root.caller } : {}),
   })
+}
+
+// The plugins manager changed something: an open role call whose holder the table no longer names ends stale with
+// its sub-calls, as a narrowed grant stops what follows (D-606). Gate on or off, since the holder is found and not
+// judged
+export function moved(c: Context): void {
+  for (const way of [...c.ways.values()]) {
+    for (const pending of [...way.made.values()]) {
+      if (pending.done || !Object.hasOwn(roleActions, pending.action)) continue
+      if (pending.scope?.target !== c.role(pending.action)) revoke(c, pending, 'stale')
+    }
+  }
 }
 
 // A callee's answer matches only a call delivered on this same way, so a reply on another port finds nothing

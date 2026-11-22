@@ -31,6 +31,7 @@ const partOf = (name: string) => {
 const idLists = Object.entries(ids).filter(([key, value]) => Array.isArray(value) && key !== 'coreNamespaces' && key !== 'reservedIds')
 export const names: ReadonlyMap<string, string> = new Map([
   ...Object.keys(actions.coreActions), ...Object.keys(actions.eventActions), ...Object.keys(actions.providerActions),
+  ...Object.keys(actions.roleActions),
   ...idLists.flatMap(([, list]) => list as readonly string[]),
 ].map(name => [name, partOf(name)]))
 
@@ -59,6 +60,8 @@ describe('the parts the router names', () => {
     expect(files.every(file => file.endsWith('.ts') && !file.endsWith('.test.ts'))).toBe(true)
     expect(names.get('luoshu.write')).toBe('luoshu')
     expect(names.get('core.consentAnswer')).toBe('plugins-manager')
+    // A role's action names the table its holder is found in
+    expect(names.get('door.handle')).toBe('plugins-manager')
     expect(names.get('flood-control')).toBe('flood-control')
     expect(names.has('plugin')).toBe(false)
     expect(constants.get('LOCK_GUARD')).toBe('lock')
