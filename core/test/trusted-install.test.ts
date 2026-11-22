@@ -158,6 +158,15 @@ function bridge() {
 }
 
 const replyTo = (message: Record<string, unknown>, result: unknown) => ({ v: 1, kind: 'reply', id: message.id, ok: true, result })
+// The list once the plugins manager holds the install, its words its own and none of the page's
+const holding = (id = 'r1'): SecurityList => ({
+  ...calm(),
+  requests: [{
+    id, kind: 'plugin.install', plugin: null, text: 'Install search into the plugin folder and approve it with the grants its manifest asks for',
+    notes: ['From the zip "/tmp/p.zip"', 'the plugins manager’s line on search'], type: null, root: null, field: null,
+  }],
+})
+const changeSent = (message: Record<string, unknown> | undefined) => (message?.args as { change?: Record<string, unknown> } | undefined)?.change
 const refuse = (message: Record<string, unknown>, code: string) => ({ v: 1, kind: 'reply', id: message.id, ok: false, refusal: { code, action: message.action } })
 
 describe('the install flow against a fake main', () => {
@@ -232,8 +241,8 @@ describe('the install flow against a fake main', () => {
     expect(last().note).toBe('Paste a link to a GitHub repository or release')
   })
 
-  it('installs the ticked plugins in the order found with one Confirm, then says which', () => {
-    const { sent, page, answer, last } = started()
+  it('asks for the ticked plugins in the order found as a security request, whose Confirm draws the plugins manager’s words alone', () => {
+    const { sent, page, answer, hears, last } = started()
     page.installer.pick('zip')
     answer('/tmp/p.zip')
     answer(staged([found({ id: 'search' }), found({ id: 'layout' }), found({ id: 'tags' })]))
@@ -241,11 +250,30 @@ describe('the install flow against a fake main', () => {
     page.installer.tick('tags', true)
     page.installer.tick('layout', true)
     page.installer.install('s1')
-    expect(sent.at(-1)).toMatchObject({
-      action: 'core.install', args: { staged: 's1', plugins: [{ id: 'layout', digest: found({ id: 'layout' }).digest }, { id: 'tags', digest: found({ id: 'tags' }).digest }] },
+    expect(sent.at(-1)).toMatchObject({ action: 'security.request' })
+    expect(changeSent(sent.at(-1))).toEqual({
+      kind: 'plugin.install', staged: 's1', plugins: [{ id: 'layout', digest: found({ id: 'layout' }).digest }, { id: 'tags', digest: found({ id: 'tags' }).digest }],
     })
-    answer({ installed: ['layout', 'tags'] })
-    expect(last()).toMatchObject({ note: 'Installed layout, tags', screen: { installing: null } })
+    hears(replyTo(sent.at(-1)!, { held: 'r1' }))
+    hears(replyTo(sent.at(-1)!, holding()))
+    // The box goes once the request holds its staging, so nothing the page wrote stands beside the Confirm
+    const shown = last().screen
+    expect(shown.installing).toBeNull()
+    expect(shown.request).toMatchObject({ id: 'r1', kind: 'plugin.install', text: holding().requests[0].text, notes: holding().requests[0].notes })
+    expect(sent.some(message => message.action === 'core.unstage')).toBe(false)
+    page.confirm('r1')
+    expect(sent.at(-1)).toMatchObject({ action: 'security.confirm', args: { requestId: 'r1' } })
+  })
+
+  it('says which plugins were installed when the request applied at once', () => {
+    const { page, answer, last } = started()
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer(staged([found({ id: 'search' }), found({ id: 'tags' })]))
+    page.installer.tick('tags', true)
+    page.installer.install('s1')
+    answer({ applied: true })
+    expect(last()).toMatchObject({ note: 'Installed search, tags', screen: { installing: null } })
   })
 
   it('never ticks or sends a plugin that can’t be installed', () => {
@@ -258,11 +286,11 @@ describe('the install flow against a fake main', () => {
     if (box?.step !== 'found') throw new Error('no found box')
     expect(box.plugins.map(row => row.picked)).toEqual([true, false])
     page.installer.install('s1')
-    expect(sent.at(-1)).toMatchObject({ action: 'core.install', args: { plugins: [{ id: 'search' }] } })
-    expect((sent.at(-1)!.args as { plugins: unknown[] }).plugins).toHaveLength(1)
+    expect(changeSent(sent.at(-1))).toMatchObject({ kind: 'plugin.install', plugins: [{ id: 'search' }] })
+    expect((changeSent(sent.at(-1))!.plugins as unknown[])).toHaveLength(1)
   })
 
-  it('sends no Confirm with nothing ticked and keeps the box when the Confirm came too soon', () => {
+  it('sends no request with nothing ticked and keeps the box when the request came too soon', () => {
     const { sent, page, answer, hears, last } = started()
     page.installer.pick('zip')
     answer('/tmp/p.zip')
@@ -279,7 +307,7 @@ describe('the install flow against a fake main', () => {
     expect(last().screen.installing).toMatchObject({ step: 'found' })
   })
 
-  it('drops the box when its staging is gone', () => {
+  it('drops the box when its staging is gone, and the staging too when it no longer holds what was drawn', () => {
     const { sent, page, answer, hears, last } = started()
     page.installer.pick('zip')
     answer('/tmp/p.zip')
@@ -288,6 +316,16 @@ describe('the install flow against a fake main', () => {
     hears(refuse(sent.at(-1)!, 'not-found'))
     answer(calm())
     expect(last().screen.installing).toBeNull()
+    expect(sent.some(message => message.action === 'core.unstage')).toBe(false)
+
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer({ ...staged([found({})]), staged: 's2' })
+    page.installer.install('s2')
+    hears(refuse(sent.at(-1)!, 'stale'))
+    answer(calm())
+    expect(last()).toMatchObject({ note: 'The settings changed since this was asked. Ask again', screen: { installing: null } })
+    expect(sent.filter(message => message.action === 'core.unstage').map(message => message.args)).toEqual([{ staged: 's2' }])
   })
 
   it('drops a staging on Cancel and the one it replaces once a newer one is drawn, keeping a good box when the newer fails', () => {
@@ -398,35 +436,36 @@ describe('the install flow when answers come late, out of order or twice', () =>
     answerTo(lastOf('app.pickPlugins'), '/tmp/b')
     answerTo(lastOf('core.stage'), staging('s2', '/tmp/b'))
     page.installer.install('s1')
-    expect(sent.some(message => message.action === 'core.install')).toBe(false)
+    expect(sent.some(message => message.action === 'security.request')).toBe(false)
   })
 
-  it('sends one Confirm for a double click and draws Install busy until it answers', () => {
+  it('sends one request for a double click and draws Install busy until it answers', () => {
     const { sent, page, answerTo, lastOf, last } = started()
     page.installer.pick('zip')
     answerTo(lastOf('app.pickPlugins'), '/tmp/a.zip')
     answerTo(lastOf('core.stage'), staging('s1'))
     page.installer.install('s1')
     page.installer.install('s1')
-    expect(sent.filter(message => message.action === 'core.install')).toHaveLength(1)
+    expect(sent.filter(message => message.action === 'security.request')).toHaveLength(1)
     expect(last().screen.installing).toMatchObject({ busy: true })
-    answerTo(lastOf('core.install'), { installed: ['search'] })
+    answerTo(lastOf('security.request'), { applied: true })
     expect(last()).toMatchObject({ note: 'Installed search', screen: { installing: null } })
   })
 
-  it('never clears a newer box with a late answer to an older Confirm', () => {
+  it('never clears a newer box with a late answer to an older request', () => {
     const { page, answerTo, lastOf, unstaged, last } = started()
     page.installer.pick('zip')
     answerTo(lastOf('app.pickPlugins'), '/tmp/a.zip')
     answerTo(lastOf('core.stage'), staging('s1'))
     page.installer.install('s1')
-    const confirm = lastOf('core.install')
+    const confirm = lastOf('security.request')
     page.installer.pick('folder')
     answerTo(lastOf('app.pickPlugins'), '/tmp/b')
     answerTo(lastOf('core.stage'), staging('s2', '/tmp/b'))
-    // The staging being installed is the core's to drop
+    // The staging a request is on its way for is the core's to drop
     expect(unstaged()).toEqual([])
-    answerTo(confirm, { installed: ['search'] })
-    expect(last()).toMatchObject({ note: 'Installed search', screen: { installing: { staged: 's2' } } })
+    answerTo(confirm, { held: 'r1' })
+    expect(last().screen.installing).toMatchObject({ staged: 's2' })
+    expect(unstaged()).toEqual([])
   })
 })

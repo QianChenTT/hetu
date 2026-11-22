@@ -1,6 +1,7 @@
 // The Install button's flow, kept apart from the DOM: a zip or a folder picked in main's dialog or a link's release,
-// staged by the core, then the plugins found with the ones that can install ticked and one Confirm that installs and
-// approves them. Every word is this file's, a plugin's own text only quoted
+// staged by the core, then the plugins found with the ones that can install ticked and Install, which asks for
+// plugin.install as a security request. The Confirm that installs and approves them is that request's, in the plugins
+// manager's words. The box's words are this file's and api/trusted.ts's, a plugin's own text only quoted
 import { MAX_LINK_LENGTH, type InstallProblem, type InstallSource, type ReleaseAsset, type StagedPlugin, type StagedProblem, type StagedSource } from '../../api/actions.ts'
 import { classNames } from '../../api/policy-jobs.ts'
 import { grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
@@ -154,9 +155,11 @@ export class Installer {
     this.host.redraw()
   }
 
-  // The Confirm for the staging the human saw, once. A click on a staging no longer shown, or while one Confirm is on
-  // its way, sends nothing. An answer clears only the box it was for: a staging gone drops it, another refusal keeps it
-  // to confirm again
+  // The request for the staging the human saw, once. A click on a staging no longer shown, or while one request is on
+  // its way, sends nothing. An answer clears only the box it was for. Held, the request is the Confirm and holds the
+  // staging, which its Cancel drops, so the box goes and the staging stays. Applied at once, with the Confirm off or the
+  // security view off, the plugins are in. A staging gone drops the box, one that no longer holds what was drawn drops
+  // the staging with it, and any other refusal keeps the box to ask again
   install(shown: string): void {
     const flow = this.flow
     if (flow?.step !== 'found' || flow.staged !== shown || flow.busy) return
@@ -164,12 +167,13 @@ export class Installer {
     if (plugins.length === 0) return
     this.flow = { ...flow, busy: true }
     this.host.redraw()
-    this.host.call('core.install', { staged: flow.staged, plugins }, reply => {
+    this.host.call('security.request', { change: { kind: 'plugin.install', staged: flow.staged, plugins } }, reply => {
       const code = reply.ok === true ? null : reply.refusal?.code
       const current = this.flow?.step === 'found' && this.flow.staged === shown ? this.flow : null
-      if (current !== null) this.flow = reply.ok === true || code === 'not-found' ? null : { ...current, busy: false }
-      const installed = (reply.result as { installed?: string[] } | null)?.installed
-      this.host.settle(reply, reply.ok === true && installed !== undefined ? `Installed ${installed.join(', ')}` : undefined)
+      if (current !== null) this.flow = reply.ok === true || code === 'not-found' || code === 'stale' ? null : { ...current, busy: false }
+      if (code === 'stale') this.host.call('core.unstage', { staged: shown })
+      const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
+      this.host.settle(reply, applied ? `Installed ${plugins.map(plugin => plugin.id).join(', ')}` : undefined)
     })
   }
 
@@ -180,7 +184,7 @@ export class Installer {
     this.host.redraw()
   }
 
-  // A staging the core holds is dropped as the box moves on, with no answer waited for. One whose Confirm is on its
+  // A staging the core holds is dropped as the box moves on, with no answer waited for. One whose request is on its
   // way is the core's to drop
   private replace(next: InstallFlow | null): void {
     const old = this.flow

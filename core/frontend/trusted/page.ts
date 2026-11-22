@@ -78,8 +78,8 @@ function installControls(page: TrustedPage, field: string, words: string, sugges
   return controls
 }
 
-// A release's zips to pick from, or the plugins found with a box to tick each and its grants as sentences, under one
-// Confirm that waits the delay like a request's
+// A release's zips to pick from, or the plugins found with a box to tick each and its grants as sentences, then
+// Install, which waits the delay like a Confirm since its request can apply at once
 function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   const section = element('section')
   section.className = 'request installing'
@@ -127,9 +127,9 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
     }
     section.append(group)
   }
-  section.append(element('p', 'Install copies each plugin ticked into the plugin folder and approves it with what it asks for'))
+  section.append(element('p', 'Install asks for your Confirm on each plugin ticked with what it may do. The Confirm copies them into the plugin folder and approves them'))
   // The staging drawn goes with the click, so a newer one never installs from a click on this one
-  const confirm = button(box.busy ? 'Installing' : 'Install', () => page.installer.install(box.staged))
+  const confirm = button('Install', () => page.installer.install(box.staged))
   confirms.add(confirm)
   ready.set(confirm, () => box.ready && !box.busy)
   section.append(confirm, button('Cancel', () => page.installer.cancel()))
