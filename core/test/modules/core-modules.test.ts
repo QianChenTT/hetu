@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Caller, LockChange } from '../../api/envelope.ts'
+import type { Caller, LockFields } from '../../api/envelope.ts'
 import type { Call, ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../../api/policy-jobs.ts'
 import { moduleRequires, type CoreModulesOptions, type Handed, type StorageModule } from '../../backend/modules/header.ts'
 import { realModules } from '../modules-fakes.ts'
@@ -97,7 +97,7 @@ function fakes() {
   return { options, seen, throws, gate, storage, luoshu, history, exec, lock }
 }
 
-function made(options: Partial<CoreModulesOptions> & { publish?: (owner: 'luoshu' | 'lock', topic: string, path: string, fields?: LockChange) => void } = {}) {
+function made(options: Partial<CoreModulesOptions> & { publish?: (owner: 'luoshu' | 'lock', topic: string, path: string, fields?: LockFields) => void } = {}) {
   return realModules({ dataDir, installDir, ...options })
 }
 

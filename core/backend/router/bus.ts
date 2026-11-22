@@ -30,7 +30,7 @@ export type Holder = { owner: object, caller: Caller, plugin: string | null, pus
 
 // How a core module's path event goes out: hears says whether a subscriber the gate lets list the path hears it or only
 // one that reads it, fields what it carries beside the path, as the contract's moduleTopics gives them
-export type Told = { readonly hears: 'list' | 'read', readonly fields?: Readonly<Record<string, unknown>> }
+export type Delivery = { readonly hears: 'list' | 'read', readonly fields?: Readonly<Record<string, unknown>> }
 
 type Subscription = {
   // Needs no gate: a plugin's own topic, or a core topic a window hears
@@ -62,8 +62,8 @@ type Subscriber = {
 // core.* is path-less by rule, every other topic may carry a path
 const pathless = (topic: string) => topic.startsWith('core.')
 
-// Subscriptions, credits and delivery. An event is a topic and maybe a path, never content. A path reaches only
-// subscribers the gate says may read it. The router decides who may subscribe to and publish what before anything
+// Subscriptions, credits and delivery. An event is a topic and maybe a path, never content, lock.changed with its
+// lock's state. A path reaches only subscribers the gate says may list it, or read it for a topic only readers hear. The router decides who may subscribe to and publish what before anything
 // here runs
 export class Bus {
   private readonly parts: BusParts
@@ -132,10 +132,10 @@ export class Bus {
     for (const topic of [...subscriber.topics.keys()]) this.remove(subscriber, topic)
   }
 
-  // An event a plugin published on its own topic, or a core module on one of its own as told says, to every live
-  // subscription of the topic. A path goes only to the subscribers the gate says may list it, or read it when told says
-  // so, and to none while the gate is down. Path-less events go out whatever the gate
-  publish(topic: string, path: string | undefined, told: Told = { hears: 'list' }): void {
+  // An event a plugin published on its own topic, or a core module on one of its own as delivery says, to every live
+  // subscription of the topic. A path goes only to the subscribers the gate says may list it, or read it when delivery
+  // says so, and to none while the gate is down. Path-less events go out whatever the gate
+  publish(topic: string, path: string | undefined, delivery: Delivery = { hears: 'list' }): void {
     this.sync()
     for (const subscriber of [...this.byTopic.get(topic) ?? []]) {
       const held = subscriber.topics.get(topic)
@@ -146,9 +146,9 @@ export class Bus {
           this.parts.dropped(subscriber.caller, 'gate-down')
           continue
         }
-        if (this.paths === 'ask' && !this.may(subscriber.caller, path, told.hears)) continue
+        if (this.paths === 'ask' && !this.may(subscriber.caller, path, delivery.hears)) continue
       }
-      this.deliver(subscriber, topic, path, told.fields)
+      this.deliver(subscriber, topic, path, delivery.fields)
     }
   }
 
@@ -253,7 +253,7 @@ export class Bus {
     this.parts.changed(subscriber.caller, 'ended', topics)
   }
 
-  private may(caller: Caller, path: string, hears: Told['hears']): boolean {
+  private may(caller: Caller, path: string, hears: Delivery['hears']): boolean {
     return hears === 'read' ? this.parts.canRead(caller, path) : this.parts.canList(caller, path)
   }
 

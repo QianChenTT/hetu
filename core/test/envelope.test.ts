@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ack, busSignals, caller, event, grantKeyOf, kindOf, lockChange, messageKinds, moduleTopics, reasonCodes, refusal, refusalCodes, reply, request,
+  ack, busSignals, caller, event, grantKeyOf, kindOf, lockFields, messageKinds, moduleTopics, reasonCodes, refusal, refusalCodes, reply, request,
   signal, VERSION,
 } from '../api/envelope.ts'
 import { defaultLimits } from '../api/limits.ts'
@@ -412,10 +412,10 @@ describe('the topics core modules publish', () => {
   })
 
   it('shapes lock.changed as locked with a whole end or unlocked with none, and nothing more', () => {
-    expect(lockChange.safeParse({ locked: true, until: 0 }).success).toBe(true)
-    expect(lockChange.safeParse({ locked: false, until: null }).success).toBe(true)
+    expect(lockFields.safeParse({ locked: true, until: 0 }).success).toBe(true)
+    expect(lockFields.safeParse({ locked: false, until: null }).success).toBe(true)
     for (const bad of [{ locked: true }, { locked: false }, { locked: true, until: null }, { locked: false, until: 5 }, { locked: true, until: 5, holder: 'x' }]) {
-      expect([bad, lockChange.safeParse(bad).success]).toEqual([bad, false])
+      expect([bad, lockFields.safeParse(bad).success]).toEqual([bad, false])
     }
   })
 })

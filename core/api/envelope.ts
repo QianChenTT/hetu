@@ -151,11 +151,11 @@ const eventPath = z.string().superRefine((value, ctx) => {
 
 // What lock.changed carries beside its path: whether the note is locked now and when its lock ends, in milliseconds
 // since the epoch, null once it isn't. Never who holds it
-export const lockChange = z.union([
+export const lockFields = z.union([
   z.strictObject({ locked: z.literal(true), until: z.int().nonnegative() }),
   z.strictObject({ locked: z.literal(false), until: z.null() }),
 ])
-export type LockChange = z.infer<typeof lockChange>
+export type LockFields = z.infer<typeof lockFields>
 
 // The topics core modules publish, each with a path. hears is who the bus gives one to: a subscriber the gate lets list
 // the path, or only one that reads it. fields is what one carries beside its path, null for nothing. A module's publish
@@ -164,7 +164,7 @@ export type ModuleTopic = { readonly hears: 'list' | 'read', readonly fields: z.
 export const moduleTopics: Readonly<Record<string, ModuleTopic>> = Object.freeze(Object.assign(Object.create(null), {
   'luoshu.changed': Object.freeze({ hears: 'list', fields: null }),
   'luoshu.outside': Object.freeze({ hears: 'list', fields: null }),
-  'lock.changed': Object.freeze({ hears: 'read', fields: lockChange }),
+  'lock.changed': Object.freeze({ hears: 'read', fields: lockFields }),
 }))
 
 // An event as the bus pushes it: a topic and maybe a path, never content, and lock.changed its lock's state too. seq
@@ -176,11 +176,11 @@ const pathEvent = z.strictObject({
   topic: qualifiedName.refine(topic => !topic.startsWith('events.'), 'a signal').refine(topic => topic !== 'lock.changed', 'carries fields'),
   path: eventPath.optional(),
 })
-const lockChanged = z.union([
+const lockChangedEvent = z.union([
   z.strictObject({ ...eventHead, topic: z.literal('lock.changed'), path: eventPath, locked: z.literal(true), until: z.int().nonnegative() }),
   z.strictObject({ ...eventHead, topic: z.literal('lock.changed'), path: eventPath, locked: z.literal(false), until: z.null() }),
 ])
-export const event = z.union([pathEvent, lockChanged])
+export const event = z.union([pathEvent, lockChangedEvent])
 export type BusEvent = z.infer<typeof event>
 
 // A signal carries no seq, since no ack frees it. The topics it names are the subscriber's own

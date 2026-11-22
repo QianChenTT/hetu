@@ -1,4 +1,4 @@
-import { grantKeyOf, type Caller, type LockChange } from '../../api/envelope.ts'
+import { grantKeyOf, type Caller, type LockFields } from '../../api/envelope.ts'
 import type { Call, CallHead, GuardCall, Opening, Prepared, Provider, ProviderRefusal } from '../../api/policy-jobs.ts'
 import { canonical, keyOf, type Canonical, type NotCanonical } from '../../lib/canonical.ts'
 import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT, type Lock, type LockOptions } from './header.ts'
@@ -7,7 +7,7 @@ export type { Lock } from './header.ts'
 
 // One note's lock: its holder, the root and the client whose counts it takes, when it ends on the module's clock and
 // the canonical path its first set named, which lock.changed tells
-type Held = { readonly holder: string, readonly root: string, readonly client: string, readonly until: number, readonly path: string }
+type Held = { readonly holder: string, readonly root: string, readonly client: string, readonly endsAt: number, readonly path: string }
 
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
 
@@ -38,7 +38,7 @@ export function createLock(options: LockOptions): Lock {
   const wall = options.wall ?? (() => Date.now())
 
   // Told once the step that noticed it ended. A publish that throws loses its event and never fails the step
-  function tell(path: string, change: LockChange): void {
+  function tell(path: string, change: LockFields): void {
     const { publish } = options
     if (publish === undefined) return
     queueMicrotask(() => {
@@ -50,14 +50,14 @@ export function createLock(options: LockOptions): Lock {
     })
   }
   // The end in wall time, read now, so it says when the lock ends whatever the wall clock does later
-  const toldLocked = (held: Held, now: number) => tell(held.path, { locked: true, until: Math.round(wall() + held.until - now) })
-  const toldUnlocked = (held: Held) => tell(held.path, { locked: false, until: null })
+  const tellLocked = (entry: Held, now: number) => tell(entry.path, { locked: true, until: Math.round(wall() + entry.endsAt - now) })
+  const tellUnlocked = (entry: Held) => tell(entry.path, { locked: false, until: null })
 
   function live(key: string, now: number): Held | undefined {
-    const held = table.get(key)
-    if (held === undefined || held.until > now) return held
+    const entry = table.get(key)
+    if (entry === undefined || entry.endsAt > now) return entry
     table.delete(key)
-    toldUnlocked(held)
+    tellUnlocked(entry)
     return undefined
   }
   // Whether another holder locks one of the keys
@@ -78,21 +78,21 @@ export function createLock(options: LockOptions): Lock {
     const fresh = new Set(keys.filter(key => live(key, now) === undefined)).size
     let ofRoot = fresh
     let ofClient = fresh
-    for (const [key, held] of [...table]) {
-      if (held.root !== root || live(key, now) === undefined) continue
+    for (const [key, entry] of [...table]) {
+      if (entry.root !== root || live(key, now) === undefined) continue
       ofRoot++
-      if (held.client === client) ofClient++
+      if (entry.client === client) ofClient++
     }
     if (ofRoot > MAX_LOCKS_PER_ROOT || ofClient > MAX_LOCKS_PER_CLIENT) throw refused('failed', 'quota')
     const ms = Math.min(asked, MAX_LOCK_MS)
-    const until = now + ms
+    const endsAt = now + ms
     for (const [i, key] of keys.entries()) {
       // Every lock left is live and the caller's own, so one ending then is this set's or one that already did
       const was = table.get(key)
-      if (was?.until === until) continue
-      const held = { holder, root, client, until, path: was?.path ?? paths[i] }
-      table.set(key, held)
-      toldLocked(held, now)
+      if (was?.endsAt === endsAt) continue
+      const entry = { holder, root, client, endsAt, path: was?.path ?? paths[i] }
+      table.set(key, entry)
+      tellLocked(entry, now)
     }
     return { ms }
   }
@@ -103,10 +103,10 @@ export function createLock(options: LockOptions): Lock {
     const holder = call.caller.kind === 'window' ? null : holderOf(call)
     const now = options.clock()
     for (const key of paths.map(keyOf)) {
-      const held = live(key, now)
-      if (held === undefined || (holder !== null && held.holder !== holder)) continue
+      const entry = live(key, now)
+      if (entry === undefined || (holder !== null && entry.holder !== holder)) continue
       table.delete(key)
-      toldUnlocked(held)
+      tellUnlocked(entry)
     }
     return null
   }
@@ -172,7 +172,7 @@ export function createLock(options: LockOptions): Lock {
       // not yet told included, since nothing in the folder opened is locked
       open(next: Opening): void {
         if (opening?.folder !== next.folder) {
-          for (const held of table.values()) toldUnlocked(held)
+          for (const entry of table.values()) tellUnlocked(entry)
           table.clear()
         }
         opening = next.folder === null ? null : { ...next, folder: next.folder }
