@@ -4,6 +4,7 @@ import path from 'node:path'
 import { parse, type AnyNode, type Function as Fn } from 'acorn'
 import { ancestor } from 'acorn-walk'
 import { describe, expect, it } from 'vitest'
+import { shippedFiles } from './shipped-files.ts'
 import { sizeExceptions } from './size-exceptions.ts'
 
 // a size ratchet. No shipped file may cross 800 lines and a file on size-exceptions.ts may not cross its own
@@ -151,6 +152,10 @@ describe('the size ratchet', () => {
     if (warnings.length > 0) {
       console.warn(`Size warnings, files of logic over ${FILE_WARNING} lines and functions over ${FUNCTION_WARNING}:\n${warnings.map(line => `  ${line}`).join('\n')}`)
     }
+  })
+  // The proof the later move of this walk to shipped-files.ts leans on
+  it('walks the files shippedFiles lists', () => {
+    expect(files).toEqual(shippedFiles({ kinds: ['ts', 'js', 'css', 'html'], plugins: 'src' }))
   })
 })
 
