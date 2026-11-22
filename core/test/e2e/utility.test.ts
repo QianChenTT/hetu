@@ -2,7 +2,7 @@ import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { baseEnv } from '../../lib/clean-env.ts'
-import { command, fakeDoor, installDoor, reports, send, startedWith, writeHolder } from './door-driver.ts'
+import { command, fakeDoor, handleRefusals, installDoor, reports, send, startedWith, writeHolder } from './door-driver.ts'
 import { cleanup, logged, pageAt, records, temp, until } from './helpers.ts'
 
 // The utility place's proof: a fake door in the door's utility process, driven through door.handle by a folder plugin
@@ -108,6 +108,8 @@ describe('a utility half', () => {
     expect(facts.cwdEntries).toBe(0)
     expect(facts.cwd.startsWith(dataDir)).toBe(false)
     expect(facts.pid).not.toBe(process.pid)
+    // Every door.handle call the door made was delivered, none refused and tried again
+    expect(await handleRefusals(worker)).toEqual([])
   })
 
   it('is killed once hung and reads crashed, and hetu runs on', async () => {
@@ -157,5 +159,6 @@ describe('a utility half', () => {
     expect(load.answered).toBeGreaterThan(0)
     expect(await logged(dataDir, 'plugin.crashed', { plugin: 'mcp-http-handler' })).toBe(false)
     expect(alive(pid)).toBe(true)
+    expect(await handleRefusals(worker)).toEqual([])
   })
 })

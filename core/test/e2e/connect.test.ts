@@ -1,7 +1,7 @@
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { command, fakeDoor, installDoor, outcome, reports, startedWith, writeHolder } from './door-driver.ts'
+import { command, fakeDoor, handleRefusals, installDoor, outcome, reports, startedWith, writeHolder } from './door-driver.ts'
 import { cleanup, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
 
 // A client's connect in the built app: a fake door in its utility process asks the core for the connect and collects
@@ -92,6 +92,7 @@ describe('a connect in the trusted window', () => {
     await until(() => logged(dataDir, 'security.applied', { kind: 'consent.ask', target: 'mcp-http-handler', field: `${CLAUDE}#3`, by: 'confirm' }))
     expect(await collect(worker, handle)).toEqual({ answer: 'yes' })
     expect(await collect(worker, handle)).toEqual({ answer: 'gone' })
+    expect(await handleRefusals(worker)).toEqual([])
   })
 
   it('hands a Cancel as no once, then a connect waiting when the door restarts is gone and can\'t be confirmed', async () => {

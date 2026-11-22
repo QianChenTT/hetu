@@ -53,7 +53,8 @@ export default definePlugin({
 
 // A fake door's source: commands is an object literal of async functions (ctx, args), each answering a result or
 // throwing a refusal. imports go at the top. Each report carries the door's incarnation, the command's number and its
-// result or its refusal's code. A failed door.handle call is tried again with the same report after 200 ms
+// result or its refusal's code. A door.handle call that fails is tried again after 200 ms with the same report and the
+// refusal's code added to its handleRefused, so the holder keeps every refusal of the role for the test to see
 export const fakeDoor = (commands: string, imports = '') => `
 import { definePlugin } from '${sdk}'
 ${imports}
@@ -70,7 +71,8 @@ export default definePlugin({
         let answer
         try {
           answer = await ctx.call('door', 'handle', { body: JSON.stringify({ incarnation: ctx.incarnation, ...report }), headers: {} }, { onBehalf: '${HOLDER}#1' })
-        } catch {
+        } catch (error) {
+          report = { ...report, handleRefused: [...(report.handleRefused ?? []), error?.code ?? String(error)] }
           await new Promise(resolve => setTimeout(resolve, 200))
           continue
         }
@@ -117,7 +119,9 @@ export async function startedWith(dataDir: string, install: string): Promise<{ a
   return { app, editor, dataDir, worker: page.workers()[0] as Worker }
 }
 
-export type Report = { incarnation: number, n?: number, result?: unknown, refused?: string, caller: unknown, onBehalf: string | null }
+export type Report = {
+  incarnation: number, n?: number, result?: unknown, refused?: string, handleRefused?: string[], caller: unknown, onBehalf: string | null
+}
 
 type Door = { send(command: unknown): void, reports: Report[] }
 
@@ -143,6 +147,10 @@ export async function command(worker: Worker, name: string, args: unknown = {}, 
   }, ms)
   return found!
 }
+
+// Every refusal of the door's door.handle calls the reports carried, by the door's incarnation
+export const handleRefusals = async (worker: Worker) =>
+  (await reports(worker)).flatMap(report => (report.handleRefused ?? []).map(code => ({ incarnation: report.incarnation, code })))
 
 // A report's outcome alone
 export const outcome = (report: Report) => report.refused === undefined ? { result: report.result } : { refused: report.refused }
