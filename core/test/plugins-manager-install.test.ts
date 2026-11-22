@@ -105,6 +105,26 @@ describe('the start order', () => {
   })
 })
 
+describe('the marker of core plugin versions an older build kept', () => {
+  // installed.json held each core plugin's version and hash. Nothing reads it now, so the first start takes it away
+  it('goes at the first start and a start without it runs as before', async () => {
+    let marker = ''
+    const made = await harness({
+      door: DOOR_CODE,
+      before: async ({ dataDir }) => {
+        marker = path.join(dataDir, 'installed.json')
+        writeFileSync(marker, '{"format":1,"plugins":{}}\n')
+      },
+    })
+    await made.pluginsManager.start()
+    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
+    await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    const again = await harness({ base: made.base, door: DOOR_CODE })
+    await again.pluginsManager.start()
+    expect(stateOf(again.pluginsManager, 'mcp-http-handler')).toBe('ready')
+  })
+})
+
 describe('the door and policy jobs', () => {
   it('reads a guard role absent, which nothing holds, with the gate and the grant risk classifier from their modules', async () => {
     const { pluginsManager } = await harness({ switches: { off: ['grant-risk-classifier'] } })

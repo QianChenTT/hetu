@@ -18,6 +18,14 @@ export const folders = {
 
 const token = () => randomBytes(8).toString('hex')
 
+// What an older build kept in the data folder that nothing reads now: installed.json, each core plugin's version and
+// hash. The first start takes it away
+const RETIRED = ['installed.json']
+
+export async function dropRetired(dataDir: string): Promise<void> {
+  for (const name of RETIRED) await retried(() => rm(path.join(dataDir, name), { force: true }))
+}
+
 // Writes the files into a new folder in staging, outside plugins/, each one synced before the swap moves it
 export async function stage(dataDir: string, id: string, files: readonly PluginFile[]): Promise<string> {
   const dir = path.join(folders.staging(dataDir), `${id}-${token()}`)

@@ -9,7 +9,7 @@ import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
 import type { Served } from '../router/header.ts'
-import { clearStartMarker, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
+import { clearStartMarker, dropRetired, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
 import { type ConnectAsked } from './connects.ts'
 import { viewsOf } from './reads.ts'
 import { PluginsChanges } from './changes.ts'
@@ -228,6 +228,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
   // policy job's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readDoor()
+    await dropRetired(this.dataDir).catch(() => this.note('fault', { plugin: null, step: 'retired' }))
     this.failedBefore = await readFailedOnce(this.dataDir)
     // The controls that judge yes or no go first and alone. Only core modules hold a guard, so any other expected guard
     // the human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
