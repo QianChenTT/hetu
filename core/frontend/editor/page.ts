@@ -135,7 +135,6 @@ function start(bridge: Bridge): void {
   drawer = theDrawer
   const ui = theDrawer.ui
   const raw = new RawSource(link, theNotes, id => views.text(id))
-  shell.onStatus = status => views.hiddenMarks(status.page.includes('hidden-marks'))
 
   // ---- the layers plugins draw in
 

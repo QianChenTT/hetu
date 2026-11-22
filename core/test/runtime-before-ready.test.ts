@@ -35,6 +35,9 @@ function fakes(options: { switches?: string[], lock?: boolean } = {}) {
     enableSandbox() {
       calls.push('enableSandbox')
     },
+    disableHardwareAcceleration() {
+      calls.push('disableHardwareAcceleration')
+    },
     exit(code) {
       calls.push(`exit ${code}`)
     },
@@ -127,6 +130,47 @@ describe('before ready', () => {
     const { app, protocol, seen } = fakes()
     beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron'] })
     expect(seen.schemes).toEqual([{ scheme: 'hetu', privileges: { standard: true, secure: true } }])
+  })
+
+  // hetu.exe --mcp-stdio, the shim a program on this computer starts for MCP over stdio
+  describe('the shim', () => {
+    it('lets a locked build through with exactly --mcp-stdio after its name, with a profile of its own and no lock, sandbox or scheme', async () => {
+      const base = await temp()
+      const { app, protocol, calls, seen } = fakes()
+      const env = { LOCALAPPDATA: base, HOME: base, XDG_STATE_HOME: base }
+      const early = beforeReady(app, protocol, { env, platform: process.platform, locked: true, argv: ['hetu.exe', '--mcp-stdio'] })
+      expect(early?.shim).toBe(true)
+      expect(calls).toEqual(['setPath userData', 'disableHardwareAcceleration'])
+      expect(seen.userData).toBe(path.join(early!.dataDir, 'shim'))
+      expect(seen.userDataExisted).toBe(true)
+    })
+
+    it.each([
+      ['with inspect behind it', ['--mcp-stdio', '--inspect']], ['with inspect before it', ['--inspect', '--mcp-stdio']], ['twice', ['--mcp-stdio', '--mcp-stdio']],
+      ['with a value', ['--mcp-stdio=1']], ['in another case', ['--MCP-STDIO']], ['with a plain word behind it', ['--mcp-stdio', 'notes.md']],
+    ])('exits a locked build started %s', async (_name, args) => {
+      const base = await temp()
+      const { app, protocol, calls } = fakes()
+      expect(beforeReady(app, protocol, { env: { LOCALAPPDATA: base, HOME: base }, platform: process.platform, locked: true, argv: ['hetu.exe', ...args] })).toBeNull()
+      expect(calls).toEqual(['exit 1'])
+    })
+
+    it.each(REFUSED_SWITCHES)('exits a locked build started with --mcp-stdio while Chromium reads --%s', async name => {
+      const base = await temp()
+      const { app, protocol, calls } = fakes({ switches: [name] })
+      expect(beforeReady(app, protocol, { env: { LOCALAPPDATA: base, HOME: base }, platform: process.platform, locked: true, argv: ['hetu.exe', '--mcp-stdio'] })).toBeNull()
+      expect(calls).toEqual(['exit 1'])
+    })
+
+    // A second hetu ignores its arguments and only shows the first one's window, so a shim that took the lock would
+    // keep the human's hetu from starting
+    it('is a run from the source with --mcp-stdio among its arguments, never taking the lock', async () => {
+      const dataDir = await temp()
+      const { app, protocol, calls } = fakes({ lock: false })
+      const early = beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron', '.', '--mcp-stdio'] })
+      expect(early).toEqual({ dataDir, dev: true, shim: true })
+      expect(calls).not.toContain('requestSingleInstanceLock')
+    })
   })
 
   it('throws on a HETU_DATA_DIR that isn\'t absolute before it touches Electron', () => {

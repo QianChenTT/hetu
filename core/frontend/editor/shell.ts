@@ -64,9 +64,6 @@ export class Shell {
     void this.link.call('app.openSecurity', { requestId })
   }
 
-  // The status as last read, for the parts of the page that follow it
-  onStatus: (status: CoreStatus) => void = () => {}
-
   private refresh(): void {
     void this.link.call('core.status').then(reply => {
       if (!reply.ok) return
@@ -76,7 +73,6 @@ export class Shell {
       for (const id of this.shownAt.keys()) if (!ids.has(id)) this.shownAt.delete(id)
       for (const id of ids) if (!this.shownAt.has(id)) this.shownAt.set(id, now)
       this.draw(bannerLines(status), status.pending.map(request => ({ id: request.id, text: noticeText(request) })))
-      this.onStatus(status)
     })
   }
 }
