@@ -58,7 +58,7 @@ async function joined(options: {
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  const doorFile = options.door === undefined ? undefined : await writeDoor(installDir, options.door)
+  const doorFile = options.door === undefined ? null : await writeDoor(installDir, options.door)
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
   for (const [id, files] of Object.entries(options.folder ?? {})) {
@@ -73,7 +73,7 @@ async function joined(options: {
   runtime.behave = options.behave ?? {}
   // No guard expected unless a test names its own, so the tests here hold their meaning with the lock module wired
   const { recording, pluginsManager, router, modules } = wireCore({
-    booted, installDir, ...(doorFile === undefined ? {} : { doorFile }), runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0,
+    booted, installDir, doorFile, runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0,
     guardsFor: () => [], ...options.wire,
   })
   open.push(async () => {

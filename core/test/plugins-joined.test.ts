@@ -36,7 +36,7 @@ async function joined(fill: (dataDir: string, store: StateStore) => Promise<void
   await fill(dataDir, store)
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const runtime = new FakeRuntime()
-  const { recording, pluginsManager, router, modules } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+  const { recording, pluginsManager, router, modules } = wireCore({ booted, installDir, doorFile: null, runtime, confirmDelayMs: 0 })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
     router.close()

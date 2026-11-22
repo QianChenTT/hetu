@@ -64,7 +64,7 @@ async function world(folders: Record<string, Capability[]>) {
   const luoshu = createLuoshu({ settleMs: 50 })
   const runtime = new FakeRuntime()
   const modules = { gate: createGate(), luoshu }
-  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile: null, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})

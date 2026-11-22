@@ -54,7 +54,7 @@ async function joined(options: { off?: string[], lock?: Lock, before?: (dataDir:
   }
   const runtime = new FakeRuntime()
   const modules = { gate: allowAll(), luoshu: watched, ...(options.lock !== undefined ? { lock: options.lock } : {}) }
-  const parts = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+  const parts = wireCore({ booted, installDir, doorFile: null, runtime, modules, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     await parts.pluginsManager.shutdown().catch(() => {})

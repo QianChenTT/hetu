@@ -88,7 +88,7 @@ async function world(granted: Record<string, string[]>) {
     },
   }
   const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
-  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile: null, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   const junctions: string[] = []
   open.push(async () => {
     luoshu.close()

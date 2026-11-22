@@ -552,7 +552,7 @@ export async function harness(options: {
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
   await mkdir(dataDir, { recursive: true })
-  const doorFile = options.door === undefined ? undefined : await writeDoor(installDir, options.door)
+  const doorFile = options.door === undefined ? null : await writeDoor(installDir, options.door)
   for (const [id, files] of Object.entries(options.folder ?? {})) await writeFolder(path.join(dataDir, 'plugins', id), files)
   const store = new StateStore(dataDir)
   const written: Plugin[] = []
@@ -583,7 +583,7 @@ export async function harness(options: {
   const pluginsManager = new PluginsManager({
     booted: { state: loaded.state, checks: loaded.checks, store, dataDir },
     installDir,
-    ...(doorFile === undefined ? {} : { doorFile }),
+    doorFile,
     link,
     // The link stands in for recording, so a test sees each record the plugins manager makes and decides how it lands
     recording: link,

@@ -54,7 +54,7 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
   const runtime = new FakeRuntime()
   // The gate the core modules hold, the shipping one unless holder is given
   const gate = options.holder ?? createGate()
-  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile: null, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})

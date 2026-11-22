@@ -26,9 +26,9 @@ export type PluginsManagerOptions = {
   // What boot handed over: the state to run with, its checks, the one StateStore and the data folder
   booted: Pick<Booted, 'state' | 'checks' | 'store' | 'dataDir'>
   installDir: string
-  // The door's code as the build wrote it, door.js beside main.js, inside app.asar in a packaged build. Left out, no
-  // door runs, as in the tests of the rest
-  doorFile?: string
+  // The door's code as the build wrote it, door.js beside main.js, inside app.asar in a packaged build. null runs no
+  // door, for the tests of the rest
+  doorFile: string | null
   link: RouterDoor
   // Recording, which the plugins manager calls only while the human has it on
   recording: PluginsRecording
@@ -202,7 +202,7 @@ export abstract class PluginsBase {
     this.store = booted.store
     this.dataDir = booted.dataDir
     this.installDir = options.installDir
-    this.doorFile = options.doorFile ?? null
+    this.doorFile = options.doorFile
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
