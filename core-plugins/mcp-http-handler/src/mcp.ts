@@ -29,6 +29,8 @@ const BODIES: Readonly<Record<number, string>> = Object.freeze(Object.fromEntrie
 
 const STATUS_OF: Readonly<Record<string, number>> = Object.freeze({
   unavailable: 503, starting: 503, 'policy-down': 503, 'switched-off': 503, stopped: 503, crashed: 503, 'not-granted': 503,
+  // The core ended the call once the role's holder went
+  stale: 503,
   timeout: 504, throttled: 429, invalid: 413,
 })
 

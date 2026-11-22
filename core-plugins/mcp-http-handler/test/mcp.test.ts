@@ -151,9 +151,10 @@ describe('what door.handle answers', () => {
   })
 
   it.each([
+    // stale is the call the core ended once the role's holder went, which the client may try again as unavailable
     ['unavailable', 503], ['starting', 503], ['policy-down', 503], ['switched-off', 503], ['stopped', 503], ['crashed', 503],
-    ['not-granted', 503], ['timeout', 504], ['throttled', 429], ['invalid', 413], ['not-found', 502], ['failed', 502],
-    ['needs-confirm', 502], ['guard-refused', 502], ['guard-down', 502], ['stale', 502], ['tampered', 502],
+    ['not-granted', 503], ['stale', 503], ['timeout', 504], ['throttled', 429], ['invalid', 413], ['not-found', 502], ['failed', 502],
+    ['needs-confirm', 502], ['guard-refused', 502], ['guard-down', 502], ['tampered', 502],
   ] as const)('answers a call refused %s with %i and a fixed body that never names the code, keeping the connection', async (refusal, status) => {
     const { serve } = mcp(() => { throw new Refused(refusal, 'door.handle') })
     const answer = await serve(passed())
