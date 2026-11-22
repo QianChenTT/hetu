@@ -103,6 +103,19 @@ describe('a second plugin asking for a role', () => {
     expect((await made.store.load()).state.plugins.copy).toBeUndefined()
   })
 
+  // Its approval could never apply, so the notice raised while it was found goes, recorded as withdrawn
+  it('has its pending approval withdrawn once another plugin takes the role, and the holder\'s kept', async () => {
+    const made = await harness({ folder: { mcp: holder('mcp'), copy: holder('copy') } })
+    await made.pluginsManager.start()
+    const approvals = () => made.pluginsManager.pending().filter(held => held.kind === 'plugin.approve').map(held => held.plugin).sort()
+    expect(approvals()).toEqual(['copy', 'mcp'])
+    await made.pluginsManager.apply({ kind: 'plugin.approve', plugin: 'mcp' })
+    expect(reasonOf(made.pluginsManager, 'copy')).toBe('role-taken')
+    expect(approvals()).not.toContain('copy')
+    expect(made.link.events('security.withdrawn')).toContainEqual(expect.objectContaining({ kind: 'plugin.approve', target: 'copy' }))
+    expect(made.link.events('security.withdrawn')).not.toContainEqual(expect.objectContaining({ target: 'mcp' }))
+  })
+
   it('is refused a widen to the role while another entry holds it, asked or applied, the entry left as it was', async () => {
     const made = await harness({ folder: { mcp: holder('mcp'), tool: filesFor(workerManifest('tool')) }, entries: { mcp: holds(), tool: entryFor } })
     await made.pluginsManager.start()

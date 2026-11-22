@@ -189,6 +189,8 @@ export abstract class PluginsLifecycle extends PluginsBase {
       this.note('plugin.waiting', { plugin: k.id, reason: shown.reason })
     } else if (shown.state === 'refused') {
       this.note('plugin.refused', { plugin: k.id, reason: shown.reason })
+      // Another plugin took the role it asks for, so the approval raised while it was found could never apply
+      if (shown.reason === 'role-taken') this.requests.withdraw(change => change.kind === 'plugin.approve' && change.plugin === k.id)
     } else if (shown.state === 'found' && shown.reason === 'new') {
       this.note('plugin.found', { plugin: k.id })
       // A plugin found in the folder waits as a notice for the human's approval
