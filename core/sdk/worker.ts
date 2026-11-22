@@ -1,7 +1,7 @@
 import { messageCap, newBudget, type RelayLimits, relayLimitsOf, spend, weigh } from '../api/rate.ts'
 import { Editor } from './editor.ts'
 import { type Plugin, run } from './plugin.ts'
-import type { Transport } from './transport.ts'
+import { PACE_WINDOW_MS, type Transport } from './transport.ts'
 
 export type WorkerLimits = RelayLimits
 
@@ -49,9 +49,9 @@ export function pacedTransport(
     timer = null
     while (held.length > 0) {
       const now = clock()
-      while (times.length > 0 && now - times[0] >= 1000) times.shift()
+      while (times.length > 0 && now - times[0] >= PACE_WINDOW_MS) times.shift()
       const most = Math.max(1, Math.floor(limits.messagesPerSecond * SHARE))
-      if (times.length >= most) return later(times[0] + 1000 - now)
+      if (times.length >= most) return later(times[0] + PACE_WINDOW_MS - now)
       const next = held[0]
       const perSecond = limits.bytesPerSecond * SHARE
       if (!spend(budget, now, next.weight, perSecond, capOf())) return later((next.weight - budget.tokens) * 1000 / perSecond)

@@ -369,7 +369,17 @@ describe('a view frame', () => {
     await until(async () => shield.isVisible())
     await shield.click()
     await until(async () => !(await shield.isVisible()))
-    const frame = (await editor.locator('#editors iframe.hetu-frame').boundingBox())!
+    const element = editor.locator('#editors iframe.hetu-frame')
+    const frame = (await element.boundingBox())!
+    const board = (await (await element.elementHandle())!.contentFrame())!
+    // The shield hides at once but the frame takes a click only once the page drew it no longer inert and the frame's
+    // own page heard it, a frame or more later and slower on a busy macOS runner. A click sent before goes to the page
+    // under it, which puts the frame back behind its shield, so the pointer rests on the input until the frame's page
+    // sees it there
+    await until(async () => {
+      await editor.mouse.move(frame.x + 20, frame.y + 12)
+      return board.evaluate(() => document.querySelector('#i:hover') !== null)
+    })
     await editor.mouse.click(frame.x + 20, frame.y + 12)
     await editor.keyboard.type('mine', { delay: 30 })
     await until(async () => (await messages()).some(data => data.typed === 'mine'))

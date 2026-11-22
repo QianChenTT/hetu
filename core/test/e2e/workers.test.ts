@@ -1,5 +1,7 @@
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { filesFor, workerManifest, writeInstall } from '../plugins-manager-fakes.ts'
+import { StateStore } from '../../backend/boot/state.ts'
+import { filesFor, firstPartyEntry, hashOf, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, dataWith, exited, launch, logged, records, temp, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -116,8 +118,15 @@ describe('sandboxed plugins as workers', () => {
     // git ships in this install as a first-party copy, so it runs in the renderer the first-party plugins share, which
     // stays open. Chromium forces a busy worker's end about 2 s after terminate()
     const installDir = await temp()
-    await writeInstall(installDir, { git: { files: filesFor(workerManifest('git'), { 'worker.js': 'setTimeout(() => { for (;;) {} }, 300)' }), firstParty: true } })
+    const files = filesFor(workerManifest('git'), { 'worker.js': 'setTimeout(() => { for (;;) {} }, 300)' })
+    await writeInstall(installDir, { git: { files, firstParty: true } })
     const dataDir = await dataWith({}, { readyMs: 1500 })
+    // A first boot copies a first-party plugin only once the copy's record lands within the plugin's readyMs. A slow
+    // Windows runner's first log write can take longer than 1.5 s, which leaves git uncopied and unstarted for the run.
+    // The copy is in place beforehand, so the short readyMs times only the worker's start
+    const copy = path.join(dataDir, 'plugins', 'git')
+    await writeFolder(copy, files)
+    await new StateStore(dataDir).writePlugin('git', firstPartyEntry(await hashOf(copy)))
     const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
     const page = await workersPage(app, 'first-party')
     await until(() => page.workers().length === 1)

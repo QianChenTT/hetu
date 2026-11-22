@@ -550,6 +550,15 @@ async function hold(door: Door, text: string): Promise<Held> {
   return { socket, raw: () => raw, ended: () => ended, error: () => error }
 }
 
+// Waits until the client read the door's end or an error on its side, or the time passed. The door's count drops when
+// it destroys its socket, a loop turn or more before the client reads the end that came before: on macOS libuv reads a
+// peer's FIN on the turn after its last bytes, so a poll of the count in between finds 0 with the client's side still
+// open
+async function settled(held: Held, withinMs = 1000): Promise<void> {
+  const started = performance.now()
+  while (!held.ended() && held.error() === null && performance.now() - started < withinMs) await new Promise(resolve => setTimeout(resolve, 5))
+}
+
 const openAt = (door: Door) => new Promise<number>((resolve, reject) => door.server.getConnections((err, count) => (err ? reject(err) : resolve(count))))
 
 // Waits until the door holds no socket or the time passed and gives the count then
@@ -574,6 +583,7 @@ describe('sockets answered past Node\'s response', () => {
     const { door, port, refused } = await made({ token: anyToken })
     const held = await hold(door, text(port))
     expect(await drained(door, 1000)).toBe(0)
+    await settled(held)
     const [response] = responses(held.raw())
     expect(response.status).toBe(status)
     expectOnlyOwnHeaders(response, ['connection'])
@@ -586,6 +596,7 @@ describe('sockets answered past Node\'s response', () => {
     const { door, port, refused } = await made({ limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
     const held = await hold(door, '')
     expect(await drained(door, 2000)).toBe(0)
+    await settled(held)
     expect(responses(held.raw()).map(response => response.status)).toEqual([408])
     expect(refused).toEqual(['timeout'])
   })
@@ -677,6 +688,7 @@ describe('a refusal behind a request still being served', () => {
         held.socket.write(behind(port))
       }
       expect(await drained(door, 1500)).toBe(0)
+      await settled(held)
       expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [status, '']])
       expect(held.ended()).toBe(true)
       expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
@@ -690,6 +702,7 @@ describe('a refusal behind a request still being served', () => {
     const good = post(port, ['Authorization: Bearer good'])
     const held = await hold(door, good + good + connect(port))
     expect(await drained(door, 1500)).toBe(0)
+    await settled(held)
     expect(responses(held.raw()).map(response => response.status)).toEqual([200, 200, 403])
     expect(responses(held.raw()).map(response => response.body).slice(0, 2).sort()).toEqual(['{"n":1}', '{"n":2}'])
     expect(counts).toEqual({ made: 2, ended: 2, cancelled: 0 })
@@ -702,6 +715,7 @@ describe('a refusal behind a request still being served', () => {
     const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 2000, keepAliveMs: 300, checkMs: 50 } })
     const held = await hold(door, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
     expect(await drained(door, 2500)).toBe(0)
+    await settled(held)
     expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [400, '']])
     expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
     expect(refused).toEqual(['malformed'])
@@ -714,6 +728,7 @@ describe('a refusal behind a request still being served', () => {
     const late = good.replace('Content-Length: 2', 'Content-Length: 50')
     const held = await hold(door, good + late)
     expect(await drained(door, 2500)).toBe(0)
+    await settled(held)
     expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [408, '']])
     expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
     expect(refused).toEqual(['timeout'])
@@ -726,6 +741,7 @@ describe('a refusal behind a request still being served', () => {
     expect(await drained(door, 300)).toBe(1)
     expect(held.raw()).toBe('')
     expect(await drained(door, 1500)).toBe(0)
+    await settled(held)
     expect(held.raw()).toBe('')
     // The count drops before the socket's close, which cancels the call
     await vi.waitFor(() => expect(counts.cancelled).toBe(1))
