@@ -143,3 +143,19 @@ describe("the SDK's editor side", () => {
     expect(next.sent).toEqual([])
   })
 })
+
+describe("the SDK's select", () => {
+  it('sends the note, its version and the selection alone and settles with the version', async () => {
+    const editor = new Editor()
+    const port = drawerPort()
+    editor.connect(port.transport)
+    const extra = { anchor: 3, head: 1, more: true } as { anchor: number, head: number }
+    const moving = editor.select('n1', 2, extra)
+    expect(port.sent).toEqual([{ v: 1, kind: 'call', id: 1, verb: 'editor.select', args: { instance: 'n1', version: 2, selection: { anchor: 3, head: 1 } } }])
+    port.replies(1, { version: 2 })
+    expect(await moving).toEqual({ version: 2 })
+    const refused = editor.select('n1', 2, { anchor: 0, head: 0 })
+    port.refuses(2, 'not-granted')
+    await expect(refused).rejects.toMatchObject({ code: 'not-granted', action: 'editor.select' })
+  })
+})

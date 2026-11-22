@@ -130,3 +130,21 @@ describe('what the drawer sends back', () => {
     expect(refused(4, 'stale')).toEqual({ v: 1, kind: 'reply', id: 4, ok: false, refusal: { code: 'stale' } })
   })
 })
+
+describe('a select', () => {
+  it('needs what an edit needs and takes a note, its version and one selection inside the text', () => {
+    expect(verbNeeds['editor.select']).toEqual({ read: true, edit: true, ui: null })
+    const args = { instance: 'n1', version: 2, selection: { anchor: 4, head: 1 } }
+    expect(parseBridgeCall(call('editor.select', args))?.args).toEqual(args)
+  })
+
+  it('is refused with no selection, a negative or fractional position, several ranges or a change list', () => {
+    for (const args of [
+      { instance: 'n1', version: 0 },
+      { instance: 'n1', version: 0, selection: { anchor: -1, head: 0 } },
+      { instance: 'n1', version: 0, selection: { anchor: 1.5, head: 0 } },
+      { instance: 'n1', version: 0, selection: [{ anchor: 0, head: 0 }] },
+      { instance: 'n1', version: 0, selection: { anchor: 0, head: 0 }, changes: [1] },
+    ]) expect(parseBridgeCall(call('editor.select', args))).toBe(null)
+  })
+})
