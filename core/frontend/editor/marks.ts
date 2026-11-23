@@ -50,21 +50,38 @@ function lineOf(style: string): Decoration {
   return made
 }
 
+// A widget over a range replaces it. One at a point is drawn before a caret at its place, since typed text lands after
+// it: the versions keep it before text typed there and the hidden rules rest the caret after a widget opening its line.
+// CodeMirror refuses an empty range to a replacement
+function widgetOf(mark: Extract<Mark, { kind: 'widget' }>): Decoration {
+  const widget = new TextWidget(mark.text)
+  return mark.from === mark.to ? Decoration.widget({ widget, side: -1 }) : Decoration.replace({ widget })
+}
+
+function drawOne(mark: Mark, doc: Text, marks: Range<Decoration>[], hidden: Range<Decoration>[]): void {
+  if (mark.kind === 'line') {
+    if (mark.from <= doc.length) marks.push(lineOf(mark.style).range(doc.lineAt(mark.from).from))
+    return
+  }
+  if (mark.to > doc.length) return
+  if (mark.kind === 'mark') marks.push(styleOf(mark.style).range(mark.from, mark.to))
+  else if (mark.kind === 'hide') hidden.push(hideOf(mark, doc).range(mark.from, mark.to))
+  else hidden.push(widgetOf(mark).range(mark.from, mark.to))
+}
+
 // Marks as CodeMirror decorations with the drawer's own classes: styles and line styles in marks, hidden ranges and
 // widgets in hidden, which the drawer's rules for hidden text read. A mark reaching past the end of doc is left out,
-// since the marks a plugin sends were checked for shape and not against the text
+// since the marks a plugin sends were checked for shape and not against the text. So is one CodeMirror still refuses,
+// alone, so the rest of every plugin's marks draw
 export function drawMarks(given: readonly Mark[], doc: Text): { marks: DecorationSet, hidden: DecorationSet } {
   const marks: Range<Decoration>[] = []
   const hidden: Range<Decoration>[] = []
   for (const mark of given) {
-    if (mark.kind === 'line') {
-      if (mark.from <= doc.length) marks.push(lineOf(mark.style).range(doc.lineAt(mark.from).from))
-      continue
+    try {
+      drawOne(mark, doc, marks, hidden)
+    } catch {
+      // This mark alone goes undrawn, which keeps one bad mark from taking every plugin's marks with it
     }
-    if (mark.to > doc.length) continue
-    if (mark.kind === 'mark') marks.push(styleOf(mark.style).range(mark.from, mark.to))
-    else if (mark.kind === 'hide') hidden.push(hideOf(mark, doc).range(mark.from, mark.to))
-    else hidden.push(Decoration.replace({ widget: new TextWidget(mark.text) }).range(mark.from, mark.to))
   }
   return { marks: Decoration.set(marks, true), hidden: Decoration.set(hidden, true) }
 }
