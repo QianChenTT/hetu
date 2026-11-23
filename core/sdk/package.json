@@ -11,6 +11,7 @@
     "./check-manifest": "./build/check-manifest.ts"
   },
   "dependencies": {
+    "@lezer/common": "^1.5.5",
     "acorn": "^8.19.0",
     "acorn-walk": "^8.3.5",
     "esbuild": "^0.28.2"
