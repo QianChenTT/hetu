@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   coreModuleIds, coreNamespaces, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, utilityIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
-  failSafeControls,
+  failSafeControls, serverOf,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -97,8 +97,15 @@ describe('policy jobs, providers and guards', () => {
     })
   })
 
-  it('serves core, security, events, ui, plugin, log, editor, gate and app in the core', () => {
-    expect(coreNamespaces).toEqual(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor', 'gate', 'app'])
+  it('serves core, security, events, ui, plugin, log, editor, gate, app and door in the core', () => {
+    expect(coreNamespaces).toEqual(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor', 'gate', 'app', 'door'])
+  })
+
+  // The door's namespace names a role, served by the one plugin the plugins manager's table names, never by a part of
+  // its own
+  it('routes door to the role the plugin table names', () => {
+    expect(serverOf('door')).toEqual({ part: 'plugins-manager', route: 'role' })
+    expect(Object.keys(providers)).not.toContain('door')
   })
 
   it('lets guards hook the luoshu\'s writes, removes and moves and expects the lock module on each', () => {
@@ -139,7 +146,7 @@ describe('reserved ids', () => {
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
-    'luoshu', 'lock', 'history', 'exec', 'net', 'mcp-http-handler',
+    'luoshu', 'lock', 'history', 'exec', 'net', 'mcp-http-handler', 'door',
   ]
 
   it('holds exactly the reserved ids', () => {

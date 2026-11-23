@@ -65,6 +65,10 @@ function classOf(granted: Capability): number {
       return 2
     case 'net.fetch':
       return granted.hosts.includes('*') ? 4 : 3
+    // What the role's plugin answers goes to programs outside hetu. It is no network for the pair rule and never asks
+    // at first use, since nothing raises an ask on the door's call
+    case 'door.handle':
+      return 3
     case 'exec':
     case 'guard.hook':
     case 'log.read':

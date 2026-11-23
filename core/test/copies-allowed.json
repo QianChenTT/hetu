@@ -316,18 +316,6 @@
     },
     {
       "files": [
-        "core/backend/plugins-manager/base.ts",
-        "core/backend/plugins-manager/base.ts"
-      ],
-      "hash": "8ceba03b473eb6ec",
-      "at": [
-        "core/backend/plugins-manager/base.ts:396-403",
-        "core/backend/plugins-manager/base.ts:423-427"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
         "core/backend/plugins-manager/changes.ts",
         "core/backend/plugins-manager/changes.ts"
       ],

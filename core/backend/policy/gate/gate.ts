@@ -25,6 +25,8 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   'ui.edit': 'paths',
   'ui.read': 'paths',
   'lock.set': 'paths',
+  // The router finds the role's plugin through the plugin table and never asks about it here
+  'door.handle': 'held',
   storage: 'held',
   'guard.hook': 'held',
   // Scope holds no host yet

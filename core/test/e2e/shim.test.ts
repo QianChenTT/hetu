@@ -14,7 +14,7 @@ import { appCommand, cleanup, editorPage, env, launch, logged, pageAt, repo, san
 
 // The shim's proof: hetu.exe --mcp-stdio twice against a running hetu with the shipped http and a fake mcp in the
 // test install only. The first claude-code session waits for one Confirm in the trusted window, the second joins with
-// none, each reaching mcp.handle on behalf of a label of its own. The pipe is the user's own, so nothing may answer on
+// none, each reaching door.handle on behalf of a label of its own. The pipe is the user's own, so nothing may answer on
 // it before the test's hetu does
 
 const shims: ChildProcessWithoutNullStreams[] = []
@@ -29,13 +29,13 @@ const PIPE = pipeName(process.platform, userInfo().username)
 const PAST_DELAY = 1300
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
-// A plugin-folder plugin hetu doesn't ship, approved unsigned by its hash. Its handle answers a request with its id
-// and the label it was called on behalf of and a notification with nothing
+// A plugin-folder plugin hetu doesn't ship, approved unsigned by its hash, holding door.handle. It answers a request
+// with its id and the label it was called on behalf of and a notification with nothing
 const mcp = `
 import { definePlugin } from '${sdk}'
 export default definePlugin({
   start(ctx) {
-    ctx.provide('handle', (call, args) => {
+    ctx.provide('door.handle', (call, args) => {
       const { id } = JSON.parse(args.body)
       if (id === undefined) return { status: 202, body: null }
       return { status: 200, body: JSON.stringify({ jsonrpc: '2.0', id, result: { onBehalf: call.onBehalf ?? null } }) }
@@ -62,9 +62,10 @@ async function data(): Promise<string> {
   await writeFolder(source, { 'src/worker.ts': mcp })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const root = path.join(dataDir, 'plugins', 'mcp')
-  await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': built!.text }))
+  const role = { type: 'door.handle' as const }
+  await writeFolder(root, filesFor(workerManifest('mcp', { capabilities: [role] }), { 'worker.js': built!.text }))
   const store = new StateStore(dataDir)
-  await writeApproved(store, 'mcp', root, { signer: null })
+  await writeApproved(store, 'mcp', root, { signer: null, granted: [role] })
   await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [hashFiles(await readFiles(root))] })
   return dataDir
 }
@@ -114,7 +115,7 @@ const initialize = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { prot
 const label = (line: unknown) => (line as { result: { onBehalf: string } }).result.onBehalf
 
 describe('hetu --mcp-stdio', () => {
-  it('relays two claude-code sessions to mcp.handle, each on a label of its own, after one Confirm', async () => {
+  it('relays two claude-code sessions to door.handle, each on a label of its own, after one Confirm', async () => {
     expect(await pipeAnswers()).toBe(false)
     const dataDir = await data()
     const installDir = await install()

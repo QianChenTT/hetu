@@ -1,4 +1,4 @@
-import type { CoreStatus, StateKind, StoppedMode } from '../../api/actions.ts'
+import { roleActions, type CoreStatus, type StateKind, type StoppedMode } from '../../api/actions.ts'
 import { changeEffect, IDENTITY_ASK_PAUSE_MS, type Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { type Caller } from '../../api/envelope.ts'
@@ -348,6 +348,36 @@ ${capabilityKey(change.capability)}`)
     return k === undefined ? null : infoOf(k)
   }
 
+  // The one plugin serving a role: its grants hold the role's item, switched on, and it isn't refused or off, gate on or
+  // off. null for none
+  holderOf(action: string): string | null {
+    const spec = Object.hasOwn(roleActions, action) ? roleActions[action] : undefined
+    if (spec === undefined) return null
+    const serving = [...this.known.values()].filter(k => {
+      const held = this.grantsHeld(k).filter(item => item.type === spec.capability)
+      const off = new Set((k.entry?.off ?? []).map(capabilityKey))
+      const verdict = this.verdictOf(k).kind
+      return held.some(item => !off.has(capabilityKey(item))) && verdict !== 'refused' && verdict !== 'off'
+    })
+    // The checks never leave two: a second plugin asking for a held role is refused role-taken before approval, a widen
+    // to it is refused, an update keeps the entry's grants so it adds no item and two entries holding one are both
+    // refused. Were two to serve, neither is named, so no plugin takes the role because it came first
+    return serving.length === 1 ? serving[0].id : null
+  }
+
+  // What a plugin holds: a folder plugin's entry, none before approval, and a core plugin's manifest
+  protected grantsHeld(k: Known): readonly Capability[] {
+    return k.from === 'install' ? k.read.manifest?.capabilities ?? [] : k.entry?.granted ?? []
+  }
+
+  // Whether another plugin holds a role these grants hold or ask for. An entry holds its role, on or off, until it is
+  // removed
+  protected roleTaken(id: string, granted: readonly Capability[]): boolean {
+    const types = new Set(Object.values(roleActions).map(spec => spec.capability).filter(type => granted.some(item => item.type === type)))
+    if (types.size === 0) return false
+    return [...this.known.values()].some(other => other.id !== id && this.grantsHeld(other).some(item => types.has(item.type)))
+  }
+
   limits(): HumanLimits {
     return this.state.switches.limits
   }
@@ -404,6 +434,13 @@ ${capabilityKey(change.capability)}`)
       || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
   }
 
+  // The end both checks share once a plugin passed the rest: refused for what it requires, else what this run holds
+  // it at
+  protected requiredOrHeld(k: Known): Status {
+    if (this.requiresProblem(k)) return refused('requires')
+    return k.held ?? ok
+  }
+
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
   // human switched off reads off whatever its check said and a failed check never reads as off
   // allowing is a build judged as allowUnsigned would name it, the build an update's Confirm allows
@@ -425,8 +462,7 @@ ${capabilityKey(change.capability)}`)
     // A host entry runs only in a utility process, for the ids core/api places there, and those run only as it, never
     // as a worker in its place
     if ((manifest.entries.host !== undefined) !== isOne(utilityIds, k.id)) return refused('place')
-    if (this.requiresProblem(k)) return refused('requires')
-    return k.held ?? ok
+    return this.requiredOrHeld(k)
   }
 
   // No signer is taken until provenance lands, so an entry naming one is refused, the first-party signer an older build
@@ -440,6 +476,8 @@ ${capabilityKey(change.capability)}`)
       if (result !== 'ok' && result !== 'absent') return refused('entry')
       if (read.hash === null) return refused('missing')
       if (read.problem !== null) return refused(read.problem)
+      // A role another entry holds raises no approval, so none can make a second holder
+      if (this.roleTaken(id, read.manifest?.capabilities ?? [])) return refused('role-taken')
       return { kind: 'found' }
     }
     if (!entry.enabled) return { kind: 'off' }
@@ -452,8 +490,9 @@ ${capabilityKey(change.capability)}`)
     } else if (!dev && read.hash !== allowing && !isOne(this.state.switches.allowUnsigned, read.hash)) {
       return refused('unsigned')
     }
-    if (this.requiresProblem(k)) return refused('requires')
-    return k.held ?? ok
+    // Two entries holding one role come only from an edited state and carry no order, so neither serves
+    if (this.roleTaken(id, entry.granted)) return refused('role-taken')
+    return this.requiredOrHeld(k)
   }
 
   protected moduleStatus(id: CoreModuleId): Status {

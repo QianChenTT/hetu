@@ -2,8 +2,9 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { build } from 'esbuild'
 import { describe, expect, it } from 'vitest'
-import { providerActions } from '../api/actions.ts'
+import { providerActions, roleActions } from '../api/actions.ts'
 import { providerActionNames } from '../sdk/client.ts'
+import { roleActionNames } from '../sdk/serving.ts'
 
 const sdk = path.join(import.meta.dirname, '..', 'sdk')
 const api = readdirSync(path.join(import.meta.dirname, '..', 'api')).filter(name => name.endsWith('.ts'))
@@ -82,5 +83,9 @@ describe('what a plugin bundles from the SDK', () => {
 
   it('names every provider action core/api has', () => {
     expect([...providerActionNames].sort()).toEqual(Object.keys(providerActions).sort())
+  })
+
+  it('names every role action core/api has', () => {
+    expect([...roleActionNames].sort()).toEqual(Object.keys(roleActions).sort())
   })
 })

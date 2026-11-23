@@ -30,7 +30,8 @@ export type PluginContext = Client & {
   // Tells the core this half's bind on its port failed, so the core ends it and the plugin reads failed with the
   // reason. Only mcp-http-handler's host half in its utility process may, every other caller is refused not-granted
   bindFailed(reason: BindFailure): Promise<void>
-  // Serves <id>.<name>, an action the manifest declares under provides.actions
+  // Serves <id>.<name>, an action the manifest declares under provides.actions, or a role's action such as door.handle,
+  // which the router delivers while the plugin holds the role's item
   provide(name: string, handler: Handler): void
   // The paths of these the call's own caller may read too, only while the call is live
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]>
