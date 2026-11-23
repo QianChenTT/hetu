@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { PluginFile } from '../../lib/hash-files.ts'
+import { IMAGE_CSP, type Served } from './lib.ts'
 
 // The views host: each running plugin's frames and icons, served from the bytes the plugins manager checked when it started the
 // plugin's worker, never read from disk again. A frame loads once from a single-use hetu://views/<token>/<entry>: the
@@ -32,13 +33,9 @@ export function frameCsp(token: string): string {
   ].join('; ')
 }
 
-// An icon is an image the editor page shows with an img element, where no script in it runs
-const ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 
 type Running = { incarnation: number, files: ReadonlyMap<string, Uint8Array>, frames: Readonly<Record<string, string>> }
 type Token = { plugin: string, incarnation: number, entry: string, served: boolean }
-
-export type Served = { bytes: Uint8Array, type: string, csp: string }
 
 export class ViewFiles {
   private readonly running = new Map<string, Running>()
@@ -56,6 +53,11 @@ export class ViewFiles {
 
   ended(id: string, incarnation: number): void {
     if (this.running.get(id)?.incarnation === incarnation) this.drop(id)
+  }
+
+  // The incarnation the plugin runs as with a ui item, null when it doesn't
+  incarnation(id: string): number | null {
+    return this.running.get(id)?.incarnation ?? null
   }
 
   // A URL the frame loads from once, null when the plugin isn't running or has no such frame
@@ -110,7 +112,7 @@ export class ViewFiles {
     const match = PATH.exec(path)
     if (plugin === undefined || !PLUGIN.test(plugin) || match === null || (match[1] !== 'svg' && match[1] !== 'png')) return null
     const bytes = this.running.get(plugin)?.files.get(path)
-    return bytes === undefined ? null : { bytes, type: TYPES[match[1]] as string, csp: ICON_CSP }
+    return bytes === undefined ? null : { bytes, type: TYPES[match[1]] as string, csp: IMAGE_CSP }
   }
 
   private drop(id: string): void {

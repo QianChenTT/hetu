@@ -446,6 +446,11 @@ describe('the fake drawer', () => {
     await ctx.ui.layout.draw({ kind: 'box', id: 'root', children: [{ kind: 'slot', id: 's', instance: 'v1' }] })
     expect(drawer.tree('v1')).toEqual({ kind: 'text', id: 'a', text: 'cards' })
     expect(drawer.tree('layout')).toMatchObject({ kind: 'box', id: 'root' })
+    // An image node takes core/api's checks, a dot path or a file of another kind refused as hetu's drawer refuses them
+    await ctx.ui.views.draw('v1', { kind: 'image', id: 'a', path: 'pics/cat.png', alt: 'A cat' })
+    expect(drawer.tree('v1')).toEqual({ kind: 'image', id: 'a', path: 'pics/cat.png', alt: 'A cat' })
+    await expect(ctx.ui.views.draw('v1', { kind: 'image', id: 'a', path: '.obsidian/cat.png' })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(ctx.ui.views.draw('v1', { kind: 'image', id: 'a', path: 'pics/cat.txt' })).rejects.toMatchObject({ code: 'invalid' })
 
     const plain = new FakeDrawer()
     const other = fakeCore({ manifest: drawn({ id: 'other', capabilities: [{ type: 'ui.view' }] }), drawer: plain })
