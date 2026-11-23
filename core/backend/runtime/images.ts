@@ -42,11 +42,11 @@ export class ViewImages {
     this.now = options.now ?? Date.now
   }
 
-  // A URL the editor page loads the image from once, null when the plugin isn't running or its luoshu.read doesn't reach
-  // the path
-  mint(plugin: string, path: string): string | null {
+  // A URL the editor page loads the image from once, null for another window, a plugin not running or a path its
+  // luoshu.read doesn't reach. Only the editor window draws plugins' trees
+  mint(by: Caller, plugin: string, path: string): string | null {
     const incarnation = this.options.running(plugin)
-    if (incarnation === null || imageTypeOf(path) === null || !this.options.reads(callerOf(plugin, incarnation), path)) return null
+    if (by.kind !== 'window' || by.role !== 'editor' || incarnation === null || imageTypeOf(path) === null || !this.options.reads(callerOf(plugin, incarnation), path)) return null
     const now = this.now()
     for (const [token, held] of this.tokens) if (held.until < now) this.tokens.delete(token)
     let token = this.token()

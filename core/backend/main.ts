@@ -217,9 +217,7 @@ async function start(): Promise<void> {
           }
           if (call.action === 'editor.frame' || call.action === 'editor.image') {
             const { plugin, frame, path: at } = call.args as { plugin: string, frame?: string, path?: string }
-            // Only the editor window draws plugins' trees, so only it gets an image
-            const editorPage = call.caller.kind === 'window' && call.caller.role === 'editor'
-            const url = frame !== undefined ? views.mint(plugin, frame) : at !== undefined && editorPage ? images.mint(plugin, at) : null
+            const url = frame !== undefined ? views.mint(plugin, frame) : at !== undefined ? images.mint(call.caller, plugin, at) : null
             if (url === null) throw { code: 'not-found' }
             return { url }
           }
