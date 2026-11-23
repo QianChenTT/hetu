@@ -88,7 +88,7 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   section.setAttribute('aria-labelledby', heading.id)
   section.append(heading)
   if (box.step === 'assets') {
-    for (const asset of box.assets) section.append(button(asset.line, () => page.installer.asset(asset.name)))
+    for (const [place, asset] of box.assets.entries()) section.append(button(asset.line, () => page.installer.asset(place)))
     section.append(button('Cancel', () => page.installer.cancel()))
     return section
   }

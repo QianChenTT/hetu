@@ -1,4 +1,4 @@
-import type { StagedProblem, StagedSource } from '../../api/actions.ts'
+import type { FoundRelease, InstallProblem, StagedProblem, StagedSource } from '../../api/actions.ts'
 import type { FolderManifest } from '../../api/manifest.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { Landing, Recording } from '../recording/header.ts'
@@ -23,12 +23,20 @@ export type PluginsRecording = Pick<Recording, 'drain' | 'resume' | 'coalesced'>
 export type StagedRead = { id: string, digest: string, manifest: FolderManifest | null, problem: StagedProblem | null }
 export type Staging = { source: StagedSource, plugins: readonly StagedRead[] }
 
-// The Install button's stagings, which the plugins manager reads to word a plugin.install and to check it and installs
-// from once the Confirm counts. held is what the core staged under a handle, from memory, null for one it doesn't hold.
-// read is one plugin's bytes read again from the staging, null when they no longer hash to what was staged and shown.
-// unstage drops a staging, once installed, failed or cancelled
+// A staging made under its handle, or why nothing was staged
+export type Made = { handle: string } | { problem: InstallProblem }
+
+// The Install button's stagings, which the plugins manager serves the window's actions from, reads to word a
+// plugin.install and to check it and installs from once the Confirm counts. held is what the core staged under a
+// handle, from memory, null for one it doesn't hold. read is one plugin's bytes read again from the staging, null when
+// they no longer hash to what was staged and shown. findRelease keeps the release's zips under a handle and stageRelease
+// stages one of them by its place in that list, refusing not-found for a release no longer kept and invalid for a place
+// past its end. unstage drops a staging, once installed or cancelled. close drops every staging and stops every download
 export type Stagings = {
   held(handle: string): Staging | null
   read(handle: string, id: string): Promise<Read | null>
+  findRelease(link: string): Promise<FoundRelease>
+  stageRelease(release: string, zip: number): Promise<Made>
   unstage(handle: string): void
+  close(): Promise<void>
 }

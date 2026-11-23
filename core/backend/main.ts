@@ -21,7 +21,8 @@ import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
-import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
+import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
+import { InstallStagings } from './plugins-manager/stagings.ts'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
@@ -188,6 +189,8 @@ async function start(): Promise<void> {
       env: process.env,
       later: (run, ms) => setTimeout(run, ms).unref?.(),
     })
+    // The Install button's stagings in the data folder, which only main's own dialog and downloads fill
+    const stagings = new InstallStagings({ dataDir: booted.dataDir })
     const wired = wireCore({
       booted,
       installDir,
@@ -201,11 +204,20 @@ async function start(): Promise<void> {
       onFailure,
       // A removed note goes to the OS's bin, so it can be put back with hetu closed. A bin that refuses rejects
       trash: absolute => shell.trashItem(absolute),
+      stagings,
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
           if (call.action === 'app.pickFolder') {
             return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
+          }
+          // Staged here from the path main's own dialog answered, which never reaches the page
+          if (call.action === 'app.pickPlugins') {
+            const { source } = call.args as { source: 'zip' | 'folder' }
+            if (pluginsManager === null || pluginsManager.stopped() !== null) throw { code: 'unavailable' }
+            const picked = await pickPlugins(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options), source)
+            if (picked === null) return null
+            return pluginsManager.stagedAnswer(await stagings.stagePicked(source, picked))
           }
           if (call.action === 'editor.frame') {
             const { plugin, frame } = call.args as { plugin: string, frame: string }

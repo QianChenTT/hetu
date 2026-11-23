@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type CapabilityType } from './capabilities.ts'
 import {
-  askedCapability, change, clientName, MAX_ASK_ITEMS, MAX_CLIENT_ID_LENGTH, MAX_FOLDER_LENGTH, MAX_REDIRECT_LENGTH, type ChangeKind,
+  askedCapability, change, clientName, MAX_ASK_ITEMS, MAX_CLIENT_ID_LENGTH, MAX_REDIRECT_LENGTH, type ChangeKind,
 } from './changes.ts'
 import { label, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
@@ -120,30 +120,26 @@ const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-
 // answers what it found there. Install then sends plugin.install through security.request, held like every other
 // change, and its one Confirm installs the plugins the human ticked from those staged bytes and approves each with the
 // hash of what it wrote, so the bytes shown are the bytes that run. Each is the trusted window's alone and none is a
-// read, so inside the input delay each counts for nothing. The core may drop a staging nobody installed or cancelled,
-// as it does once one is installed
+// read, so inside the input delay each counts for nothing. The window never sends a path or a download link: main
+// stages what its own dialog picked and keeps a release's zips, so the window names a zip only by its place in the
+// list main answered. The core may drop a staging nobody installed or cancelled, as it does once one is installed
 
 // The longest link the human may paste
 export const MAX_LINK_LENGTH = 2048
-// The longest file name of a release's asset
-const MAX_ASSET_LENGTH = 255
+// The most assets GitHub holds in one release
+export const MAX_RELEASE_ZIPS = 1000
 
 const link = screenText(MAX_LINK_LENGTH)
-// What the core stages: a zip or a folder the dialog answered, or one zip asset of the link's release
-const installSource = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal(['zip', 'folder']), path: screenText(MAX_FOLDER_LENGTH) }),
-  z.strictObject({ kind: z.literal('link'), link, asset: screenText(MAX_ASSET_LENGTH) }),
-])
-export type InstallSource = z.infer<typeof installSource>
 
 const installTable = {
-  // The OS dialog over the trusted window for a plugin zip or a folder holding one plugin or several, answering the
-  // path picked or null when the human cancelled
+  // The OS dialog over the trusted window for a plugin zip or a folder holding one plugin or several, the pick staged
+  // at once in main. null when the human cancelled
   'app.pickPlugins': { from: 'trusted', args: z.strictObject({ source: z.enum(['zip', 'folder']) }) },
-  // The latest release of the GitHub repository a link names, or the release it names, with its zip assets
+  // The latest release of the GitHub repository a link names, or the release it names, with its zip assets under a
+  // handle main keeps the list by. Only the latest release found is kept
   'core.findRelease': { from: 'trusted', args: z.strictObject({ link }) },
-  // Copies the source into a staging folder of the core's own and answers each plugin found there under a handle
-  'core.stage': { from: 'trusted', args: z.strictObject({ source: installSource }) },
+  // Downloads one zip of the release found under the handle by its place in the list and stages it
+  'core.stage': { from: 'trusted', args: z.strictObject({ release: token, zip: z.int().min(0).max(MAX_RELEASE_ZIPS - 1) }) },
   // Cancel: the staging dropped with nothing installed
   'core.unstage': { from: 'trusted', args: z.strictObject({ staged: token }) },
 } satisfies Record<string, CoreAction>
@@ -519,18 +515,22 @@ export type CoreViewsPlugin = {
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown
 
 // Why a link or a source gave nothing to install. A link: not a GitHub repository or release, no release, no zip asset,
-// GitHub's rate limit or no network. A zip or folder: it doesn't read, a name that could land outside the staging, two
-// names for one file, a link or other special entry, an encrypted entry, past the cap on entries or bytes, not a
-// folder, two plugins with one id, or no plugin in it
+// GitHub's rate limit or no network, a download pointing off GitHub's hosts, a zip gone since the release was read, one
+// that doesn't match the checksum GitHub lists, past the time limit, stopped as hetu quit or an answer GitHub doesn't
+// give. A zip or folder: it doesn't read, a name that could land outside the staging, two names for one file, a link
+// or other special entry, an encrypted entry, past the cap on entries or bytes, not a folder, two plugins with one id,
+// or no plugin in it
 export const installProblems = frozen([
-  'not-github', 'no-release', 'no-zip', 'rate-limited', 'offline', 'invalid', 'name', 'duplicate', 'special', 'encrypted', 'too-many',
-  'too-big', 'not-a-folder', 'same-id', 'none',
+  'not-github', 'no-release', 'no-zip', 'rate-limited', 'offline', 'off-github', 'not-found', 'digest-mismatch', 'timed-out',
+  'cancelled', 'bad-answer', 'invalid', 'name', 'duplicate', 'special', 'encrypted', 'too-many', 'too-big', 'not-a-folder', 'same-id',
+  'none',
 ] as const)
 export type InstallProblem = typeof installProblems[number]
 
 // One zip asset of a release, its file name and size in bytes
 export type ReleaseAsset = { name: string, bytes: number }
-export type FoundRelease = { tag: string, assets: ReleaseAsset[] } | { problem: InstallProblem }
+// A release found: the handle main keeps its zips under, its tag and each zip in the order core.stage picks by
+export type FoundRelease = { release: string, tag: string, assets: ReleaseAsset[] } | { problem: InstallProblem }
 
 // Why one plugin found can't be installed: its manifest doesn't parse or check out, it asks for what only hetu's own
 // install holds, it needs a core API this hetu doesn't have or its id is one hetu keeps
@@ -552,14 +552,17 @@ export type StagedPlugin = {
   problem: StagedProblem | null
 }
 
-// Where a staging came from as the core staged it, a link's with the tag of the release it took the zip from
-export type StagedSource = Exclude<InstallSource, { kind: 'link' }> | (Extract<InstallSource, { kind: 'link' }> & { tag: string })
+// Where a staging came from as the core staged it: the zip or the folder main's dialog picked, or a link's zip with the
+// tag of its release and whether its bytes matched a checksum GitHub listed for them
+export type StagedSource =
+  | { kind: 'zip' | 'folder', path: string }
+  | { kind: 'link', link: string, asset: string, tag: string, verified: boolean }
 
 // A staging: its handle, its source and each plugin found
 export type Staged = { staged: string, source: StagedSource, plugins: StagedPlugin[] } | { problem: InstallProblem }
 
 export type InstallResults = {
-  'app.pickPlugins': string | null
+  'app.pickPlugins': Staged | null
   'core.findRelease': FoundRelease
   'core.stage': Staged
   'core.unstage': null
