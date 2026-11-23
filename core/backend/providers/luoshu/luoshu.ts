@@ -8,6 +8,7 @@ import { isDotName } from '../../../api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from '../../../api/policy-jobs.ts'
 import { canonical, folderState, listedState, looked, named, type Canonical, type FolderState, type NotCanonical, type Opened } from '../../../lib/canonical.ts'
 import { retried, syncDir } from '../../../lib/disk.ts'
+import { BYTES_READ } from './bytes.ts'
 
 // Whether the gate allows a call to act on the path a look resolved again, which differs from the one it judged
 type Judged = (now: Canonical) => boolean
@@ -138,8 +139,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
   // The note is opened once and checked and read through that one handle, so what is answered is what was checked: a
   // name swapped for a link to a file outside the notes folder between a check and a read by name would have handed
-  // the caller that file. Anything but a regular file is no note
-  async function read(prepared: Canonical, judged: Judged): Promise<unknown> {
+  // the caller that file. Anything but a regular file is no note. raw answers the bytes, for main's image host alone
+  async function read(prepared: Canonical, judged: Judged, raw: boolean): Promise<unknown> {
     // The folder looked at again just before the open, as before a write. One gone since holds no note and the open
     // answers so
     const { state, target } = await lookAt(prepared, folderState, judged)
@@ -153,7 +154,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       const bytes = await handle.readFile()
       // A note that grew after the check is held to the same cap
       if (bytes.length > readCap) throw refused('failed', 'too-large')
-      return { text: bytes.toString('utf8'), version: version(bytes), path: note.target.relative }
+      return raw ? { bytes, path: note.target.relative } : { text: bytes.toString('utf8'), version: version(bytes), path: note.target.relative }
     } finally {
       await handle.close()
     }
@@ -248,8 +249,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       const found = await stat(file, { bigint: true })
       return found.isFile() ? `${found.size}:${found.mtimeNs}` : null
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ENOTDIR') return null
+      if (absent(err)) return null
       throw err
     }
   }
@@ -700,7 +700,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         }
         const one: Judged = now => ask([now.relative])
         try {
-          if (call.action === 'luoshu.read') return await read(target, one)
+          if (call.action === 'luoshu.read' || call.action === BYTES_READ) return await read(target, one, call.action === BYTES_READ)
           if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion, one)
           if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash, one)
           const moved = moving.get(call.callId)

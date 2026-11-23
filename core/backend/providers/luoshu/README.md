@@ -9,4 +9,6 @@ The luoshu, a core module in main that serves `luoshu.read`, `luoshu.write`, `lu
 - **the watcher** is `fs.watch` with `recursive`. A path quiet for 150 ms is hetu's own write when its bytes hash as the last write hetu made there, and `luoshu.outside` otherwise. A path canonical refuses, a dot path included, publishes nothing
 - with no folder picked every call answers `unavailable`
 
+- **bytes for the image host**: `bytes.ts`'s `bytesReader` hands the provider a call of its own action, `luoshu.bytes`, which no plugin can name since the router routes only the actions `core/api` lists. It is a read in every rule above, prepare's canonical path, the latch and the looks again, and answers the note's bytes. Its judge asks the router's `reads` about the path as spelled, the canonical one and any path a look resolves it to again
+
 `luoshu.ts` holds the logic. `core/backend/wire.ts` makes it and `core/backend/modules/modules.ts` calls its `open` with the folder at start, when the luoshu is switched on again and each time `luoshu.pick` applies. Its publish reaches the router's `publishCore` for its two topics alone and makes no audit record of a call. Switched off, its watch ends. Its tests are in `core/test/modules/luoshu`

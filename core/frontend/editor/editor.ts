@@ -9,7 +9,7 @@ import { hiddenRules, hiddenText, placeCaret } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
 import { lay } from './layers.ts'
 import { markdownSupport } from './markdown.ts'
-import { drawMarks } from './marks.ts'
+import { buried, drawMarks } from './marks.ts'
 import type { Editors } from './notes.ts'
 import { mapThrough, Versions } from './versions.ts'
 
@@ -117,8 +117,13 @@ export const pluginMarks = StateField.define<{ owned: Owned, shown: readonly Sho
       shown = kept
     }
     if (!moved) return value
-    const all = [...owned].flatMap(([owner, sets]) => [...sets.values()].flat()
-      .filter(mark => (mark.kind !== 'hide' && mark.kind !== 'widget') || !shown.some(one => one.owner === owner && one.group === mark.group)))
+    // A plugin's widget at a point inside its own hidden text is left out, as hidden text would take it off the screen
+    const all = [...owned].flatMap(([owner, sets]) => {
+      const flat = [...sets.values()].flat()
+      const out = buried(flat)
+      return flat.filter(mark => !out.has(mark)
+        && ((mark.kind !== 'hide' && mark.kind !== 'widget') || !shown.some(one => one.owner === owner && one.group === mark.group)))
+    })
     return { owned, shown, drawn: all.length === 0 ? none : drawMarks(all, tr.state.doc) }
   },
   // The drawer's rules for hidden text read the hidden ranges, so no plugin's are atomic

@@ -62,8 +62,9 @@ export const mark = z.union([
   z.strictObject({ kind: z.literal('mark'), ...range, style: z.enum(markStyles), group }).refine(m => m.to > m.from, 'an empty range'),
   z.strictObject({ kind: z.literal('hide'), ...range, group, edge: z.enum(['open', 'close']).optional() })
     .refine(m => m.to > m.from, 'an empty range'),
-  // Replaces the range with the text, or sits at a point when the range is empty. Screen text, so nothing in it hides
-  // or reorders what follows. The raw view still shows what it covers
+  // Replaces the range with the text, or sits at a point when the range is empty. A point strictly inside the same
+  // plugin's hidden range is not drawn. Screen text, so nothing in it hides or reorders what follows. The raw view still
+  // shows what it covers
   z.strictObject({ kind: z.literal('widget'), ...range, text: screenText(MAX_WIDGET_TEXT), group }).refine(m => m.to >= m.from, 'to before from'),
   z.strictObject({ kind: z.literal('line'), from: position, style: z.enum(lineStyles), group }),
   // Text drawn as a link, the text itself left as it is. A Ctrl+click on it, Cmd+click on macOS, comes back to the

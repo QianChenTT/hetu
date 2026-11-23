@@ -13,7 +13,7 @@ import { actionPathProblem } from './paths.ts'
 import { hidesOnScreen, MAX_SCOPE_LENGTH } from './scope.ts'
 import { MAX_LIST, type ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
-import type { ThemeSpec } from './ui.ts'
+import { imagePath, type ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
@@ -194,6 +194,9 @@ const coreTable = {
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
   // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
+  // A single-use URL main serves one image of the notes folder from for a plugin's image node, inside that plugin's
+  // luoshu.read scope. Only the editor window's drawer gets one
+  'editor.image': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: imagePath }) },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
   // <plugin id>.refused coalesced by reason
   'core.refused': {
@@ -491,6 +494,7 @@ export type ActionResults = InstallResults & {
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null
+  'editor.image': { url: string }
   // null when the notes hold nothing the last commit doesn't
   'history.commit': { commit: string | null }
   'history.log': { commits: HistoryCommit[] }

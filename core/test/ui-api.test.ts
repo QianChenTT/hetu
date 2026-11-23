@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  allowedStyles, applyOps, contrast, editorColors, MAX_NODE_TEXT, MAX_NODES, MAX_OPS, MAX_TREE_DEPTH, node, type Op, op, parseDrawerCall,
+  allowedStyles, applyOps, contrast, editorColors, imageTypeOf, MAX_NODE_TEXT, MAX_NODES, MAX_OPS, MAX_TREE_DEPTH, node, type Op, op, parseDrawerCall,
   styleProblem, themeSpec, themeVariables, type UiNode, uiNeeds,
 } from '../api/ui.ts'
 
@@ -13,6 +13,7 @@ describe('the building blocks', () => {
     box('a', [text('b', 'hi')], { style: { display: 'flex', gap: '4px' }, hover: { color: '#333' }, click: true, tip: 'A box' }),
     { kind: 'text', id: 't', text: 'Hello' },
     { kind: 'icon', id: 'i', src: 'dist/icon.svg', alt: 'Notes' },
+    { kind: 'image', id: 'im', path: 'pics/Cat photo.JPG', alt: 'A cat' },
     { kind: 'button', id: 'b', text: 'Save', disabled: false },
     { kind: 'input', id: 'in', value: '', placeholder: 'Filter' },
     { kind: 'checkbox', id: 'c', checked: true, label: 'Done' },
@@ -55,6 +56,50 @@ describe('the building blocks', () => {
     ['a select with 201 options', { kind: 'select', id: 'x', value: 'a', options: Array.from({ length: 201 }, (_, i) => ({ value: `${i}`, text: `${i}` })) }],
   ])('refuses %s', (_name, value) => {
     expect(node.safeParse(value).success).toBe(false)
+  })
+})
+
+describe('an image node', () => {
+  it.each([
+    ['a.png', 'image/png'], ['pics/b.jpg', 'image/jpeg'], ['c.JPEG', 'image/jpeg'], ['d.gif', 'image/gif'], ['e.webp', 'image/webp'],
+    ['f.avif', 'image/avif'], ['g.bmp', 'image/bmp'], ['h.Svg', 'image/svg+xml'],
+  ])('takes %s as %s', (path, type) => {
+    expect(node.safeParse({ kind: 'image', id: 'x', path }).success).toBe(true)
+    expect(imageTypeOf(path)).toBe(type)
+  })
+
+  it.each([
+    ['an empty path', ''],
+    ['a dot folder', '.obsidian/a.png'],
+    ['a dot file', 'pics/.hidden.png'],
+    ['a dot dot segment', 'pics/../a.png'],
+    ['a dot segment', './a.png'],
+    ['a backslash', String.raw`pics\a.png`],
+    ['a stream name', 'a.png:secret'],
+    ['an empty segment', 'pics//a.png'],
+    ['a note', 'a.md'],
+    ['a text file', 'a.txt'],
+    ['an image renamed to text', 'a.png.txt'],
+    ['a script', 'a.svg.js'],
+    ['an html page', 'a.html'],
+    ['no extension', 'png'],
+    ['a path past 512 characters', `${'a'.repeat(510)}.png`],
+  ])('refuses %s', (_name, path) => {
+    expect(node.safeParse({ kind: 'image', id: 'x', path }).success).toBe(false)
+    expect(imageTypeOf(path)).toBe(null)
+  })
+
+  it('refuses a source, a url or a width it has no place for', () => {
+    expect(node.safeParse({ kind: 'image', id: 'x', path: 'a.png', src: 'hetu://images/x' }).success).toBe(false)
+    expect(node.safeParse({ kind: 'image', id: 'x', path: 'https://example.com/a.png' }).success).toBe(false)
+  })
+
+  it('is drawn through a view.draw call and a props operation as any node', () => {
+    const drawn = parseDrawerCall(call('view.draw', { instance: 'v1', ops: [{ op: 'tree', root: box('r', [{ kind: 'image', id: 'i', path: 'a.png' }]) }] }))
+    expect(drawn?.verb).toBe('view.draw')
+    const applied = applyOps(box('r', [{ kind: 'image', id: 'i', path: 'a.png' }]), [{ op: 'props', node: { kind: 'image', id: 'i', path: 'b.webp' } }], { layout: false })
+    expect('tree' in applied && JSON.stringify(applied.tree)).toContain('b.webp')
+    expect(parseDrawerCall(call('view.draw', { instance: 'v1', ops: [{ op: 'tree', root: { kind: 'image', id: 'i', path: '.git/a.png' } }] }))).toBe(null)
   })
 })
 
