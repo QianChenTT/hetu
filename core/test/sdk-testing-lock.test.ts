@@ -8,6 +8,7 @@ import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT } from '../backen
 import { createLock } from '../backend/lock/lock.ts'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { Refused } from '../sdk/refused.ts'
+import type { LockChangedEvent } from '../sdk/events.ts'
 import { type FakeCore, fakeCore, type FakeCoreOptions } from '../sdk/testing/index.ts'
 import { versionOf } from '../sdk/testing/providers.ts'
 
@@ -74,9 +75,10 @@ describe('the fake core\'s lock', () => {
     const { ctx } = await started()
     expect(await by(ctx, 'lock.set', { paths: ['notes/a.md', 'notes/b.md'], ms: 60_000 })).toEqual({ ok: true, result: { ms: 60_000 } })
     expect(await by(ctx, 'lock.held', { paths: ['notes/A.md', 'notes/c.md', 'notes/b.md'] }))
-      .toEqual({ ok: true, result: { paths: ['notes/A.md', 'notes/b.md'] } })
+      .toEqual({ ok: true, result: { locks: [{ path: 'notes/A.md', until: 60_000 }, { path: 'notes/b.md', until: 60_000 }] } })
     expect(await by(ctx, 'lock.clear', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: null })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md', 'notes/b.md'] })).toEqual({ ok: true, result: { paths: ['notes/b.md'] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md', 'notes/b.md'] }))
+      .toEqual({ ok: true, result: { locks: [{ path: 'notes/b.md', until: 60_000 }] } })
   })
 
   it('refuses a second holder locked with nobody named and sets none of its paths', async () => {
@@ -84,7 +86,7 @@ describe('the fake core\'s lock', () => {
     await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 })
     const reply = await fake.call('lock.set', { paths: ['notes/c.md', 'notes/a.md'], ms: 60_000 }, { as: 'other', grants: OTHER })
     expect(reply).toEqual({ ok: false, refusal: { code: 'locked', action: 'lock.set' } })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/c.md'] })).toEqual({ ok: true, result: { paths: [] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/c.md'] })).toEqual({ ok: true, result: { locks: [] } })
   })
 
   it('renews a lock set again and cuts a longer time to MAX_LOCK_MS', async () => {
@@ -93,7 +95,7 @@ describe('the fake core\'s lock', () => {
     clock.now = 900
     expect(await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 1000 })).toEqual({ ok: true, result: { ms: 1000 } })
     clock.now = 1500
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: ['notes/a.md'] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { locks: [{ path: 'notes/a.md', until: 1900 }] } })
     expect(await by(ctx, 'lock.set', { paths: ['notes/b.md'], ms: MAX_LOCK_MS + 5 })).toEqual({ ok: true, result: { ms: MAX_LOCK_MS } })
   })
 
@@ -103,7 +105,7 @@ describe('the fake core\'s lock', () => {
     clock.now = 999
     expect(await byOther(fake, 'lock.set', { paths: ['notes/a.md'], ms: 1000 })).toEqual({ ok: false, code: 'locked' })
     clock.now = 1000
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: [] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { locks: [] } })
     expect(await byOther(fake, 'lock.set', { paths: ['notes/a.md'], ms: 1000 })).toEqual({ ok: true, result: { ms: 1000 } })
   })
 
@@ -148,10 +150,10 @@ describe('the fake core\'s lock', () => {
     expect(await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 })).toEqual({ ok: false, code: 'locked' })
     expect(await by(ctx, 'luoshu.write', { path: 'notes/a.md', text: 'x' }, 'session#2')).toEqual({ ok: false, code: 'locked' })
     expect(await by(ctx, 'lock.clear', { paths: ['notes/a.md'] }, 'session#2')).toEqual({ ok: true, result: null })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: ['notes/a.md'] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { locks: [{ path: 'notes/a.md', until: 60_000 }] } })
     expect(await by(ctx, 'luoshu.write', { path: 'notes/a.md', text: 'x', baseVersion: versionOf('a') }, 'session#1')).toMatchObject({ ok: true })
     expect(await by(ctx, 'lock.clear', { paths: ['notes/a.md'] }, 'session#1')).toEqual({ ok: true, result: null })
-    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { paths: [] } })
+    expect(await by(ctx, 'lock.held', { paths: ['notes/a.md'] })).toEqual({ ok: true, result: { locks: [] } })
   })
 
   it('judges lock.set by the paths its grant names, as the gate does', async () => {
@@ -199,11 +201,12 @@ function script(): Step[] {
 const compared = (action: Action, answer: Answer): Answer => (answer.ok && action === 'luoshu.write' ? { ok: true, result: null } : answer)
 
 describe('the fake core\'s lock against the lock module', () => {
-  it('answers one script as createLock does, the router answering the guard\'s deny locked', async () => {
+  it('answers one script as createLock does and tells the same lock.changed, the router answering the guard\'s deny locked', async () => {
     base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-fake-lock-')))
     for (const name of ['notes', 'data', 'install']) await mkdir(path.join(base, name))
     const now = { at: 0 }
-    const real = createLock({ clock: () => now.at })
+    const realTold: object[] = []
+    const real = createLock({ clock: () => now.at, wall: () => now.at, publish: (path, change) => realTold.push({ topic: 'lock.changed', path, ...change }) })
     real.role.open({ folder: path.join(base, 'notes'), dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
     let n = 0
     async function onReal(step: Step): Promise<Answer> {
@@ -224,7 +227,9 @@ describe('the fake core\'s lock against the lock module', () => {
     }
 
     // No notes, so each write that passes makes a new one and needs no base version
-    const { fake, ctx, clock } = await started({ notes: {} })
+    const { fake, ctx, clock } = await started({ notes: {}, manifest: manifest([...manifest().capabilities, SUBSCRIBES]) })
+    const fakeTold: object[] = []
+    await ctx.events.on('lock.changed', event => { fakeTold.push(event) })
     const seen = new Set<string>()
     for (const [i, step] of script().entries()) {
       if (step.at !== undefined) now.at = clock.now = step.at
@@ -235,6 +240,94 @@ describe('the fake core\'s lock against the lock module', () => {
     }
     // The script meets each kind of answer, so it can't pass on a lock that answers one kind for all
     expect([...seen].sort()).toEqual(['failed quota', 'lock.clear ok', 'lock.held ok', 'lock.set ok', 'locked', 'luoshu.write ok'])
+    // Every event the module told, in its order, and the script meets a set, a renewal, a clear and an expiry
+    await until(() => fakeTold.length >= realTold.length, 10_000)
+    await settle()
+    expect(fakeTold).toEqual(realTold)
+    const told = realTold as { path: string, locked: boolean, until: number | null }[]
+    expect(told.filter(event => event.path === 'notes/a.md').map(event => `${event.locked} ${event.until}`))
+      .toEqual(['true 1000', 'true 1900', 'false null'])
+    expect(told.filter(event => event.path === 'notes/b.md').map(event => `${event.locked} ${event.until}`))
+      .toEqual(['true 1000', 'false null', 'true 1010'])
   // Each of the module's paths turned canonical on the disk, past five seconds on a busy Windows machine
   }, 60_000)
+})
+
+// Waits for what a port delivers later than the reply the caller waited for
+async function until(check: () => boolean, ms = 2000): Promise<void> {
+  for (let waited = 0; !check(); waited += 5) {
+    if (waited > ms) throw new Error('nothing arrived in time')
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+}
+const settle = () => new Promise(resolve => { setTimeout(resolve, 30) })
+
+// The plugin under test subscribed to lock.changed, each event it hears kept whole
+async function hearing(capabilities: Capability[]): Promise<{ fake: FakeCore, ctx: PluginContext, clock: { now: number }, heard: LockChangedEvent[] }> {
+  const { fake, ctx, clock } = await started({ manifest: manifest(capabilities) })
+  const heard: LockChangedEvent[] = []
+  await ctx.events.on('lock.changed', event => { heard.push(event) })
+  return { fake, ctx, clock, heard }
+}
+
+const SUBSCRIBES: Capability = { type: 'events.subscribe', topics: ['lock.changed'] }
+
+describe('the fake core\'s lock.changed', () => {
+  it('tells a plugin that reads the note each set, renewal, clear and expiry, the end on the test\'s clock and no holder', async () => {
+    const { fake, ctx, clock, heard } = await hearing([...manifest().capabilities, SUBSCRIBES])
+    await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 1000 }, 'client#1')
+    clock.now = 400
+    await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 1000 }, 'client#1')
+    await by(ctx, 'lock.clear', { paths: ['notes/a.md'] }, 'client#1')
+    await byOther(fake, 'lock.set', { paths: ['notes/b.md'], ms: 1000 })
+    clock.now = 1400
+    await by(ctx, 'lock.held', { paths: ['notes/b.md'] })
+    await until(() => heard.length === 5)
+    expect(heard).toStrictEqual([
+      { topic: 'lock.changed', path: 'notes/a.md', locked: true, until: 1000 },
+      { topic: 'lock.changed', path: 'notes/a.md', locked: true, until: 1400 },
+      { topic: 'lock.changed', path: 'notes/a.md', locked: false, until: null },
+      { topic: 'lock.changed', path: 'notes/b.md', locked: true, until: 1400 },
+      { topic: 'lock.changed', path: 'notes/b.md', locked: false, until: null },
+    ])
+  })
+
+  it('tells a plugin nothing of a note it may only list or may not read', async () => {
+    const { fake, heard } = await hearing([
+      SUBSCRIBES, { type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.list', paths: ['shared/**'] },
+    ])
+    for (const path of ['secret/a.md', 'shared/a.md', 'notes/c.md']) {
+      expect(await byOther(fake, 'lock.set', { paths: [path], ms: 1000 })).toMatchObject({ ok: true })
+      expect(await byOther(fake, 'lock.clear', { paths: [path] })).toMatchObject({ ok: true })
+    }
+    await until(() => heard.length === 2)
+    await settle()
+    expect(heard.map(event => `${event.path} ${event.locked}`)).toEqual(['notes/c.md true', 'notes/c.md false'])
+  })
+})
+
+// events.dropped says lock.changed events were missed, so a plugin asks lock.held again for the notes it follows and
+// rebuilds each lock and its timer from the ends it answers
+describe('the fake core\'s lock.changed past a plugin\'s credits', () => {
+  it('drops what the plugin can\'t take, tells it to resync and lets lock.held rebuild every lock with its end', async () => {
+    const { fake, ctx } = await started({ manifest: manifest([...manifest().capabilities, SUBSCRIBES]), limits: { eventCredits: 2 } })
+    let release = () => {}
+    const busy = new Promise<void>(resolve => { release = resolve })
+    const heard: string[] = []
+    const resynced: string[][] = []
+    await ctx.events.on('lock.changed', async event => {
+      heard.push(event.path)
+      await busy
+    }, { onResync: topics => { resynced.push(topics) } })
+    const paths = ['notes/a.md', 'notes/b.md', 'notes/c.md', 'notes/d.md']
+    for (const [i, path] of paths.entries()) {
+      expect(await byOther(fake, 'lock.set', { paths: [path], ms: 1000 * (i + 1) })).toMatchObject({ ok: true })
+    }
+    await settle()
+    release()
+    await until(() => resynced.length === 1)
+    expect(resynced).toEqual([['lock.changed']])
+    expect(heard).toEqual(['notes/a.md', 'notes/b.md'])
+    expect(await by(ctx, 'lock.held', { paths })).toEqual({ ok: true, result: { locks: paths.map((path, i) => ({ path, until: 1000 * (i + 1) })) } })
+  })
 })

@@ -38,7 +38,7 @@ const confined = (scope: string) => {
 }
 
 // One grant's class, from the class table. A subscription reaches nothing on its own, since an event
-// carries a path only to a subscriber that may list it. The key stream holds what is typed, so it reads. A type this
+// carries a path only to a subscriber that may list it, or read it for lock.changed. The key stream holds what is typed, so it reads. A type this
 // plugin doesn't know is 4, so nothing new is ever class 0 and updates on its own by default
 function classOf(granted: Capability): number {
   switch (granted.type) {
