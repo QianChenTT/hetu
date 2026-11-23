@@ -146,6 +146,8 @@ export abstract class PluginsLifecycle extends PluginsBase {
     }
     await this.pumped()
     this.modules.close()
+    // No staging outlives the run and no download goes on after it. One left on disk goes at the next start
+    await this.stagings?.close().catch(() => {})
     while (this.markerWork.size > 0) await Promise.all(this.markerWork)
   }
 

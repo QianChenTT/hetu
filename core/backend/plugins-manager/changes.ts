@@ -47,11 +47,13 @@ export abstract class PluginsChanges extends PluginsInventory {
   // A folder at plugins/<id> with no entry is a plugin the human never approved, found at start or put there since. An
   // install would swap it out unseen, so it is refused invalid with unapproved until the human removes it
   protected async noUnapproved(change: Extract<Change, { kind: 'plugin.install' }>): Promise<void> {
-    for (const { id } of change.plugins) {
-      if (this.state.plugins[id] !== undefined) continue
-      const found = this.known.has(id) || await lstat(folders.plugins(this.dataDir, id)).then(() => true, () => false)
-      if (found) throw { code: 'invalid', reason: 'unapproved' }
-    }
+    for (const { id } of change.plugins) if (await this.unapproved(id)) throw { code: 'invalid', reason: 'unapproved' }
+  }
+
+  // Whether plugins/<id> holds a folder with no entry, known or put there since the start
+  protected async unapproved(id: string): Promise<boolean> {
+    if (this.state.plugins[id] !== undefined) return false
+    return this.known.has(id) || await lstat(folders.plugins(this.dataDir, id)).then(() => true, () => false)
   }
 
   // The staging a plugin.install names with each plugin ticked in it under the digest the human was shown and nothing

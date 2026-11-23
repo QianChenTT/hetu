@@ -10,6 +10,8 @@ import { replaceFile } from '../../lib/hashed-file.ts'
 export const folders = {
   plugins: (dataDir: string, id: string) => path.join(dataDir, 'plugins', id),
   staging: (dataDir: string) => path.join(dataDir, 'staging'),
+  // The Install button's stagings, none of which outlives a run
+  installs: (dataDir: string) => path.join(dataDir, 'staging', 'installs'),
   failedOnce: (dataDir: string) => path.join(dataDir, 'failed-once'),
   starting: (dataDir: string) => path.join(dataDir, 'starting'),
   cache: (dataDir: string, id: string) => path.join(dataDir, 'cache', id),

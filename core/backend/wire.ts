@@ -22,6 +22,7 @@ import { createHistory } from './providers/history/history.ts'
 import { createLuoshu } from './providers/luoshu/luoshu.ts'
 import { createStorage } from './providers/storage/store.ts'
 import { PluginsManager } from './plugins-manager/plugins-manager.ts'
+import type { Stagings } from './plugins-manager/header.ts'
 import type { Failure, Runtime } from './runtime/header.ts'
 
 export type WireOptions = {
@@ -45,6 +46,8 @@ export type WireOptions = {
   confirmDelayMs?: number
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
+  // The Install button's stagings, none where nothing installs
+  stagings?: Stagings
   // Core modules in place of the ones the core makes, for tests
   modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat' | 'securityView' | 'lock'>>
 }
@@ -156,6 +159,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.confirmDelayMs !== undefined ? { confirmDelayMs: options.confirmDelayMs } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
+    ...(options.stagings !== undefined ? { stagings: options.stagings } : {}),
   })
   parts.pluginsManager = pluginsManager
   router.read(pluginsManager)

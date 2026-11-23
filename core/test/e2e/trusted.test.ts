@@ -1,10 +1,11 @@
-import { readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker as PageWorker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
+import { makeZip } from '../zip-maker.ts'
 import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -475,6 +476,47 @@ describe('the startup screen', () => {
     await page.getByText('Menu', { exact: true }).click()
     await page.getByRole('button', { name: 'Show the startup screen again' }).click()
     await until(async () => await startup.count() === 1)
+  })
+})
+
+// The Install button wired to main: main's own dialog picks the zip, main stages it, the page names it by its handle
+describe('the Install button', () => {
+  it('installs a plugin zip picked in main’s dialog through one Confirm, which stores the class shown and starts it', async () => {
+    const dataDir = await data()
+    const zip = path.join(await temp(), 'greeter.zip')
+    const files = filesFor(workerManifest('greeter', { name: 'Greeter', capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }] }), { 'worker.js': lifecycle() })
+    await writeFile(zip, makeZip(Object.entries(files).map(([name, text]) => ({ name, data: text }))))
+    const app = await start(dataDir, await install())
+    await app.evaluate(({ dialog }, picked) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [picked] })) as typeof dialog.showOpenDialog
+    }, zip)
+    const editor = await editorPage(app)
+    await until(() => logged(dataDir, 'core.ready'))
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    await tick(PAST_DELAY)
+    // Cancel drops the staging main made
+    await page.getByRole('button', { name: 'Install from a zip' }).first().click()
+    await showing(page, '"Greeter" (greeter), version 1.0.0')
+    await page.locator('section.installing').getByRole('button', { name: 'Cancel' }).click()
+    await until(async () => !(await text(page)).includes('"Greeter" (greeter)'))
+    await until(async () => (await readdir(path.join(dataDir, 'staging', 'installs'))).length === 0)
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Install from a zip' }).first().click()
+    await showing(page, '"Greeter" (greeter), version 1.0.0')
+    await showing(page, `From the zip ${JSON.stringify(zip)}`)
+    expect(await text(page)).toContain('Read the notes at "notes/**"')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Install', exact: true }).click()
+    await showing(page, 'greeter: Class 1, Reader')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'greeter' }))
+    const { state } = await new StateStore(dataDir).load()
+    expect(state.plugins.greeter).toMatchObject({ class: 1, signer: null, granted: [{ type: 'luoshu.read', paths: ['notes/**'] }] })
+    expect(state.switches.allowUnsigned).toContain(await hashOf(path.join(dataDir, 'plugins', 'greeter')))
+    expect(await readdir(path.join(dataDir, 'staging', 'installs'))).toEqual([])
   })
 })
 

@@ -1,4 +1,4 @@
-import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList } from '../../api/actions.ts'
+import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList, type Staged, type StagedPlugin } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
@@ -8,7 +8,7 @@ import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
-import type { Staging } from './header.ts'
+import type { Made, StagedRead, Staging, Stagings } from './header.ts'
 import type { Served } from '../router/header.ts'
 import { clearStartMarker, dropRetired, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
 import { type ConnectAsked } from './connects.ts'
@@ -92,6 +92,15 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         else await this.restart(k.id, 'human')
         return null
       }
+      // The Install button's. The window names a release by the handle main answered and a zip by its place in the list,
+      // never by a link or a path
+      case 'core.findRelease':
+        return this.installs().findRelease(args.link as string)
+      case 'core.stage':
+        return await this.stagedAnswer(await this.installs().stageRelease(args.release as string, args.zip as number))
+      case 'core.unstage':
+        this.installs().unstage(args.staged as string)
+        return null
       // The calling half alone, which the router has checked is mcp-http-handler's in its utility process
       case 'core.bindFailed': {
         const found = this.runOf(call.caller)
@@ -213,6 +222,47 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       `${JSON.stringify(manifest.name)} (${id}), version ${manifest.version}${before === undefined ? '' : `, replacing version ${before.version}`}`,
       ...[...(own.length === 0 ? ['It asks for nothing'] : own.map(grantSentence)), ...lines].map(line => `${id}: ${line}`),
     ]
+  }
+
+  // A staging as the window is shown it: each plugin found with what it asks for, the version it replaces and its class
+  // with the grant risk classifier's lines on why, classed as the Confirm classes it with every plugin that can install
+  // counted as ticked, as each starts ticked. A plugin whose folder is in the plugin folder with no entry can't install.
+  // A staging dropped on the way, as the oldest when too many are held, answers not-found. A staging the window is never
+  // answered is dropped
+  async stagedAnswer(made: Made): Promise<Staged> {
+    if ('problem' in made) return made
+    try {
+      this.installs()
+      const staging = this.heldStaging(made.handle)
+      if (staging === null) throw { code: 'not-found' }
+      const read: StagedRead[] = []
+      for (const plugin of staging.plugins) read.push(plugin.problem === null && await this.unapproved(plugin.id) ? { ...plugin, problem: 'unapproved' } : plugin)
+      const asks = new Map(read.flatMap(plugin => (plugin.problem === null && plugin.manifest !== null ? [[plugin.id, plugin.manifest.capabilities ?? []] as const] : [])))
+      return { staged: made.handle, source: staging.source, plugins: read.map(plugin => this.stagedRow(plugin, asks)) }
+    } catch (err) {
+      this.dropStaging(made.handle)
+      throw err
+    }
+  }
+
+  // Throws unavailable while nothing may be staged, so main opens no dialog for a pick it couldn't answer
+  canStage(): void {
+    this.installs()
+  }
+
+  protected stagedRow({ id, digest, manifest, problem }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
+    const classed = problem === null && manifest !== null ? this.installClassed(id, manifest, digest, asks, true) : null
+    return {
+      id, name: manifest?.name ?? null, version: manifest?.version ?? null, capabilities: [...(manifest?.capabilities ?? [])],
+      class: classed?.own?.entry?.class ?? null, lines: [...(classed?.lines ?? [])], replaces: this.installedEntry(id)?.version ?? null,
+      digest, problem,
+    }
+  }
+
+  // The stagings, unavailable where none are wired and until every plugin may start, so the stopped mode installs nothing
+  protected installs(): Stagings {
+    if (this.stagings === null || this.phase !== 'all') throw { code: 'unavailable' }
+    return this.stagings
   }
 
   // What a window's banner shows, from the plugins manager's own states and the state it runs with

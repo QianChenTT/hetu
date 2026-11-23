@@ -2,12 +2,12 @@
 // staged by the core, then the plugins found with the ones that can install ticked and Install, which asks for
 // plugin.install as a security request. The Confirm that installs and approves them is that request's, in the plugins
 // manager's words. The box's words are this file's and api/trusted.ts's, a plugin's own text only quoted
-import { MAX_LINK_LENGTH, type InstallProblem, type InstallSource, type ReleaseAsset, type StagedPlugin, type StagedProblem, type StagedSource } from '../../api/actions.ts'
+import { MAX_LINK_LENGTH, type InstallProblem, type ReleaseAsset, type StagedPlugin, type StagedProblem, type StagedSource } from '../../api/actions.ts'
 import { classNames } from '../../api/policy-jobs.ts'
-import { grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
+import { grantSentence, installProblemWords, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 
 export type InstallFlow =
-  | { step: 'assets', link: string, tag: string, assets: ReleaseAsset[] }
+  | { step: 'assets', release: string, link: string, tag: string, assets: ReleaseAsset[] }
   | { step: 'found', staged: string, source: StagedSource, plugins: StagedPlugin[], picked: ReadonlySet<string>, busy: boolean }
 
 // high marks class 3 and 4 and a class not known. lines are the grant risk classifier's on why
@@ -16,34 +16,19 @@ export type FoundRow = { id: string, label: string, line: string, high: boolean,
 // What the box over the plugin list draws: a release's zips to pick from, or the plugins found under their Confirm,
 // ready once one is ticked and busy while it is on its way
 export type InstallBox =
-  | { step: 'assets', heading: string, assets: { name: string, line: string }[] }
+  | { step: 'assets', heading: string, assets: { line: string }[] }
   | { step: 'found', staged: string, source: string, unsigned: string, plugins: FoundRow[], ready: boolean, busy: boolean }
 
 const quoted = (value: string) => JSON.stringify(value)
 
-const problems: Readonly<Record<InstallProblem, string>> = {
-  'not-github': 'That isn’t a link to a GitHub repository or release',
-  'no-release': 'That repository has no release',
-  'no-zip': 'That release has no zip to install from',
-  'rate-limited': 'GitHub asks hetu to wait before it looks again. Try again later',
-  offline: 'hetu couldn’t reach GitHub',
-  invalid: 'That doesn’t read as a zip or a plugin folder',
-  name: 'It holds a file name that could land outside its folder, so nothing was taken',
-  duplicate: 'It holds two files under one name, so nothing was taken',
-  special: 'It holds a link or another special file, so nothing was taken',
-  encrypted: 'It holds an encrypted file, so nothing was taken',
-  'too-many': 'It holds more files than one install takes, so nothing was taken',
-  'too-big': 'It is bigger than one install takes, so nothing was taken',
-  'not-a-folder': 'That isn’t a folder',
-  'same-id': 'It holds two plugins with one id, so nothing was taken',
-  none: 'No plugin in it. A plugin’s folder holds hetu-plugin.json',
-}
+const problems = installProblemWords
 
 const refused: Readonly<Record<StagedProblem, string>> = {
   invalid: 'Its manifest doesn’t parse or check out, so what it asks for can’t be read and it can’t be installed',
   'install-only': 'It asks for what only hetu’s own parts hold, so it can’t be installed',
   api: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed',
   reserved: 'Its id is one hetu keeps, so it can’t be installed',
+  unapproved: 'A folder for this plugin is already there and hetu never approved it. Remove it first',
 }
 
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
@@ -72,7 +57,7 @@ export function installBox(flow: InstallFlow | null): InstallBox | null {
     return {
       step: 'assets',
       heading: `Pick a zip from the release ${quoted(flow.tag)} of ${quoted(flow.link)}`,
-      assets: flow.assets.map(asset => ({ name: asset.name, line: `${quoted(asset.name)}, ${size(asset.bytes)}` })),
+      assets: flow.assets.map(asset => ({ line: `${quoted(asset.name)}, ${size(asset.bytes)}` })),
     }
   }
   const plugins = flow.plugins.map(plugin => rowOf(plugin, flow.picked))
@@ -115,13 +100,13 @@ export class Installer {
     this.host = host
   }
 
-  // main's dialog for a zip or a folder. A cancelled dialog asks for nothing
+  // main's dialog for a zip or a folder, which main stages at once, so no path passes through the page. A cancelled
+  // dialog answers null and changes nothing
   pick(source: 'zip' | 'folder'): void {
     const mine = ++this.latest
-    this.host.call('app.pickPlugins', { source }, reply => {
-      if (mine !== this.latest) return
-      if (reply.ok !== true) this.host.settle(reply)
-      else if (typeof reply.result === 'string') this.stage({ kind: source, path: reply.result })
+    this.host.call('app.stagePicked', { source }, reply => {
+      if (reply.ok === true && reply.result === null) return
+      this.took(mine, reply)
     })
   }
 
@@ -135,15 +120,16 @@ export class Installer {
       if (mine !== this.latest) return
       const problem = problemOf(reply.result)
       if (reply.ok !== true || problem !== undefined) return this.host.settle(reply, problem === undefined ? undefined : problems[problem])
-      const { tag, assets } = reply.result as { tag: string, assets: ReleaseAsset[] }
-      if (assets.length === 1) return this.stage({ kind: 'link', link, asset: assets[0].name })
-      this.replace({ step: 'assets', link, tag, assets })
+      const { release, tag, assets } = reply.result as { release: string, tag: string, assets: ReleaseAsset[] }
+      if (assets.length === 1) return this.stage(release, 0)
+      this.replace({ step: 'assets', release, link, tag, assets })
       this.host.settle(reply)
     })
   }
 
-  asset(name: string): void {
-    if (this.flow?.step === 'assets') this.stage({ kind: 'link', link: this.flow.link, asset: name })
+  // A zip of the release shown, named by its place in the list main answered
+  asset(place: number): void {
+    if (this.flow?.step === 'assets') this.stage(this.flow.release, place)
   }
 
   tick(id: string, on: boolean): void {
@@ -192,21 +178,24 @@ export class Installer {
     this.flow = next
   }
 
-  private stage(source: InstallSource): void {
+  private stage(release: string, zip: number): void {
     const mine = ++this.latest
-    this.host.call('core.stage', { source }, reply => {
-      const problem = problemOf(reply.result)
-      const result = reply.result as { staged?: string, source: StagedSource, plugins: StagedPlugin[] } | null
-      if (mine !== this.latest) {
-        if (reply.ok === true && typeof result?.staged === 'string') this.host.call('core.unstage', { staged: result.staged })
-        return
-      }
-      if (reply.ok !== true || problem !== undefined || result === null || result.staged === undefined) {
-        return this.host.settle(reply, problem === undefined ? undefined : problems[problem])
-      }
-      const picked = new Set(result.plugins.filter(plugin => plugin.problem === null).map(plugin => plugin.id))
-      this.replace({ step: 'found', staged: result.staged, source: result.source, plugins: result.plugins, picked, busy: false })
-      this.host.settle(reply)
-    })
+    this.host.call('core.stage', { release, zip }, reply => this.took(mine, reply))
+  }
+
+  // A staging's answer, for the latest start only. An older one's staging is dropped
+  private took(mine: number, reply: Reply): void {
+    const problem = problemOf(reply.result)
+    const result = reply.result as { staged?: string, source: StagedSource, plugins: StagedPlugin[] } | null
+    if (mine !== this.latest) {
+      if (reply.ok === true && typeof result?.staged === 'string') this.host.call('core.unstage', { staged: result.staged })
+      return
+    }
+    if (reply.ok !== true || problem !== undefined || result === null || result.staged === undefined) {
+      return this.host.settle(reply, problem === undefined ? undefined : problems[problem])
+    }
+    const picked = new Set(result.plugins.filter(plugin => plugin.problem === null).map(plugin => plugin.id))
+    this.replace({ step: 'found', staged: result.staged, source: result.source, plugins: result.plugins, picked, busy: false })
+    this.host.settle(reply)
   }
 }
