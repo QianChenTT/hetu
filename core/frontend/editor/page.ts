@@ -13,7 +13,7 @@ import { type NoteNotice, Notes } from './notes.ts'
 import { noteBar, refusalText, type NoteAction } from './note-bar.ts'
 import { Frames } from './frames.ts'
 import { filterNames, listNames } from './palette.ts'
-import { RawSource } from './raw.ts'
+import { RawSource, rawBox } from './raw.ts'
 import { Settings } from './settings.ts'
 import { type Notice, Shell } from './shell.ts'
 import { themeStyle } from './theme.ts'
@@ -180,9 +180,10 @@ function start(bridge: Bridge): void {
         drawHooks,
         titlePressed: (instance, event) => viewDrag(instance, event),
         titleClicked: (owner, node) => ui.nodeEvent(owner, SKELETON, node, 'click'),
-        state: geometry => ui.state({
-          ...geometry, views: ui.views.list(settings.value.favorites), editors: views.ids(), current: views.shown(),
-        }),
+        state: geometry => {
+          if (rawOpen) layRaw()
+          ui.state({ ...geometry, views: ui.views.list(settings.value.favorites), editors: views.ids(), current: views.shown() })
+        },
       },
     },
   )
@@ -599,6 +600,18 @@ function start(bridge: Bridge): void {
     }))
   }
 
+  // Over the editor on screen, laid again each time the layers are placed
+  function layRaw(): void {
+    const at = element('stage').getBoundingClientRect()
+    const current = views.shown()
+    const box = rawBox(current === null ? null : views.windowBox(current), { left: at.left, top: at.top, width: at.width, height: at.height })
+    const style = element('raw').style
+    style.left = `${box.left}px`
+    style.top = `${box.top}px`
+    style.width = `${box.width}px`
+    style.height = `${box.height}px`
+  }
+
   // At most once a frame while the human types
   function drawRawSoon(): void {
     if (rawQueued) return
@@ -616,6 +629,7 @@ function start(bridge: Bridge): void {
       // The note being typed in, else the one on screen, as after a click on the bar's button
       rawFocus = views.focused() ?? views.shown()
       rawPick = undefined
+      layRaw()
       element('raw').focus()
       void drawRaw()
     } else {

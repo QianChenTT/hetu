@@ -516,10 +516,12 @@ body {
   font-size: 12px;
 }
 
+/* Over the editor's box, which the page sets, above every layer plugins draw in */
 #raw {
   position: fixed;
-  inset: 0;
+  box-sizing: border-box;
   z-index: 2147483647;
+  border: 2px solid #000000;
   display: flex;
   flex-direction: column;
   background: #ffffff;
@@ -539,6 +541,14 @@ body {
   background: #eeeeee;
   border-bottom: 1px solid #999999;
   font: 13px system-ui, sans-serif;
+}
+
+/* Fixed words of the core's own, so a view drawn beside the real text can't pass for it */
+#raw-label {
+  padding: 1px 6px;
+  background: #000000;
+  color: #ffffff;
+  font-weight: bold;
 }
 
 #raw-title {
