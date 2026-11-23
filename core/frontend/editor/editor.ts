@@ -3,7 +3,7 @@ import {
   Annotation, type ChangeSet, EditorState, type Extension, Prec, StateEffect, StateField, type Text, Transaction, type TransactionSpec,
 } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, type KeyBinding, keymap } from '@codemirror/view'
-import type { Mark } from '../../api/editor.ts'
+import { type LinkHit, linkAt, type Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
 import { hiddenRules, hiddenText, placeCaret } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
@@ -27,6 +27,8 @@ export type ViewHooks = {
   key(instance: string, event: KeyboardEvent): boolean
   // The human moved into another open note
   focused?(instance: string): void
+  // A Ctrl+click, Cmd+click on macOS, on a link mark: the link it landed on, null when two tied for it
+  link(instance: string, hit: LinkHit | null): void
   // The range of the text the editor draws moved, told once as it is made and again each time it moves. CodeMirror's
   // viewport: the lines on screen with a margin past them and any hidden stretch inside it whole
   viewport(instance: Instance, from: number, to: number): void
@@ -143,6 +145,17 @@ function hiddenBy(owned: Owned, changes: ChangeSet): string[] {
   return owners
 }
 
+// The character under the point: the one whose box holds it, after or before the place nearest it. Null off the text
+function charAt(view: EditorView, x: number, y: number): number | null {
+  const pos = view.posAtCoords({ x, y })
+  if (pos === null) return null
+  for (const at of [pos, pos - 1]) {
+    const box = at < 0 || at >= view.state.doc.length ? null : view.coordsForChar(at)
+    if (box !== null && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) return at
+  }
+  return null
+}
+
 // CodeMirror's own keys, less Mod-i, which selects the syntax node around the cursor and would keep italic's key from
 // reaching a plugin's binding
 export const editorKeys: readonly KeyBinding[] = [...defaultKeymap.filter(binding => binding.key !== 'Mod-i'), ...historyKeymap]
@@ -155,12 +168,15 @@ export class EditorViews implements Editors {
   private readonly open = new Map<string, Open>()
   private shownId: string | null = null
   private readonly nonce: string
+  private readonly mac: boolean
 
-  // nonce is the one the page's policy names for its style elements, so CodeMirror's own style sheet applies
-  constructor(host: HTMLElement, hooks: ViewHooks, nonce: string) {
+  // nonce is the one the page's policy names for its style elements, so CodeMirror's own style sheet applies. mac says
+  // Mod is Cmd, as the page names keys
+  constructor(host: HTMLElement, hooks: ViewHooks, nonce: string, mac = false) {
     this.host = host
     this.hooks = hooks
     this.nonce = nonce
+    this.mac = mac
   }
 
   create(id: string, text: string, path = ''): void {
@@ -192,9 +208,12 @@ export class EditorViews implements Editors {
               this.hooks.focused?.(id)
             },
             // Alt+click shows the element under the pointer. The click is taken whole, so the cursor stays at the place
-            // pointed at, not where the shown markers push the text to
+            // pointed at, not where the shown markers push the text to. A Ctrl+click, Cmd+click on macOS, on a link mark
+            // is taken whole too, so CodeMirror adds no cursor, and told to the drawer
             mousedown: (event, view) => {
-              if (!event.altKey || event.button !== 0) return false
+              if (event.button !== 0) return false
+              if (!event.altKey && (this.mac ? event.metaKey : event.ctrlKey)) return this.linkClick(id, view, event)
+              if (!event.altKey) return false
               const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
               const spec = pos === null ? null : revealClick(view.state, pos)
               if (spec === null) return false
@@ -241,6 +260,15 @@ export class EditorViews implements Editors {
     this.open.set(id, { view, element, instance })
     this.hooks.created(instance)
     this.hooks.viewport(instance, view.viewport.from, view.viewport.to)
+  }
+
+  private linkClick(id: string, view: EditorView, event: MouseEvent): boolean {
+    const char = charAt(view, event.clientX, event.clientY)
+    const hit = char === null ? null : linkAt(view.state.field(pluginMarks).owned, char)
+    if (hit === null) return false
+    event.preventDefault()
+    this.hooks.link(id, hit === 'tied' ? null : hit)
+    return true
   }
 
   // The note's text as it saves, its own line breaks kept

@@ -50,7 +50,7 @@ function lineOf(style: string): Decoration {
   return made
 }
 
-// Marks as CodeMirror decorations with the drawer's own classes: styles and line styles in marks, hidden ranges and
+// Marks as CodeMirror decorations with the drawer's own classes: styles, links and line styles in marks, hidden ranges and
 // widgets in hidden, which the drawer's rules for hidden text read. A mark reaching past the end of doc is left out,
 // since the marks a plugin sends were checked for shape and not against the text
 export function drawMarks(given: readonly Mark[], doc: Text): { marks: DecorationSet, hidden: DecorationSet } {
@@ -63,6 +63,7 @@ export function drawMarks(given: readonly Mark[], doc: Text): { marks: Decoratio
     }
     if (mark.to > doc.length) continue
     if (mark.kind === 'mark') marks.push(styleOf(mark.style).range(mark.from, mark.to))
+    else if (mark.kind === 'link') marks.push(styleOf('link').range(mark.from, mark.to))
     else if (mark.kind === 'hide') hidden.push(hideOf(mark, doc).range(mark.from, mark.to))
     else hidden.push(Decoration.replace({ widget: new TextWidget(mark.text) }).range(mark.from, mark.to))
   }
