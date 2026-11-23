@@ -230,13 +230,21 @@ export class TreeView {
     return made
   }
 
-  // The image shows once its URL comes, while the element still draws that path
-  private image(held: Held, path: string): void {
+  // The image shows once its URL comes, while the element still draws that path. A URL loads once, so a load that
+  // fails, as a second request for it does, asks for one new URL and no more
+  private image(held: Held, path: string, again = true): void {
     const image = held.element as HTMLImageElement
     image.removeAttribute('src')
     this.writes++
+    const current = () => this.held.get(held.node.id) === held && held.node.kind === 'image' && held.node.path === path
     void this.hooks.imageUrl(path).then(url => {
-      if (url !== null && this.held.get(held.node.id) === held && held.node.kind === 'image' && held.node.path === path) image.src = url
+      if (url === null || !current()) return
+      if (again) {
+        image.addEventListener('error', () => {
+          if (current() && image.getAttribute('src') === url) this.image(held, path, false)
+        }, { once: true })
+      }
+      image.src = url
     }, () => {})
   }
 
