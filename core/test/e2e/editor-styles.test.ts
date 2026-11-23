@@ -213,6 +213,56 @@ describe('the editor\'s own styles', () => {
   })
 })
 
+describe('a link mark', () => {
+  it('underlines its text in the link color and tells a Ctrl or Cmd click on it only to its plugin, a plain click placing the caret', async () => {
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
+    const { app, editor } = await started({ 'a.md': 'see the note here' }, { linker: { granted }, other: { granted } })
+    await open(editor, 'a.md')
+    type Ctx = { editor: { instances(): Promise<{ instance: string, version: number }[]>, decorate(instance: string, version: number, set: string, marks: unknown[]): Promise<void>, on(topic: string, handler: (event: unknown) => void): void } }
+    const listening = async (id: string) => {
+      const host = await workersPage(app, id)
+      await until(() => host.workers().length === 1)
+      const plugin = host.workers()[0]!
+      await until(async () => (await plugin.evaluate(() => (globalThis as unknown as { ctx: Ctx }).ctx.editor.instances())).length === 1)
+      await plugin.evaluate(() => {
+        const held = globalThis as unknown as { ctx: Ctx, heard: unknown[] }
+        held.heard = []
+        held.ctx.editor.on('link', event => held.heard.push(event))
+      })
+      return { plugin, heard: () => plugin.evaluate(() => (globalThis as unknown as { heard: unknown[] }).heard) }
+    }
+    const [linker, other] = [await listening('linker'), await listening('other')]
+    await linker.plugin.evaluate(async () => {
+      const { ctx } = globalThis as unknown as { ctx: Ctx }
+      const [note] = await ctx.editor.instances()
+      await ctx.editor.decorate(note!.instance, note!.version, 'links', [{ kind: 'link', from: 4, to: 12, id: 'theNote' }])
+    })
+    const drawn = editor.locator('.editor:not([hidden]) .cm-hetu-link')
+    await until(async () => (await drawn.count()) === 1)
+    expect(await drawn.innerText()).toBe('the note')
+    expect(await drawn.evaluate(found => [getComputedStyle(found).textDecorationLine, getComputedStyle(found).color])).toEqual(['underline', 'rgb(26, 95, 180)'])
+    const head = () => editor.evaluate(() => {
+      const content = document.querySelector('.editor:not([hidden]) .cm-content') as unknown as { cmTile?: { root?: { view?: { state: { selection: { main: { head: number } } } } } } }
+      return content.cmTile?.root?.view?.state.selection.main.head
+    })
+
+    await editor.locator('.editor:not([hidden]) .cm-content').click({ position: { x: 1, y: 5 } })
+    const before = await head()
+    await drawn.click({ modifiers: ['ControlOrMeta'] })
+    await until(async () => (await linker.heard()).length === 1)
+    expect(await linker.heard()).toEqual([expect.objectContaining({ topic: 'editor.link', version: 0, id: 'theNote' })])
+    expect(await head()).toBe(before)
+
+    await drawn.click()
+    await tick(300)
+    const placed = await head()
+    expect(placed).toBeGreaterThan(4)
+    expect(placed).toBeLessThanOrEqual(12)
+    expect(await linker.heard()).toHaveLength(1)
+    expect(await other.heard()).toEqual([])
+  })
+})
+
 // The shown editor's text, background, caret and outline as computed, each color's contrast against the background
 const looks = (editor: Page) => editor.evaluate(() => {
   const content = document.querySelector('.editor:not([hidden]) .cm-content') as HTMLElement

@@ -108,7 +108,8 @@ function start(bridge: Bridge): void {
       drawNoteBar()
       layers?.schedule()
     },
-  }, styleNonce)
+    link: (instance, hit) => drawer?.linkClicked(instance, hit),
+  }, styleNonce, mac)
   const theNotes = new Notes(link, views, notice => {
     noteNotices.set(notice.instance, notice)
     drawNoteBar()

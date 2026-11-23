@@ -1,6 +1,6 @@
 import { ChangeSet } from '@codemirror/state'
 import {
-  type BridgeCall, type BridgeEvent, type BridgeReply, type Mark, MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS,
+  type BridgeCall, type BridgeEvent, type BridgeReply, type LinkHit, type Mark, MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS,
   READ_CHARS_PER_SECOND, refused, reply, verbNeeds,
 } from '../../api/editor.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
@@ -228,7 +228,7 @@ export class Drawer {
   key(instance: string | null, key: string): boolean {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
-    for (const conn of this.connections.values()) conn.answering = null
+    this.closeAnswering()
     const bound = [...this.connections.values()].filter(conn => conn.bindings.has(key))
     const picked = this.settings().keyOwners[key]
     const owner = bound.length === 1 ? bound[0] : bound.find(conn => conn.plugin === picked)
@@ -258,6 +258,27 @@ export class Drawer {
       })
     }
     return false
+  }
+
+  // A Ctrl+click, Cmd+click on macOS, on a link mark the page took, the human's input as a key is. The owner of the link
+  // hears it with the note's version at the click only while it reads the note and holds ui.decoration, checked at the
+  // send. A tie tells no one
+  linkClicked(instance: string, hit: LinkHit | 'tied'): void {
+    this.closeAnswering()
+    if (hit === 'tied') return
+    const open = this.find(instance)
+    const conn = this.connections.get(hit.owner)
+    if (open === undefined || conn === undefined) return
+    const body: EventBody = { topic: 'editor.link', instance, version: open.versions.version, id: hit.id }
+    void this.reachOf(conn.plugin, open.path).then(reach => {
+      if (reach.verbs.includes('ui.decoration')) void this.tell(conn, open, body)
+    })
+  }
+
+  // Closes every plugin's window to place the cursor in answer to a command, on the human's key or click or a binding
+  // changed
+  private closeAnswering(): void {
+    for (const conn of this.connections.values()) conn.answering = null
   }
 
   // A key while focus is in a view instance, after the core keys: the view's own binding, then the global ones
@@ -506,7 +527,7 @@ export class Drawer {
       case 'editor.bind': {
         const bindings = call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command] as const)
         if (bindings.some(([key]) => RESERVED_KEYS.includes(key))) throw new Refusal('invalid')
-        for (const each of this.connections.values()) each.answering = null
+        this.closeAnswering()
         conn.bindings = new Map(bindings)
         return null
       }
