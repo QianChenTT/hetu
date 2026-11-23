@@ -81,7 +81,7 @@ describe('the link a click lands on', () => {
     expect(linkAt(owned(['alpha', [link(0, 12, 'outer')]], ['beta', [link(4, 7, 'inner')]]), 1)).toEqual({ owner: 'alpha', id: 'outer' })
   })
 
-  it("is none on a tie between two plugins' links or two ids of one plugin, and one link sent twice is no tie", () => {
+  it("is none on a tie between two plugins' links or two ids of one plugin, though one link sent twice is no tie", () => {
     expect(linkAt(owned(['alpha', [link(4, 7, 'a')]], ['beta', [link(5, 8, 'a')]]), 5)).toBe('tied')
     expect(linkAt(owned(['alpha', [link(4, 7, 'a'), link(4, 7, 'b')]]), 5)).toBe('tied')
     expect(linkAt(owned(['alpha', [link(4, 7, 'a'), link(4, 7, 'a')]]), 5)).toEqual({ owner: 'alpha', id: 'a' })
