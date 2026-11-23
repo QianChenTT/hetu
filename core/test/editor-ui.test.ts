@@ -389,7 +389,7 @@ describe('keys in the design\'s order', () => {
   it('refuses a view binding on a core key', async () => {
     const { drawer } = started({ kanban: viewer })
     const board = await connected(drawer, 'kanban')
-    for (const key of ['Mod-/', 'Mod-p', 'Ctrl-s', 'Mod-q']) {
+    for (const key of ['Mod-/', 'Ctrl-s', 'Mod-q']) {
       expect(await board.call('view.bind', { bindings: [{ key, command: 'x' }] }), key).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
     }
   })

@@ -711,7 +711,16 @@ describe("the bridge's drawer end", () => {
       { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
     ])
     expect(beta.events()).toEqual([])
-    expect(CORE_KEYS).toEqual(['Mod-/', 'Mod-p', 'Mod-s', 'Mod-q'])
+    expect(CORE_KEYS).toEqual(['Mod-/', 'Mod-s', 'Mod-q'])
+  })
+
+  // Quick open is a plugin's, so its key is too
+  it('takes a binding on Mod-p and fires it', async () => {
+    const { drawer } = started({ alpha: { verbs: ['ui.command'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    expect(await alpha.call('editor.bind', { bindings: [{ key: 'Mod-p', command: 'open' }] })).toMatchObject({ ok: true })
+    expect(drawer.key(null, 'Mod-p')).toBe(true)
   })
 
   it.each(['k', '4', 'Shift-k', 'Enter'])('refuses a binding on %s, a key with no modifier, so typing in a note never reaches one', async key => {
@@ -721,7 +730,7 @@ describe("the bridge's drawer end", () => {
     expect(await alpha.call('editor.bind', { bindings: [{ key, command: 'grab' }] })).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
   })
 
-  it.each(['Mod-/', 'Mod-Shift-/', 'Ctrl-/', 'Mod-p', 'Mod-s', 'Mod-q', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a'])(
+  it.each(['Mod-/', 'Mod-Shift-/', 'Ctrl-/', 'Mod-s', 'Mod-q', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a'])(
     'refuses a binding on %s, a core key or one the editor keeps for itself, and never fires one',
     async key => {
       const { drawer } = started({ alpha: { verbs: ['ui.command'] } })

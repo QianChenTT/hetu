@@ -228,7 +228,7 @@ describe('the core keys main takes', () => {
 
   it('names the core keys from the window\'s input before any frame hears them, the page\'s own way', () => {
     expect(coreKeyOfInput(press('/'), false)).toBe('raw')
-    expect(coreKeyOfInput(press('p'), false)).toBe('open')
+    expect(coreKeyOfInput(press('p'), false)).toBeNull()
     expect(coreKeyOfInput(press('ы', { code: 'KeyS' }), false)).toBe('save')
     expect(coreKeyOfInput(press('q', { control: false, meta: true }), true)).toBe('quit')
   })

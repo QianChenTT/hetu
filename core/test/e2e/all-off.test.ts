@@ -24,7 +24,7 @@ describe('hetu with every core module and the door switched off', () => {
     const page = await editorPage(app)
     const empty = page.locator('#empty')
     await until(() => empty.isVisible())
-    expect(await empty.innerText()).toContain('Press Ctrl+P to open a note')
+    expect(await empty.innerText()).toContain('No note is open')
     // The banner draws from core.status, so the page read it and its settings load answered
     await until(async () => (await page.locator('#banner li').allTextContents()).includes('storage off'))
     const status = await page.evaluate(() => new Promise<unknown>(resolve => {

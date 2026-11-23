@@ -298,7 +298,7 @@ describe('an open note judged on where it is, never on the spelling it was opene
       ports.set(plugin, one)
     }
     await tick(30)
-    // The human opens a note from the palette under the spelling given
+    // The human opens a note under the spelling given
     const human = async (spelled: string) => {
       const id = await opened.open(spelled)
       await drawer.humanOpened(texts.get(id)!)

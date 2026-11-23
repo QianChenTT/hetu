@@ -7,7 +7,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage } from './helpers.ts'
+import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -165,6 +165,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
   await store.writeLuoshu({ folder })
+  await writeOpener(dataDir)
   const plugins: [string, Load, string][] = []
   if (setup.plugins !== undefined) {
     const code = await built(fixture)
@@ -195,14 +196,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
 
 const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-content')
 
-async function open(editor: Page, name: string): Promise<void> {
-  await editor.keyboard.press('ControlOrMeta+p')
-  await until(async () => editor.locator('#palette').isVisible())
-  await editor.keyboard.type(name)
-  await until(async () => (await editor.locator('#palette-list li').first().innerText()) === name)
-  await editor.keyboard.press('Enter')
-  await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
-}
+const open = openByHand
 
 // A plugin's worker, once its ctx.editor has a port to this editor page
 async function pluginWorker(app: ElectronApplication, id: string): Promise<Worker> {

@@ -10,7 +10,7 @@ import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { partition, ROLES, type Role } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, counting, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
+import { cleanup, counting, editorPage, launch, logged, temp, tick, until, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -153,6 +153,7 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
+  await writeOpener(dataDir)
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': worker, 'src/columns.ts': columns })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
@@ -266,12 +267,7 @@ describe('view frames', () => {
     })
     await post(worker, 'spin')
     await tick(500)
-    await editor.keyboard.press('ControlOrMeta+p')
-    await until(async () => editor.locator('#palette').isVisible())
-    await editor.keyboard.type('a.md')
-    await until(async () => (await editor.locator('#palette-list li').first().innerText()) === 'a.md')
-    await editor.keyboard.press('Enter')
-    await until(async () => (await editor.locator('#title').innerText()).startsWith('a.md'))
+    await openByHand(editor, 'a.md')
     const before = Date.now()
     await editor.locator('.editor:not([hidden]) .cm-content').click()
     await editor.keyboard.type('still typing')
