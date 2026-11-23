@@ -32,6 +32,8 @@ export function capabilityText(granted: Capability): string {
       return `exec of ${granted.commands.map(command => JSON.stringify(command)).join(', ')}${granted.env.length > 0 ? ` with ${granted.env.map(quoted).join(', ')} from your environment` : ''}`
     case 'plugin.call':
       return `plugin.call to ${granted.targets.map(quoted).join(', ')}`
+    case 'door.handle':
+      return 'door.handle, answering every request MCP clients send through hetu\'s door'
     default:
       return granted.type
   }
@@ -72,6 +74,8 @@ const sentences: Sentences = {
   'plugin.call': ({ targets }) => (targets.length === 0 ? 'Call no other plugin' : `Call the plugin${targets.length === 1 ? '' : 's'} ${list(targets)}`),
   'guard.hook': () => 'Check each change to a note before it is written',
   'log.read': () => 'Read hetu’s event log',
+  // The door hands this plugin every request an outside program makes to hetu's local connection
+  'door.handle': () => 'Answer the requests other programs on this computer send to hetu',
 }
 
 export function grantSentence(granted: Capability): string {

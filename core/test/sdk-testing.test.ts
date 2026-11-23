@@ -860,6 +860,52 @@ describe('the fake core playing another plugin', () => {
     expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
   })
 
+  // The door calls the role and the router finds the one plugin holding it, which serves it as the role's own action
+  describe('a stand-in holding a role', () => {
+    const http = { id: 'mcp-http-handler', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
+    const request = { body: '{"x":1}', headers: { 'mcp-session-id': 's' } }
+
+    it('takes http under test\'s door.handle as the role\'s own action, with the caller and the onBehalf sent', async () => {
+      let mcp: StandIn | null = null
+      const { ctx } = await started(http, made => {
+        mcp = made.standIn('mcp', { actions: {}, roles: ['door.handle'], handle: call => ({ status: 200, body: JSON.stringify(call.args) }) })
+      })
+      expect(await ctx.call('door', 'handle', request, { onBehalf: 'claude-code#1' })).toEqual({ status: 200, body: JSON.stringify(request) })
+      const caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
+      expect(mcp!.delivered).toEqual([{ action: 'door.handle', args: request, caller, onBehalf: 'claude-code#1' }])
+    })
+
+    it('answers unavailable with no stand-in holding it, and refuses a worker under test at the floor', async () => {
+      const { ctx } = await started(http, made => { made.standIn('mcp', { actions: {} }) })
+      await expect(ctx.call('door', 'handle', request, { onBehalf: 'claude-code#1' })).rejects.toMatchObject({ code: 'unavailable' })
+      const worker = await started(callerManifest, made => { made.standIn('mcp', { actions: {}, roles: ['door.handle'] }) })
+      await expect(worker.ctx.call('door', 'handle', request, { onBehalf: 'claude-code#1' })).rejects.toMatchObject({ code: 'not-granted' })
+    })
+
+    it('tells http under test through deps whether the role is served, as has and onDeps read it', async () => {
+      const seen: boolean[] = []
+      const made = fakeCore({ manifest: http })
+      cores.push(made)
+      made.standIn('mcp', { actions: {}, roles: ['door.handle'], state: 'unavailable' })
+      await made.start(definePlugin({ start(ctx) { seen.push(ctx.has('door.handle')); ctx.onDeps(() => { seen.push(ctx.has('door.handle')) }) } }))
+      made.setState('mcp', 'starting')
+      await until(() => seen.length === 2)
+      made.setState('mcp', 'ready')
+      await until(() => seen.length === 3)
+      made.setState('mcp', 'unavailable')
+      await until(() => seen.length === 4)
+      expect(seen).toEqual([false, true, true, false])
+    })
+
+    it('keeps a role to one stand-in, as the plugins manager keeps it to one plugin', () => {
+      const made = fakeCore({ manifest: http })
+      cores.push(made)
+      made.standIn('mcp', { actions: {}, roles: ['door.handle'] })
+      expect(() => made.standIn('other', { actions: {}, roles: ['door.handle'] })).toThrow(/door.handle/)
+      expect(() => made.standIn('odd', { actions: {}, roles: ['door.other'] })).toThrow(/door.other/)
+    })
+  })
+
   it('places any other host plugin in main, where the floor refuses both', async () => {
     const net = { id: 'net', name: 'Net', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' } }
     const { made, ctx } = await started(net)

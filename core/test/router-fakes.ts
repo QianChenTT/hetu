@@ -50,6 +50,13 @@ export class FakePluginsManager implements PluginTable {
     return this.plugins[id] ?? null
   }
 
+  // The plugin holding each role, by the role's action, none unless a test names one
+  roles: Record<string, string> = {}
+
+  holderOf(action: string): string | null {
+    return this.roles[action] ?? null
+  }
+
   limits(): HumanLimits {
     return this.human
   }

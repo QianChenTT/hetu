@@ -68,17 +68,20 @@ function post(port: number, options: { headers?: Record<string, string>, body?: 
 
 const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata#1' } : null)
 
-// http on the fake core with mcp as a stand-in whose handle echoes what reached it
+// http on the fake core with mcp as a stand-in holding door.handle, which echoes what reached it
 // A pipe name no other test or run holds, elsewhere than Windows in a folder of the user's own as the pipe's is
 const freshPipe = () => (process.platform === 'win32' ? `\\\\.\\pipe\\hetu-test-${randomUUID()}` : path.join(mkdtempSync(path.join(tmpdir(), 'hetu-test-')), 'mcp.sock'))
 
-async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number, pipe?: string, answer?: (call: Delivered) => unknown } = {}) {
+async function started(options: {
+  token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number, pipe?: string, answer?: (call: Delivered) => unknown, roles?: string[],
+} = {}) {
   const port = options.port ?? await freePort()
   const pipe = options.pipe ?? freshPipe()
   const core = fakeCore({ manifest })
   cores.push(core)
   const mcp: StandIn = core.standIn('mcp', {
-    actions: { handle: { from: ['mcp-http-handler'] } },
+    actions: {},
+    roles: options.roles ?? ['door.handle'],
     handle: options.answer ?? (call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null, args: call.args }) })),
     state: options.mcp ?? 'ready',
   })
@@ -87,7 +90,7 @@ async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' 
 }
 
 describe('http on the fake core', () => {
-  it('reads ready and opens the door once mcp is there, a request reaching mcp.handle as http\'s host half on behalf of the token\'s client', async () => {
+  it('reads ready and opens the door once door.handle is served, a request reaching it as http\'s host half on behalf of the token\'s client', async () => {
     const { mcp, port, state } = await started()
     expect(state).toEqual({ state: 'ready' })
     await until(() => canConnect(port))
@@ -102,7 +105,14 @@ describe('http on the fake core', () => {
       args: { body: 'not json {', headers: { 'mcp-session-id': 's-1' } },
     })
     expect(reply.headers['content-type']).toBe('application/json')
-    expect(mcp.delivered).toHaveLength(1)
+    expect(mcp.delivered.map(call => call.action)).toEqual(['door.handle'])
+  })
+
+  it('opens neither the door nor the pipe while no plugin holds door.handle, whatever else is ready', async () => {
+    const { port, pipe } = await started({ roles: [] })
+    await tick(100)
+    expect(await canConnect(port)).toBe(false)
+    expect(await canConnect(pipe)).toBe(false)
   })
 
   it('refuses a token that names a label out of the form with 401, reaching nothing, the core hearing only the refusal', async () => {
@@ -123,7 +133,7 @@ describe('http on the fake core', () => {
     expect(core.coreCalls).toEqual([])
   })
 
-  it('opens no door while mcp is not there, opens it when mcp turns ready, closes it when mcp goes and opens it again', async () => {
+  it('opens no door while door.handle\'s holder is not there, opens it when it turns ready, closes it when it goes and opens it again', async () => {
     const { core, port, state } = await started({ mcp: 'unavailable' })
     expect(state).toEqual({ state: 'ready' })
     await tick(100)
@@ -138,7 +148,7 @@ describe('http on the fake core', () => {
   })
 
   // has reads a requirement that is starting as there, since the SDK retries a call that meets starting
-  it('opens the door while mcp is starting', async () => {
+  it('opens the door while door.handle\'s holder is starting', async () => {
     const { port } = await started({ mcp: 'starting' })
     await until(() => canConnect(port))
   })
@@ -178,7 +188,7 @@ describe('http on the fake core', () => {
     expect(mcp.delivered).toEqual([])
   })
 
-  it('opens the pipe beside the door exactly while mcp is there', async () => {
+  it('opens the pipe beside the door exactly while door.handle is served', async () => {
     const { core, pipe } = await started({ mcp: 'unavailable' })
     await tick(100)
     expect(await canConnect(pipe)).toBe(false)

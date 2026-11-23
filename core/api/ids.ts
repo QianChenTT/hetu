@@ -34,15 +34,17 @@ export const qualifiedName = z.string()
 
 // How the router reaches the part serving a namespace. provider: a core module, or a core plugin in a utility process,
 // through prepare and perform with the gate judging. action: an action of the core table, which the floor decides and
-// never the gate. bus: the event bus inside the router. served: a part that keeps its own checks
-export type Route = 'provider' | 'action' | 'bus' | 'served'
+// never the gate. bus: the event bus inside the router. served: a part that keeps its own checks. role: the one plugin
+// the plugin table names as holding the role's item, delivered to as a plugin's action, the floor deciding the caller
+export type Route = 'provider' | 'action' | 'bus' | 'served' | 'role'
 
 // A namespace's server: the part handed to the router under this name and the route to it. each: every call is an
 // audit record of its own, never coalesced
 export type Server = { readonly part: string, readonly route: Route, readonly each?: true }
 
 // Every namespace the core keeps with its server, never a plugin. log.* reads the event log the core writes, ui.* is the
-// drawer's and plugin names plugin.call, an action of none. Any other namespace is a plugin's id
+// drawer's and plugin names plugin.call, an action of none. door.* names roles, each served by the one plugin holding
+// its item. Any other namespace is a plugin's id
 export const namespaces = table({
   core: { part: 'plugins-manager', route: 'action' },
   security: { part: 'plugins-manager', route: 'action', each: true },
@@ -53,6 +55,7 @@ export const namespaces = table({
   editor: { part: 'runtime', route: 'action' },
   gate: { part: 'gate', route: 'action' },
   app: { part: 'runtime', route: 'action', each: true },
+  door: { part: 'plugins-manager', route: 'role' },
   luoshu: { part: 'luoshu', route: 'provider' },
   lock: { part: 'lock', route: 'provider' },
   history: { part: 'history', route: 'provider' },

@@ -8,6 +8,7 @@ import type { Asks, RouterDoor, RouterOptions, Heard, Port, Served, WayClosed } 
 import { topicsOf, whoOf, Context } from './context.ts'
 import { busState, listable, readable, recheck, rejudge, revokeAll } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
+import { endMovedRoles } from './route.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
 // Policy comes from the policy jobs it asks: the gate decides and the router enforces
@@ -82,13 +83,15 @@ export class Router implements RouterDoor {
 
   // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
   // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
-  // core.security once a new grants snapshot applied a security change. A new grants snapshot also has the gate judge
+  // core.security once a new grants snapshot applied a security change. An open role call whose holder the table no
+  // longer names ends. A new grants snapshot also has the gate judge
   // every open call with power again, stopping the ones it no longer lets on. The first grants snapshot the router
   // reads is where it starts, not a change. A grants snapshot it can't read is none, so it moves nothing
   changed(): void {
     if (this.c.closed || this.c.shutting) return
     this.c.bus.sync()
     this.c.bus.emit(coreTopic.status)
+    endMovedRoles(this.c)
     const view = this.c.view()
     if (view === null || view === this.c.announced) return
     const first = this.c.announced === undefined

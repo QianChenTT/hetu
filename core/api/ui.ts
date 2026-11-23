@@ -97,6 +97,15 @@ export function editorColors(tokens: Tokens): { ok: boolean, fg: string, bg: str
   return contrast(pair.fg, pair.bg) >= MIN_CONTRAST ? { ok: true, ...pair } : { ok: false, ...DEFAULT_EDITOR_COLORS }
 }
 
+// The color links in the editor are drawn in: the theme's accent while it keeps 4.5 to 1 against the editor's
+// background, else hetu's own link color while that does, else the editor's text color, which always does
+export const DEFAULT_LINK_COLOR = '#1a5fb4'
+
+export function linkColor(tokens: Tokens, editor: { fg: string, bg: string }): string {
+  const held = [tokens['color-accent'], DEFAULT_LINK_COLOR].find(color => color !== undefined && contrast(color, editor.bg) >= MIN_CONTRAST)
+  return held ?? editor.fg
+}
+
 // ---- styles
 
 export const MAX_STYLE_PROPERTIES = 64
