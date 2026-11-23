@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { flipFuses } from '@electron/fuses'
 import { Arch, build, Platform, type Configuration } from 'electron-builder'
 import { FUSES, fuseConfig, type FuseName } from './fuses.ts'
-import { stageInstall } from './stage.ts'
+import { STAGED_APP, stageInstall } from './stage.ts'
+import { writeReleaseFiles } from './update-file.ts'
 
 const repo = path.join(import.meta.dirname, '..', '..')
 const require = createRequire(import.meta.url)
@@ -127,8 +127,8 @@ export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Reco
   }
 }
 
-// The stage, the package around it and a SHA256SUMS file over what was made. The tool sits behind this one function,
-// and every proof tests what it made
+// The stage, the package around it and, beside a setup, the unsigned update file and a SHA256SUMS file over both. The
+// tool sits behind this one function and every proof tests what it made
 export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: string, made: string[] }> {
   // The driven build takes the inspector and the environment's folders, so it never ships
   if (kind.target === 'installer' && !kind.locked) throw new Error('an installer is built only around a locked build')
@@ -149,8 +149,7 @@ export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: strin
   const unpacked = (await readdir(kind.out)).find(name => /-unpacked$|^mac/.test(name))
   if (unpacked === undefined) throw new Error('no unpacked folder was made')
   const appOutDir = path.join(kind.out, unpacked)
-  const sums = await Promise.all(setupsIn(made).map(async file => `${createHash('sha256').update(await readFile(file)).digest('hex')}  ${path.basename(file)}`))
-  if (sums.length > 0) await writeFile(path.join(kind.out, 'SHA256SUMS'), `${sums.join('\n')}\n`)
+  await writeReleaseFiles(kind.out, setupsIn(made), STAGED_APP.version, new Date())
   return { appOutDir, made }
 }
 
