@@ -213,6 +213,65 @@ describe('input by owner', () => {
   })
 })
 
+describe('dragging a view', () => {
+  // Only the zone under the pointer was marked, so where a view could go was a guess
+  it('outlines and names every zone while the drag lasts', async () => {
+    const { app, editor } = await started({
+      plugins: { board: { granted: viewer, manifest: { views: view('cards') } }, tiles: { granted: layoutGrants } },
+    })
+    await pickLayout(editor, 'tiles')
+    const layout = await pluginWorker(app, 'tiles')
+    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    await drive(layout, async scope => {
+      const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
+      const instance = state.views[0]!.instance
+      await scope.ctx.ui.layout.draw({
+        kind: 'box', id: 'root', style: { display: 'flex', height: '100%' },
+        children: [
+          {
+            kind: 'box', id: 'side', zone: 'left', style: { width: '300px', display: 'flex', 'flex-direction': 'column' },
+            children: [{ kind: 'title', id: 't', of: instance, style: { height: '28px' } }, { kind: 'slot', id: 's', instance, style: { flex: '1' } }],
+          },
+          { kind: 'box', id: 'middle', zone: 'main', style: { flex: '1', display: 'flex' }, children: [{ kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } }] },
+          { kind: 'box', id: 'strip', zone: 'right', style: { width: '16px' } },
+        ],
+      })
+    })
+    const title = editor.locator('#editors .hetu-title', { hasText: 'board · Cards' })
+    await until(async () => (await title.count()) === 1)
+    const from = (await title.boundingBox())!
+    expect(await editor.locator('#drop-zones').isVisible()).toBe(false)
+    await editor.mouse.move(from.x + 10, from.y + from.height / 2)
+    await editor.mouse.down()
+    await editor.mouse.move(from.x + 400, from.y + 200, { steps: 8 })
+    await until(async () => editor.locator('#drop-zones').isVisible())
+    expect((await editor.locator('#drop-zones .drop-zone span').allInnerTexts()).sort()).toEqual(['left', 'main', 'right'])
+    // A strip too thin for its name shows it beside it, whole and inside the window
+    const name = (await editor.locator('#drop-zones .drop-zone span', { hasText: 'right' }).boundingBox())!
+    const inner = await editor.evaluate(() => window.innerWidth)
+    expect(name.width).toBeGreaterThan(20)
+    expect(name.x + name.width).toBeLessThanOrEqual(inner)
+    await editor.mouse.up()
+    await until(async () => !(await editor.locator('#drop-zones').isVisible()))
+    expect(await editor.locator('#drop-zones .drop-zone').count()).toBe(0)
+  })
+})
+
+describe('the views menu\'s status row', () => {
+  // An item sat among the views with Hide and Show, though it stays in the status row and no drag moves it
+  it('lists a plugin\'s status row item under a heading of its own', async () => {
+    const { editor } = await started({
+      plugins: { board: { granted: viewer, manifest: { views: { ...view('cards'), ...view('count', { kind: 'item' }) } } } },
+    })
+    await editor.locator('#views').click()
+    await until(async () => (await editor.locator('#menu li[data-view="board/count"]').count()) === 1)
+    expect(await editor.locator('#menu-body h2').allInnerTexts()).toEqual(['Look', 'Views', 'Status row'])
+    const lists = editor.locator('#menu-body ul.menu-views')
+    expect(await lists.nth(0).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/cards'])
+    expect(await lists.nth(1).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/count'])
+  })
+})
+
 describe('a layout redrawing to mislead (A-30)', () => {
   async function withLayout(setup: Setup) {
     const made = await started({ ...setup, plugins: { ...setup.plugins, cover: { granted: layoutGrants, ...setup.plugins?.cover } } })
