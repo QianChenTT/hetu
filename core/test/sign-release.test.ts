@@ -282,10 +282,10 @@ describe('signing and publishing a draft release', () => {
     })
   }
 
-  it('refuses an update file whose released isn\'t UTC as toISOString writes it', async () => {
+  it('refuses an update file whose built isn\'t UTC as toISOString writes it', async () => {
     const original = JSON.parse((await fakeGh()).updateFile.toString('utf8')) as Record<string, unknown>
-    const fake = await fakeGh({ files: { [UPDATE_FILE_NAME]: Buffer.from(JSON.stringify({ ...original, released: '2026-11-23 20:00' })) } })
-    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`${UPDATE_FILE_NAME}'s released isn't a time in UTC`)
+    const fake = await fakeGh({ files: { [UPDATE_FILE_NAME]: Buffer.from(JSON.stringify({ ...original, built: '2026-11-23 20:00' })) } })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`${UPDATE_FILE_NAME}'s built isn't a time in UTC`)
   })
 
   it('refuses an update file that isn\'t JSON', async () => {

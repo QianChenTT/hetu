@@ -21,7 +21,7 @@ const temp = async () => {
 const SETUP = 'hetu-setup-0.6.1-x64.exe'
 const setupBytes = Buffer.from('MZ a stand-in for the setup, with no meaning of its own')
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
-const RELEASED = new Date('2026-11-23T20:00:00.000Z')
+const BUILT = new Date('2026-11-23T20:00:00.000Z')
 
 // GitHub's latest release holding the update file and its signature, for the check hetu itself makes
 function github(file: Buffer, signature: Buffer): Fetch {
@@ -41,22 +41,22 @@ describe('the update file made from a built setup', () => {
   it('names the setup, its size and sha256, the version and when it was made, in UTC', async () => {
     const setup = path.join(await temp(), SETUP)
     await writeFile(setup, setupBytes)
-    expect(await updateFileFor(setup, '0.6.1', RELEASED)).toEqual({
-      version: '0.6.1', file: SETUP, size: setupBytes.length, sha256: sha256(setupBytes), released: '2026-11-23T20:00:00.000Z',
+    expect(await updateFileFor(setup, '0.6.1', BUILT)).toEqual({
+      version: '0.6.1', file: SETUP, size: setupBytes.length, sha256: sha256(setupBytes), built: '2026-11-23T20:00:00.000Z',
     })
   })
 
   it('refuses a version that isn\'t x.y.z', async () => {
     const setup = path.join(await temp(), SETUP)
     await writeFile(setup, setupBytes)
-    await expect(updateFileFor(setup, '0.6.1-beta', RELEASED)).rejects.toThrow('x.y.z')
+    await expect(updateFileFor(setup, '0.6.1-beta', BUILT)).rejects.toThrow('x.y.z')
   })
 
   // The bytes a release carries are the bytes the publisher signs and hetu checks, through hetu's own check
   it('is a file hetu accepts once the key signs its bytes', async () => {
     const setup = path.join(await temp(), SETUP)
     await writeFile(setup, setupBytes)
-    const bytes = Buffer.from(updateFileText(await updateFileFor(setup, '0.6.1', RELEASED)))
+    const bytes = Buffer.from(updateFileText(await updateFileFor(setup, '0.6.1', BUILT)))
     const pair = generateKeyPairSync('ed25519')
     const signature = sign(null, bytes, pair.privateKey)
     expect(signature).toHaveLength(64)
@@ -71,16 +71,16 @@ describe('the files a release carries beside the setup', () => {
     const out = await temp()
     const setup = path.join(out, SETUP)
     await writeFile(setup, setupBytes)
-    await writeUpdateAndSums(out, [setup], '0.6.1', RELEASED)
+    await writeUpdateAndSums(out, [setup], '0.6.1', BUILT)
     expect((await readdir(out)).sort()).toEqual(['SHA256SUMS', SETUP, UPDATE_FILE_NAME].sort())
     const update = await readFile(path.join(out, UPDATE_FILE_NAME))
-    expect(JSON.parse(update.toString('utf8'))).toEqual(await updateFileFor(setup, '0.6.1', RELEASED))
+    expect(JSON.parse(update.toString('utf8'))).toEqual(await updateFileFor(setup, '0.6.1', BUILT))
     expect(await readFile(path.join(out, 'SHA256SUMS'), 'utf8')).toBe(`${sha256(setupBytes)}  ${SETUP}\n${sha256(update)}  ${UPDATE_FILE_NAME}\n`)
   })
 
   it('writes nothing for a build with no setup', async () => {
     const out = await temp()
-    await writeUpdateAndSums(out, [], '0.6.1', RELEASED)
+    await writeUpdateAndSums(out, [], '0.6.1', BUILT)
     expect(await readdir(out)).toEqual([])
   })
 
@@ -88,6 +88,6 @@ describe('the files a release carries beside the setup', () => {
     const out = await temp()
     const setups = [path.join(out, SETUP), path.join(out, 'hetu-setup-0.6.2-x64.exe')]
     for (const setup of setups) await writeFile(setup, setupBytes)
-    await expect(writeUpdateAndSums(out, setups, '0.6.1', RELEASED)).rejects.toThrow('one setup')
+    await expect(writeUpdateAndSums(out, setups, '0.6.1', BUILT)).rejects.toThrow('one setup')
   })
 })
