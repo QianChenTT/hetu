@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Fetch } from '../backend/lib/github.ts'
 import { checkLatest, SIGNATURE_FILE_NAME, UPDATE_FILE_NAME } from '../backend/updater/check.ts'
-import { updateFileFor, updateFileText, writeReleaseFiles } from '../build/update-file.ts'
+import { updateFileFor, updateFileText, writeUpdateAndSums } from '../build/update-file.ts'
 
 const made: string[] = []
 afterEach(async () => {
@@ -71,7 +71,7 @@ describe('the files a release carries beside the setup', () => {
     const out = await temp()
     const setup = path.join(out, SETUP)
     await writeFile(setup, setupBytes)
-    await writeReleaseFiles(out, [setup], '0.6.1', RELEASED)
+    await writeUpdateAndSums(out, [setup], '0.6.1', RELEASED)
     expect((await readdir(out)).sort()).toEqual(['SHA256SUMS', SETUP, UPDATE_FILE_NAME].sort())
     const update = await readFile(path.join(out, UPDATE_FILE_NAME))
     expect(JSON.parse(update.toString('utf8'))).toEqual(await updateFileFor(setup, '0.6.1', RELEASED))
@@ -80,7 +80,7 @@ describe('the files a release carries beside the setup', () => {
 
   it('writes nothing for a build with no setup', async () => {
     const out = await temp()
-    await writeReleaseFiles(out, [], '0.6.1', RELEASED)
+    await writeUpdateAndSums(out, [], '0.6.1', RELEASED)
     expect(await readdir(out)).toEqual([])
   })
 
@@ -88,6 +88,6 @@ describe('the files a release carries beside the setup', () => {
     const out = await temp()
     const setups = [path.join(out, SETUP), path.join(out, 'hetu-setup-0.6.2-x64.exe')]
     for (const setup of setups) await writeFile(setup, setupBytes)
-    await expect(writeReleaseFiles(out, setups, '0.6.1', RELEASED)).rejects.toThrow('one setup')
+    await expect(writeUpdateAndSums(out, setups, '0.6.1', RELEASED)).rejects.toThrow('one setup')
   })
 })

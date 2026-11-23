@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, type KeyObject } from 'node:crypto'
+import { createHash, createPublicKey, generateKeyPairSync, type KeyObject } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -25,6 +25,7 @@ const TAG = `v${VERSION}`
 const SETUP = `hetu-setup-${VERSION}-x64.exe`
 const REPO = 'QianChenTT/hetu'
 const PASSPHRASE = 'a passphrase made for this run'
+const COMMIT = 'c0ffee0000000000000000000000000000000000'
 
 // A key pair made for this run, the private half written as the publisher's is: encrypted PKCS#8 in PEM with AES-256-CBC
 // under a passphrase. Nothing here reads the publisher's key
@@ -36,31 +37,42 @@ async function keyPair(): Promise<{ keyPath: string, publicKey: KeyObject }> {
   expect(pair.privateKey).toContain('ENCRYPTED PRIVATE KEY')
   const keyPath = path.join(await temp(), 'signing.key.pem')
   await writeFile(keyPath, pair.privateKey)
-  const { createPublicKey } = await import('node:crypto')
   return { keyPath, publicKey: createPublicKey(pair.publicKey) }
 }
 
-const setupBytes = Buffer.from('MZ a stand-in for the setup')
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
 type Draft = {
   isDraft?: boolean
-  files?: Record<string, Buffer>
+  setup?: Buffer
+  // Files that replace the ones the Release workflow would have made, or null for one missing
+  files?: Record<string, Buffer | null>
   attested?: Record<string, boolean>
-  latest?: string
+  // GitHub's latest release before publishing (null for none) and the tags it answers after, one a read
+  latest?: string | null
+  latestAfter?: string[]
+  // What the draft holds once the signature is uploaded, when someone changed it meanwhile (null for a file removed),
+  // and whether it was published meanwhile
+  changed?: Record<string, Buffer | null>
+  publishedMeanwhile?: boolean
 }
 
-// gh as a table: the draft's state and files, each call recorded. A download writes the named files into --dir, an
-// upload reads the file it names, so the bytes that would reach GitHub are kept
+// gh as a table: the draft's files with the digests GitHub records, each call recorded. A download writes the named
+// files into --dir, an upload reads the file it names, so the bytes that would reach GitHub are kept
 async function fakeGh(draft: Draft = {}) {
-  const updateFile = await (async () => {
-    const dir = await temp()
-    await writeFile(path.join(dir, SETUP), setupBytes)
-    return Buffer.from(updateFileText(await updateFileFor(path.join(dir, SETUP), VERSION, new Date('2026-11-23T20:00:00.000Z'))))
-  })()
-  const files: Record<string, Buffer> = { [SETUP]: setupBytes, [UPDATE_FILE_NAME]: updateFile, SHA256SUMS: Buffer.from('sums\n'), ...draft.files }
+  const setupBytes = draft.setup ?? Buffer.from('MZ a stand-in for the setup')
+  const dir = await temp()
+  await writeFile(path.join(dir, SETUP), setupBytes)
+  const updateFile = Buffer.from(updateFileText(await updateFileFor(path.join(dir, SETUP), VERSION, new Date('2026-11-23T20:00:00.000Z'))))
+  const sums = Buffer.from(`${sha256(setupBytes)}  ${SETUP}\n${sha256(updateFile)}  ${UPDATE_FILE_NAME}\n`)
+  const files: Record<string, Buffer> = { [SETUP]: setupBytes, [UPDATE_FILE_NAME]: updateFile, SHA256SUMS: sums }
+  for (const [name, bytes] of Object.entries(draft.files ?? {})) {
+    if (bytes === null) delete files[name]
+    else files[name] = bytes
+  }
   const calls: string[][] = []
   const uploads: Record<string, Buffer> = {}
+  const after = [...(draft.latestAfter ?? [TAG])]
   let published = false
   const flag = (args: readonly string[], name: string) => args.flatMap((arg, at) => (arg === name ? [args[at + 1]!] : []))
   const gh: Gh = async args => {
@@ -68,11 +80,15 @@ async function fakeGh(draft: Draft = {}) {
     const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' })
     const [group, command] = args
     if (group === 'release' && command === 'view') {
-      return ok(JSON.stringify({ tagName: TAG, isDraft: draft.isDraft ?? true, assets: Object.keys(files).map(name => ({ name })) }))
+      const uploaded = Object.keys(uploads).length > 0
+      const now: Record<string, Buffer | null> = { ...files, ...uploads, ...(uploaded ? draft.changed : {}) }
+      const assets = Object.entries(now).flatMap(([name, bytes]) => (bytes === null ? [] : [{ name, digest: `sha256:${sha256(bytes)}` }]))
+      const isDraft = uploaded && draft.publishedMeanwhile === true ? false : draft.isDraft ?? true
+      return ok(JSON.stringify({ isDraft, targetCommitish: COMMIT, assets }))
     }
     if (group === 'release' && command === 'download') {
-      const dir = flag(args, '--dir')[0]!
-      for (const name of flag(args, '--pattern')) if (files[name] !== undefined) await writeFile(path.join(dir, name), files[name])
+      const into = flag(args, '--dir')[0]!
+      for (const name of flag(args, '--pattern')) if (files[name] !== undefined) await writeFile(path.join(into, name), files[name])
       return ok()
     }
     if (group === 'attestation' && command === 'verify') {
@@ -87,15 +103,19 @@ async function fakeGh(draft: Draft = {}) {
       published = true
       return ok()
     }
-    if (group === 'api') return ok(`${published ? draft.latest ?? TAG : 'v0.6.0'}\n`)
+    if (group === 'api') {
+      const tag = published ? (after.length > 1 ? after.shift()! : after[0]!) : draft.latest === undefined ? 'v0.6.0' : draft.latest
+      return tag === null ? { code: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' } : ok(`${tag}\n`)
+    }
     return { code: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}` }
   }
-  return { gh, calls, uploads, updateFile, published: () => published }
+  return { gh, calls, uploads, updateFile, setupBytes, published: () => published }
 }
 
-async function options(gh: Gh, over: Partial<SignOptions> = {}): Promise<SignOptions & { asked: string[] }> {
+async function options(gh: Gh, over: Partial<SignOptions> = {}): Promise<SignOptions & { asked: string[], waited: number[] }> {
   const { keyPath, publicKey } = await keyPair()
   const asked: string[] = []
+  const waited: number[] = []
   return {
     version: VERSION,
     keyPath,
@@ -105,12 +125,14 @@ async function options(gh: Gh, over: Partial<SignOptions> = {}): Promise<SignOpt
       asked.push(prompt)
       return PASSPHRASE
     },
-    confirm: async prompt => {
+    askTyped: async prompt => {
       asked.push(prompt)
       return VERSION
     },
     log: () => {},
+    wait: async ms => { waited.push(ms) },
     asked,
+    waited,
     ...over,
   }
 }
@@ -130,24 +152,33 @@ function latestHolding(file: Buffer, signature: Buffer): Fetch {
 }
 
 const commands = (calls: string[][]) => calls.map(call => `${call[0]} ${call[1]}`)
+const nothingChanged = (fake: Awaited<ReturnType<typeof fakeGh>>) => {
+  expect(fake.uploads).toEqual({})
+  expect(fake.published()).toBe(false)
+}
 
 describe('signing and publishing a draft release', () => {
   it('signs the update file, uploads the signature and publishes the draft as the latest full release once confirmed', async () => {
     const fake = await fakeGh()
     const run = await options(fake.gh)
     await signRelease(run)
-    expect(commands(fake.calls)).toEqual(['release view', 'release download', 'attestation verify', 'attestation verify', 'release upload', 'release edit', 'api repos/QianChenTT/hetu/releases/latest'])
+    expect(commands(fake.calls)).toEqual([
+      'release view', 'api repos/QianChenTT/hetu/releases/latest', 'release download', 'attestation verify', 'attestation verify',
+      'release upload', 'release view', 'release edit', 'api repos/QianChenTT/hetu/releases/latest',
+    ])
     expect(run.asked).toHaveLength(2)
-    expect(fake.calls[5]).toEqual(['release', 'edit', TAG, '--repo', REPO, '--draft=false', '--prerelease=false', '--latest'])
+    expect(run.asked[1]).toContain(COMMIT)
+    expect(run.asked[1]).toContain('after v0.6.0')
+    expect(fake.calls[7]).toEqual(['release', 'edit', TAG, '--repo', REPO, '--draft=false', '--prerelease=false', '--latest'])
     const signature = fake.uploads[SIGNATURE_FILE_NAME]!
     expect(signature).toHaveLength(64)
     // The uploaded signature over the release's own update file, through the check hetu makes
     expect(await checkLatest({ running: [0, 6, 0], key: run.publicKey!, fetch: latestHolding(fake.updateFile, signature) })).toMatchObject({
-      outcome: 'found', update: { version: VERSION, file: SETUP, sha256: sha256(setupBytes) },
+      outcome: 'found', update: { version: VERSION, file: SETUP, sha256: sha256(fake.setupBytes) },
     })
   })
 
-  it('checks each file\'s attestation against the Release workflow on main', async () => {
+  it('passes gh each file to verify against the Release workflow on main', async () => {
     const fake = await fakeGh()
     await signRelease(await options(fake.gh))
     const verified = fake.calls.filter(call => call[0] === 'attestation')
@@ -160,38 +191,68 @@ describe('signing and publishing a draft release', () => {
   it('downloads into a folder of its own and removes it afterwards', async () => {
     const fake = await fakeGh()
     await signRelease(await options(fake.gh))
-    const dir = fake.calls.find(call => call[1] === 'download')![fake.calls.find(call => call[1] === 'download')!.indexOf('--dir') + 1]!
-    expect(path.dirname(dir)).toBe(path.resolve(tmpdir()))
+    const download = fake.calls.find(call => call[1] === 'download')!
+    const dir = download[download.indexOf('--dir') + 1]!
+    expect(path.basename(dir)).toMatch(/^hetu-sign-release-/)
     expect(existsSync(dir)).toBe(false)
+  })
+
+  it('publishes the first release when there is no latest one yet', async () => {
+    const fake = await fakeGh({ latest: null })
+    const run = await options(fake.gh)
+    await signRelease(run)
+    expect(run.asked[1]).toContain('after none')
+    expect(fake.published()).toBe(true)
+  })
+
+  it('replaces a signature an earlier run uploaded to the draft', async () => {
+    const fake = await fakeGh({ files: { [SIGNATURE_FILE_NAME]: Buffer.alloc(64) } })
+    await signRelease(await options(fake.gh))
+    expect(fake.published()).toBe(true)
   })
 
   it('refuses a version that isn\'t x.y.z before asking GitHub anything', async () => {
     const fake = await fakeGh()
-    await expect(signRelease(await options(fake.gh, { version: 'v0.6.1' }))).rejects.toThrow('x.y.z')
+    await expect(signRelease(await options(fake.gh, { version: 'v0.6.1' }))).rejects.toThrow('the version v0.6.1 isn\'t x.y.z')
+    expect(fake.calls).toEqual([])
+  })
+
+  it('refuses a key file it can\'t read before asking GitHub anything', async () => {
+    const fake = await fakeGh()
+    await expect(signRelease(await options(fake.gh, { keyPath: path.join(await temp(), 'missing.pem') }))).rejects.toThrow('ENOENT')
     expect(fake.calls).toEqual([])
   })
 
   it('refuses a release that isn\'t a draft', async () => {
     const fake = await fakeGh({ isDraft: false })
-    const run = await options(fake.gh)
-    await expect(signRelease(run)).rejects.toThrow('not a draft')
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`${TAG} is not a draft`)
     expect(commands(fake.calls)).toEqual(['release view'])
   })
 
-  it('refuses a draft missing the setup or the update file', async () => {
-    for (const name of [SETUP, UPDATE_FILE_NAME]) {
-      const fake = await fakeGh()
-      const view = fake.gh
-      const gh: Gh = async args => {
-        const answer = await view(args)
-        if (args[1] !== 'view') return answer
-        const release = JSON.parse(answer.stdout) as { assets: { name: string }[] }
-        return { ...answer, stdout: JSON.stringify({ ...release, assets: release.assets.filter(asset => asset.name !== name) }) }
-      }
-      await expect(signRelease(await options(gh)), name).rejects.toThrow(name)
+  for (const name of [SETUP, UPDATE_FILE_NAME, 'SHA256SUMS']) {
+    it(`refuses a draft missing ${name}`, async () => {
+      const fake = await fakeGh({ files: { [name]: null } })
+      await expect(signRelease(await options(fake.gh))).rejects.toThrow(`the draft ${TAG} holds no ${name}`)
       expect(commands(fake.calls)).toEqual(['release view'])
-    }
+    })
+  }
+
+  it('refuses a draft holding a file the Release workflow didn\'t make', async () => {
+    const fake = await fakeGh({ files: { 'extra.exe': Buffer.from('x') } })
+    const run = await options(fake.gh)
+    await expect(signRelease(run)).rejects.toThrow('extra.exe')
+    expect(run.asked).toEqual([])
+    nothingChanged(fake)
   })
+
+  for (const latest of [TAG, 'v0.7.0', 'v0.10.0']) {
+    it(`refuses to publish ${TAG} over the latest release ${latest}, which isn't lower`, async () => {
+      const fake = await fakeGh({ latest })
+      const run = await options(fake.gh)
+      await expect(signRelease(run)).rejects.toThrow(`${TAG} isn't higher than the latest release ${latest}`)
+      expect(commands(fake.calls)).toEqual(['release view', 'api repos/QianChenTT/hetu/releases/latest'])
+    })
+  }
 
   for (const name of [SETUP, UPDATE_FILE_NAME]) {
     it(`refuses when ${name}'s attestation doesn't verify, before the passphrase is asked`, async () => {
@@ -199,66 +260,133 @@ describe('signing and publishing a draft release', () => {
       const run = await options(fake.gh)
       await expect(signRelease(run)).rejects.toThrow(`no attestation for ${name}`)
       expect(run.asked).toEqual([])
-      expect(fake.uploads).toEqual({})
-      expect(fake.published()).toBe(false)
+      nothingChanged(fake)
     })
   }
 
-  const mismatched: [string, Record<string, unknown>][] = [
-    ['sha256', { sha256: 'ab'.repeat(32) }],
-    ['size', { size: setupBytes.length + 1 }],
-    ['file', { file: 'hetu-setup-0.6.2-x64.exe' }],
-    ['version', { version: '0.6.2' }],
-    ['released', { released: '2026-11-23 20:00' }],
+  const mismatched: [string, Record<string, unknown>, string][] = [
+    ['sha256', { sha256: 'ab'.repeat(32) }, `${UPDATE_FILE_NAME}'s sha256 is ${'ab'.repeat(32)}`],
+    ['size', { size: 1 }, `${UPDATE_FILE_NAME}'s size is 1`],
+    ['file', { file: 'hetu-setup-0.6.2-x64.exe' }, `${UPDATE_FILE_NAME}'s file is hetu-setup-0.6.2-x64.exe`],
+    ['version', { version: '0.6.2' }, `${UPDATE_FILE_NAME}'s version is 0.6.2`],
   ]
-  for (const [field, over] of mismatched) {
+  for (const [field, over, message] of mismatched) {
     it(`refuses an update file whose ${field} doesn't match the setup downloaded, before the passphrase is asked`, async () => {
       const original = JSON.parse((await fakeGh()).updateFile.toString('utf8')) as Record<string, unknown>
-      const fake = await fakeGh({ files: { [UPDATE_FILE_NAME]: Buffer.from(JSON.stringify({ ...original, ...over })) } })
+      const changed = Buffer.from(JSON.stringify({ ...original, ...over }))
+      const fake = await fakeGh({ files: { [UPDATE_FILE_NAME]: changed } })
       const run = await options(fake.gh)
-      await expect(signRelease(run)).rejects.toThrow(field)
+      await expect(signRelease(run)).rejects.toThrow(message)
       expect(run.asked).toEqual([])
-      expect(fake.uploads).toEqual({})
+      nothingChanged(fake)
     })
   }
+
+  it('refuses an update file whose released isn\'t UTC as toISOString writes it', async () => {
+    const original = JSON.parse((await fakeGh()).updateFile.toString('utf8')) as Record<string, unknown>
+    const fake = await fakeGh({ files: { [UPDATE_FILE_NAME]: Buffer.from(JSON.stringify({ ...original, released: '2026-11-23 20:00' })) } })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`${UPDATE_FILE_NAME}'s released isn't a time in UTC`)
+  })
 
   it('refuses an update file that isn\'t JSON', async () => {
     const fake = await fakeGh({ files: { [UPDATE_FILE_NAME]: Buffer.from('not json') } })
-    await expect(signRelease(await options(fake.gh))).rejects.toThrow(UPDATE_FILE_NAME)
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`${UPDATE_FILE_NAME} isn't JSON`)
+  })
+
+  it('refuses a SHA256SUMS that doesn\'t hold exactly the two files checked', async () => {
+    const fake = await fakeGh({ files: { SHA256SUMS: Buffer.from(`${'00'.repeat(32)}  ${SETUP}\n`) } })
+    const run = await options(fake.gh)
+    await expect(signRelease(run)).rejects.toThrow('SHA256SUMS doesn\'t hold exactly the two files checked')
+    expect(run.asked).toEqual([])
+  })
+
+  it('refuses a download that isn\'t what GitHub records for the draft', async () => {
+    const fake = await fakeGh()
+    const real = fake.gh
+    const gh: Gh = async args => {
+      const answer = await real(args)
+      if (args[1] !== 'download') return answer
+      const dir = args[args.indexOf('--dir') + 1]!
+      await writeFile(path.join(dir, SETUP), Buffer.from('MZ another setup'))
+      return answer
+    }
+    const run = await options(gh)
+    await expect(signRelease(run)).rejects.toThrow(`the draft's ${SETUP} has sha256`)
+    expect(run.asked).toEqual([])
   })
 
   it('refuses a passphrase that doesn\'t open the key, uploading nothing', async () => {
     const fake = await fakeGh()
-    const run = await options(fake.gh, { askPassphrase: async () => 'not the passphrase' })
-    await expect(signRelease(run)).rejects.toThrow('passphrase')
-    expect(fake.uploads).toEqual({})
-    expect(fake.published()).toBe(false)
+    await expect(signRelease(await options(fake.gh, { askPassphrase: async () => 'not the passphrase' }))).rejects.toThrow('the passphrase doesn\'t open')
+    nothingChanged(fake)
+  })
+
+  it('stops as the prompt says when the passphrase isn\'t given', async () => {
+    const fake = await fakeGh()
+    await expect(signRelease(await options(fake.gh, { askPassphrase: async () => { throw new Error('stopped') } }))).rejects.toThrow(/^stopped$/)
+    nothingChanged(fake)
   })
 
   it('refuses a key whose signature hetu\'s key doesn\'t check, uploading nothing', async () => {
     const fake = await fakeGh()
     const run = await options(fake.gh, { publicKey: generateKeyPairSync('ed25519').publicKey })
-    await expect(signRelease(run)).rejects.toThrow('key inside hetu')
-    expect(fake.uploads).toEqual({})
-    expect(fake.published()).toBe(false)
+    await expect(signRelease(run)).rejects.toThrow('this key isn\'t the one hetu trusts')
+    nothingChanged(fake)
+  })
+
+  it('names the updater\'s reason when it would refuse the update file itself', async () => {
+    const fake = await fakeGh({ setup: Buffer.alloc(0) })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow('it refuses the update file: format')
+    nothingChanged(fake)
   })
 
   it('uploads and publishes nothing unless the version is typed to confirm', async () => {
     const fake = await fakeGh()
-    const run = await options(fake.gh, { confirm: async () => 'yes' })
-    await expect(signRelease(run)).rejects.toThrow('not confirmed')
-    expect(fake.uploads).toEqual({})
+    await expect(signRelease(await options(fake.gh, { askTyped: async () => 'yes' }))).rejects.toThrow('not confirmed')
+    nothingChanged(fake)
+  })
+
+  it('publishes nothing when the draft changed between the checks and the publish', async () => {
+    const fake = await fakeGh({ changed: { [SETUP]: Buffer.from('MZ swapped') } })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`the draft's ${SETUP} has sha256`)
     expect(fake.published()).toBe(false)
   })
 
-  it('says so when GitHub\'s latest release isn\'t the one published', async () => {
-    const fake = await fakeGh({ latest: 'v0.7.0' })
-    await expect(signRelease(await options(fake.gh))).rejects.toThrow('v0.7.0')
+  it('publishes nothing when a file was added to the draft meanwhile', async () => {
+    const fake = await fakeGh({ changed: { 'extra.exe': Buffer.from('x') } })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow('extra.exe')
+    expect(fake.published()).toBe(false)
+  })
+
+  it('publishes nothing when a file was removed from the draft meanwhile', async () => {
+    const fake = await fakeGh({ changed: { [SETUP]: null } })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`the draft ${TAG} holds`)
+    expect(fake.published()).toBe(false)
+  })
+
+  it('edits nothing when the draft was published meanwhile', async () => {
+    const fake = await fakeGh({ publishedMeanwhile: true })
+    await expect(signRelease(await options(fake.gh))).rejects.toThrow(`${TAG} is not a draft`)
+    expect(fake.published()).toBe(false)
+  })
+
+  it('waits for GitHub to name the release its latest', async () => {
+    const fake = await fakeGh({ latestAfter: ['v0.6.0', 'v0.6.0', TAG] })
+    const run = await options(fake.gh)
+    await signRelease(run)
+    expect(run.waited).toEqual([2000, 2000])
+  })
+
+  it('says so when GitHub\'s latest release is still another one after five reads', async () => {
+    const fake = await fakeGh({ latestAfter: ['v0.7.0'] })
+    const run = await options(fake.gh)
+    await expect(signRelease(run)).rejects.toThrow(`${TAG} is published, but GitHub's latest release is v0.7.0`)
+    expect(run.waited).toHaveLength(4)
   })
 
   it('says what gh said when a call fails', async () => {
     const gh: Gh = async () => ({ code: 1, stdout: '', stderr: 'release not found' })
-    await expect(signRelease(await options(gh))).rejects.toThrow('release not found')
+    await expect(signRelease(await options(gh))).rejects.toThrow('gh release view failed: release not found')
   })
 })
 
@@ -301,6 +429,17 @@ describe('the passphrase prompt', () => {
     const asked = askHidden('Passphrase: ', tty.input, tty.output)
     tty.input.write('secrex\u007ft\b\bet\n')
     expect(await asked).toBe('secret')
+  })
+
+  it('drops a key that sends an escape sequence and keeps a character split across two reads', async () => {
+    const raw: boolean[] = []
+    const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode(on: boolean) { raw.push(on); return this } })
+    const asked = askHidden('Passphrase: ', input, { write: () => true })
+    const accented = Buffer.from('é')
+    input.write(Buffer.from('\u001b[A'))
+    input.write(Buffer.concat([Buffer.from('caf'), accented.subarray(0, 1)]))
+    input.write(Buffer.concat([accented.subarray(1), Buffer.from('\r')]))
+    expect(await asked).toBe('café')
   })
 
   it('stops on Ctrl+C', async () => {
