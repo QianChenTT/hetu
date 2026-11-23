@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HeldRequest, SecurityList } from '../api/actions.ts'
 import { capabilityKey, type Capability } from '../api/capabilities.ts'
 import type { Change } from '../api/changes.ts'
@@ -1596,8 +1596,8 @@ describe('a notice owed across an entry stored strict', () => {
     await off.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     await until(() => off.pluginsManager.policyJob('grant-risk-classifier') === 'on')
     await off.pluginsManager.settled()
-    await tick(30)
-    expect(await stored(off, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'slot-on', by: null } })
+    // Waited for, since a fixed 30 ms raced the store on a busy Windows runner
+    await vi.waitFor(async () => expect(await stored(off, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'slot-on', by: null } }), { timeout: 5000 })
     expect(await notices(off)).toEqual([])
     await closed(off)
     const known = await started(base, fetches)
