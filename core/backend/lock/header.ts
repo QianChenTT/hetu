@@ -1,3 +1,4 @@
+import type { LockFields } from '../../api/envelope.ts'
 import type { Guard, Opening, Provider } from '../../api/policy-jobs.ts'
 
 // What the lock module provides: note locks by path, holder and expiry, the provider serving lock.* and the guard that
@@ -17,10 +18,13 @@ export const MAX_LOCKS_PER_ROOT = 1024
 // sessions takes no more of its root's count, and a new client name needs the human's Confirm
 export const MAX_LOCKS_PER_CLIENT = 256
 
-// How the core hands the module the notes folder, as it hands the luoshu its own. Another folder frees every lock
-export type LockRole = { open(opening: Opening): void }
+// How the core hands the module the notes folder, as it hands the luoshu its own. Another folder frees every lock.
+// release frees every lock once no guard holds them, the module switched off or failed, so it starts empty when on again
+export type LockRole = { open(opening: Opening): void, release(): void }
 
 export type Lock = { readonly provider: Provider, readonly guard: Guard, readonly role: LockRole }
 
-// A clock no change of the wall clock moves
-export type LockOptions = { clock(): number }
+// clock is one no change of the wall clock moves, which every end is kept on. wall turns an end to the time a plugin
+// reads, Date.now() unless named. publish is the router's for lock.changed, told once the step that noticed the change
+// ended, so no bus work runs inside a lock action's step or the guard's
+export type LockOptions = { clock(): number, wall?(): number, publish?(path: string, change: LockFields): void }

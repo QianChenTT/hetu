@@ -54,7 +54,8 @@ export type CoreCall = { action: string, args: unknown, caller: Caller }
 // read that takes time. limits are the human's values for all, read each time, so a test may change them while the
 // plugin runs
 // drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs. clock is
-// the lock's, performance.now() unless named, so a test moves a lock past its end
+// the lock's, performance.now() unless named, so a test moves a lock past its end. A named clock is the one
+// lock.changed tells each end on too, Date.now() otherwise
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
   limits?: Partial<Record<LimitName, number>>, drawer?: FakeDrawer, clock?: () => number,
@@ -221,7 +222,7 @@ function transportOf(router: Router, caller: Caller): Transport {
 }
 
 // A core for a plugin's tests: the real router with its eleven steps, a gate as the mode says, the luoshu, storage,
-// cache and history in memory, the lock module's own table and guard, test callers with the grants each test names and
+// cache and history in memory, the lock module's own table, guard and lock.changed, test callers with the grants each test names and
 // stand-ins for other plugins. One plugin runs on it at a time, placed as the plugins manager would place it:
 // mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
@@ -283,7 +284,12 @@ export class FakeCore {
     this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     this.history = new MemoryHistory(this.memory.notes, options.latencyMs ?? 0)
-    this.lock = memoryLock({ clock: options.clock ?? (() => performance.now()) })
+    // lock.changed goes out through the router as the core wires it, to a plugin that reads the note
+    this.lock = memoryLock({
+      clock: options.clock ?? (() => performance.now()),
+      wall: options.clock ?? (() => Date.now()),
+      publish: (path, change) => this.router.publishCore('lock', 'changed', path, change),
+    })
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     // Flood control counts by the limits the fake core was given, as the core's does by the human's
     const limits = new Limits(() => this.pluginsManager.limits())

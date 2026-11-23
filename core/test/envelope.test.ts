@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ack, busSignals, caller, event, grantKeyOf, kindOf, messageKinds, reasonCodes, refusal, refusalCodes, reply, request, signal, VERSION,
+  ack, busSignals, caller, event, grantKeyOf, kindOf, lockFields, messageKinds, moduleTopics, reasonCodes, refusal, refusalCodes, reply, request,
+  signal, VERSION,
 } from '../api/envelope.ts'
 import { defaultLimits } from '../api/limits.ts'
 import { MAX_DEPTH, plainProblem } from '../api/plain.ts'
@@ -338,6 +339,7 @@ describe('a caller', () => {
 
 describe('what the bus pushes and hears', () => {
   const pushed = (over: object = {}) => ({ v: 1, kind: 'event', seq: 1, topic: 'luoshu.changed', path: 'notes/a.md', ...over })
+  const locks = (over: object = {}) => pushed({ topic: 'lock.changed', locked: true, until: 1_700_000_060_000, ...over })
 
   it('has the two signals', () => {
     expect(busSignals).toEqual(['events.dropped', 'events.ended'])
@@ -348,6 +350,8 @@ describe('what the bus pushes and hears', () => {
     ['an event with a path', pushed()],
     ['an event with no path', { v: 1, kind: 'event', seq: 3, topic: 'search.indexed' }],
     ['a core topic', { v: 1, kind: 'event', seq: 1, topic: 'core.status' }],
+    ['a note locked with its end', locks()],
+    ['a note unlocked', locks({ locked: false, until: null })],
   ])('takes %s', (_name, message) => {
     expect(event.safeParse(message).success).toBe(true)
   })
@@ -364,6 +368,14 @@ describe('what the bus pushes and hears', () => {
     ['a path with a backslash', pushed({ path: 'notes\\a.md' })],
     ['another version', pushed({ v: 2 })],
     ['another kind', pushed({ kind: 'call' })],
+    ['lock.changed with no lock state', pushed({ topic: 'lock.changed' })],
+    ['lock.changed with no path', locks({ path: undefined })],
+    ['lock.changed with its holder', locks({ holder: 'claude-code#1' })],
+    ['lock.changed locked with no end', locks({ until: null })],
+    ['lock.changed unlocked with an end', locks({ locked: false })],
+    ['lock.changed with an end that is not whole', locks({ until: 1.5 })],
+    ['lock.changed with a negative end', locks({ until: -1 })],
+    ['lock state on another topic', pushed({ locked: true, until: 5 })],
   ])('refuses an event with %s', (_name, message) => {
     expect(event.safeParse(message).success).toBe(false)
   })
@@ -387,5 +399,23 @@ describe('what the bus pushes and hears', () => {
     expect(ack.safeParse({ v: 1, kind: 'ack' }).success).toBe(false)
     expect(ack.safeParse({ v: 1, kind: 'ack', seq: 1, topic: 'luoshu.changed' }).success).toBe(false)
     expect(ack.safeParse({ v: 2, kind: 'ack', seq: 1 }).success).toBe(false)
+  })
+})
+
+describe('the topics core modules publish', () => {
+  it('names each with who hears it and what it carries beside its path, lock.changed alone read-only and with fields', () => {
+    expect(Object.keys(moduleTopics)).toEqual(['luoshu.changed', 'luoshu.outside', 'lock.changed'])
+    expect(Object.entries(moduleTopics).map(([topic, spec]) => [topic, spec.hears, spec.fields === null]))
+      .toEqual([['luoshu.changed', 'list', true], ['luoshu.outside', 'list', true], ['lock.changed', 'read', false]])
+    expect(Object.getPrototypeOf(moduleTopics)).toBeNull()
+    expect(Object.isFrozen(moduleTopics) && Object.values(moduleTopics).every(Object.isFrozen)).toBe(true)
+  })
+
+  it('shapes lock.changed as locked with a whole end or unlocked with none, and nothing more', () => {
+    expect(lockFields.safeParse({ locked: true, until: 0 }).success).toBe(true)
+    expect(lockFields.safeParse({ locked: false, until: null }).success).toBe(true)
+    for (const bad of [{ locked: true }, { locked: false }, { locked: true, until: null }, { locked: false, until: 5 }, { locked: true, until: 5, holder: 'x' }]) {
+      expect([bad, lockFields.safeParse(bad).success]).toEqual([bad, false])
+    }
   })
 })

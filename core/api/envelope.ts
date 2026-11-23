@@ -150,15 +150,38 @@ const eventPath = z.string().superRefine((value, ctx) => {
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
 })
 
-// An event as the bus pushes it: a topic and maybe a path, never content. seq counts the subscriber's events from 1 and
-// is what an ack names. A topic in the events namespace is a signal and never an event
-export const event = z.strictObject({
-  v: z.literal(VERSION),
-  kind: z.literal('event'),
-  seq: z.int().positive(),
-  topic: qualifiedName.refine(topic => !topic.startsWith('events.'), 'a signal'),
+// What lock.changed carries beside its path: whether the note is locked now and when its lock ends, in milliseconds
+// since the epoch, null once it isn't. Never who holds it
+export const lockFields = z.union([
+  z.strictObject({ locked: z.literal(true), until: z.int().nonnegative() }),
+  z.strictObject({ locked: z.literal(false), until: z.null() }),
+])
+export type LockFields = z.infer<typeof lockFields>
+
+// The topics core modules publish, each with a path. hears is who the bus gives one to: a subscriber the gate lets list
+// the path, or only one that reads it. fields is what one carries beside its path, null for nothing. A module's publish
+// of a topic not here, or with other fields, reaches nobody
+export type ModuleTopic = { readonly hears: 'list' | 'read', readonly fields: z.ZodType<Record<string, unknown>> | null }
+export const moduleTopics: Readonly<Record<string, ModuleTopic>> = Object.freeze(Object.assign(Object.create(null), {
+  'luoshu.changed': Object.freeze({ hears: 'list', fields: null }),
+  'luoshu.outside': Object.freeze({ hears: 'list', fields: null }),
+  'lock.changed': Object.freeze({ hears: 'read', fields: lockFields }),
+}))
+
+// An event as the bus pushes it: a topic and maybe a path, never content, and lock.changed its lock's state too. seq
+// counts the subscriber's events from 1 and is what an ack names. A topic in the events namespace is a signal and never
+// an event
+const eventHead = { v: z.literal(VERSION), kind: z.literal('event'), seq: z.int().positive() }
+const pathEvent = z.strictObject({
+  ...eventHead,
+  topic: qualifiedName.refine(topic => !topic.startsWith('events.'), 'a signal').refine(topic => topic !== 'lock.changed', 'carries fields'),
   path: eventPath.optional(),
 })
+const lockChangedEvent = z.union([
+  z.strictObject({ ...eventHead, topic: z.literal('lock.changed'), path: eventPath, locked: z.literal(true), until: z.int().nonnegative() }),
+  z.strictObject({ ...eventHead, topic: z.literal('lock.changed'), path: eventPath, locked: z.literal(false), until: z.null() }),
+])
+export const event = z.union([pathEvent, lockChangedEvent])
 export type BusEvent = z.infer<typeof event>
 
 // A signal carries no seq, since no ack frees it. The topics it names are the subscriber's own
