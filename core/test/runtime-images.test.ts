@@ -132,6 +132,21 @@ describe('the images host', () => {
     expect(await images.serve(again)).toBe(null)
   })
 
+  it('serves nothing when the plugin stops while its note is read', async () => {
+    const made = luoshu()
+    const running = new Map([['board', 1]])
+    const images = new ViewImages({
+      running: plugin => running.get(plugin) ?? null,
+      reads: () => true,
+      read: async (caller, at, reads) => {
+        const got = await readBytes(made.provider, caller, at, reads)
+        running.delete('board')
+        return got?.bytes ?? null
+      },
+    })
+    expect(await images.serve(images.mint(editor, 'board', 'pics/dot.png')!)).toBe(null)
+  })
+
   it('serves nothing after the editor page unloads or past ten seconds', async () => {
     let now = 1000
     const { images } = host({ now: () => now })
