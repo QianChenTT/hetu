@@ -3,9 +3,22 @@ import { VERSION } from '../api/version.ts'
 import type { Request } from './client.ts'
 import { Refused } from './refused.ts'
 
-// A signal and maybe a path, never content. The path is one the gate says the plugin may read
-export type BusEvent = { readonly topic: string, readonly path?: string }
-export type EventHandler = (event: BusEvent) => void | Promise<void>
+// A signal and maybe a path, never content. luoshu.changed and luoshu.outside go to a plugin the gate lets list the
+// path, another plugin's topic as that plugin published it
+export type PathEvent<T extends string = string> = { readonly topic: T, readonly path?: string }
+// A note locked, its lock renewed with a new end, cleared or expired: whether it is locked now and when its lock ends in
+// milliseconds since the epoch, null once it isn't. Never who holds it. Only a plugin that reads the note hears it, and
+// an expiry only once the core noticed it, which may be late, so a plugin that must act at the end times it from until.
+// After onResync names lock.changed, lock.held answers the notes the plugin follows with each end, to rebuild from
+export type LockChangedEvent = { readonly topic: 'lock.changed', readonly path: string } & (
+  | { readonly locked: true, readonly until: number }
+  | { readonly locked: false, readonly until: null }
+)
+// What a handler of the topics T hears: lock.changed with its lock state, any other topic as a PathEvent of that topic,
+// so a handler of a mixed list narrows by event.topic. Topics held in a string[] give PathEvent, so a handler that may
+// hear lock.changed then checks 'locked' in event
+export type BusEvent<T extends string = string> = T extends 'lock.changed' ? LockChangedEvent : PathEvent<T>
+export type EventHandler<T extends string = string> = (event: BusEvent<T>) => void | Promise<void>
 
 // onResync hears the topics the plugin may have missed events on, so it reads again. onEnded hears the topics whose
 // subscription the gate ended and the refusal the SDK got subscribing again, needs-confirm when it asked the human
@@ -27,7 +40,11 @@ const ACK_EVERY = 64
 const RESEND_FIRST_MS = 1000
 const RESENDS = 5
 
-type Entry = { readonly handler: EventHandler, readonly options: EventOptions, readonly topics: ReadonlySet<string> }
+type Entry = {
+  readonly handler: (event: PathEvent | LockChangedEvent) => void | Promise<void>
+  readonly options: EventOptions
+  readonly topics: ReadonlySet<string>
+}
 
 // The bus holds one subscription per half and topic, so the handlers of a topic share one. core.* goes in a call of
 // its own, since a mixed call the gate refuses is refused whole
@@ -35,6 +52,15 @@ function groups(topics: readonly string[]): string[][] {
   const core = topics.filter(topic => topic.startsWith('core.'))
   const rest = topics.filter(topic => !topic.startsWith('core.'))
   return [core, rest].filter(group => group.length > 0)
+}
+
+// An event as its topic's handlers take it, null for a lock.changed that carries no lock state, which no core sends
+function shaped(topic: string, message: Record<string, unknown>): PathEvent | LockChangedEvent | null {
+  const { path, locked, until } = message
+  if (topic !== 'lock.changed') return typeof path === 'string' ? { topic, path } : { topic }
+  if (typeof path !== 'string') return null
+  if (locked === true && typeof until === 'number') return { topic, path, locked, until }
+  return locked === false && until === null ? { topic, path, locked, until } : null
 }
 
 // One queue per half: events and signals in the order they came, each handler awaited before the next. Acks go out
@@ -51,6 +77,8 @@ export class Events {
   private handled = 0
   private lastSeq = 0
   private ackedSeq = 0
+  // Whether a lock.changed with no lock state was reported, once per half
+  private malformed = false
   private ackTimer: ReturnType<typeof setTimeout> | null = null
   private resendTimer: ReturnType<typeof setTimeout> | null = null
   private resends = 0
@@ -62,12 +90,13 @@ export class Events {
     this.request = request
   }
 
-  async on(topics: string | readonly string[], handler: EventHandler, options: EventOptions = {}): Promise<Subscription> {
+  async on<T extends string>(topics: T | readonly T[], handler: EventHandler<T>, options: EventOptions = {}): Promise<Subscription> {
     const list = [...new Set(typeof topics === 'string' ? [topics] : topics)]
     if (list.length === 0 || list.some(topic => typeof topic !== 'string' || topic === '')) throw new TypeError('on needs topics')
     if (typeof handler !== 'function') throw new TypeError('on needs a handler')
     // In place before the subscribe answers, so no event that follows the answer misses it
-    const entry: Entry = { handler, options, topics: new Set(list) }
+    // Only events of these topics reach it, each shaped for its topic in handle
+    const entry: Entry = { handler: event => handler(event as BusEvent<T>), options, topics: new Set(list) }
     this.entries.add(entry)
     const outcomes = await Promise.allSettled(groups(list.filter(topic => !this.subscribed.has(topic))).map(async group => {
       await this.subscribe(group)
@@ -133,7 +162,7 @@ export class Events {
   }
 
   private async handle(message: Record<string, unknown>): Promise<void> {
-    const { topic, seq, path, topics } = message
+    const { topic, seq, topics } = message
     if (topic === dropped || topic === ended) {
       const named = Array.isArray(topics) ? topics.filter((item): item is string => typeof item === 'string') : []
       if (topic === dropped) this.resync(named)
@@ -141,9 +170,13 @@ export class Events {
       return
     }
     if (typeof topic !== 'string' || typeof seq !== 'number') return
-    const event: BusEvent = typeof path === 'string' ? { topic, path } : { topic }
+    const event = shaped(topic, message)
+    if (event === null && !this.malformed) {
+      this.malformed = true
+      console.error(`hetu: a ${topic} event came without its lock state and reached no handler`)
+    }
     for (const entry of [...this.entries]) {
-      if (!entry.topics.has(topic)) continue
+      if (event === null || !entry.topics.has(topic)) continue
       try {
         await entry.handler(event)
       } catch (err) {
