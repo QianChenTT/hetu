@@ -9,7 +9,7 @@ import type { Transport } from './transport.ts'
 // ctx.ui sends on the same port. The runtime hands a new port for each editor page load and none while no editor page is
 // open or the plugin holds no ui item, so every call answers unavailable then. The drawer checks every call against
 // what the gate gives the plugin
-export type EditorTopic = 'opened' | 'closed' | 'changed' | 'command' | 'key' | 'viewport'
+export type EditorTopic = 'opened' | 'closed' | 'changed' | 'command' | 'key' | 'viewport' | 'link'
 
 export type EditorClient = {
   // The open notes the plugin reads

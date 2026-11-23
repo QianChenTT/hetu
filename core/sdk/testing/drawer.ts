@@ -1,6 +1,6 @@
 import { ChangeSet, type ChangeSpec, Text } from '@codemirror/state'
 import type { Capability } from '../../api/capabilities.ts'
-import type { BridgeEvent, Mark } from '../../api/editor.ts'
+import { type BridgeEvent, linkAt, type Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
 import { Editor } from '../editor.ts'
@@ -13,7 +13,8 @@ import { holds } from './gate.ts'
 // the note's next change. Marks are kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's
 // editor draws only after the plugin asked with editor.viewports and only of a note it reads, each range once. A
 // command goes only when the plugin bound a key to it, with the note, its version and the selection only when it reads
-// the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list
+// the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list. A link click goes
+// as hetu's drawer sends it, to the plugin while it reads the note and holds ui.decoration
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -140,6 +141,23 @@ export class FakeDrawer {
     } else {
       this.tell({ topic: 'editor.command', command, instance: null })
     }
+    return true
+  }
+
+  // The human Ctrl+clicked, Cmd+clicked on macOS, the character at a place or the first character of the plugin's link of
+  // that id. The smallest link holding it is told, none when links of two ids tie for it, as hetu's drawer picks among
+  // every plugin's links. False when nothing is sent
+  clickLink(instance: string, at: string | number): boolean {
+    const note = this.notes.get(instance)
+    if (note === undefined) throw new Error(`no note ${instance} is open`)
+    this.answering = null
+    // Kept as sent, so a link past the text is left out here as hetu's drawer never holds one
+    const sets = new Map([...this.marks].filter(([key]) => key.startsWith(`${instance} `))
+      .map(([key, marks]) => [key, marks.filter(mark => mark.kind !== 'link' || mark.to <= note.text.length)]))
+    const pos = typeof at === 'number' ? at : [...sets.values()].flat().find(mark => mark.kind === 'link' && mark.id === at)?.from
+    const hit = pos === undefined ? null : linkAt(new Map([['plugin', sets]]), pos)
+    if (hit === null || hit === 'tied' || !this.has('ui.decoration') || !this.reads(note.path)) return false
+    this.tell({ topic: 'editor.link', instance, version: note.version, id: hit.id })
     return true
   }
 
