@@ -25,7 +25,7 @@ export type UpdateFile = { version: string, file: string, size: number, sha256: 
 
 // What the last check came to. current: the latest release is the running version. found: a higher signed version,
 // with the release page and whether this machine can install it (Windows with the installer in the release) or only
-// links to the page. installing: the human clicked Install, the installer checked and hetu is quitting to start it
+// links to the page. installing: the human clicked Install, and the download, its checks or the quit is under way
 export type LastCheck =
   | { kind: 'none' }
   | { kind: 'checking' }
@@ -42,7 +42,7 @@ export type UpdateState = { canCheck: boolean, on: boolean, checked: number | nu
 // What the Install click came to. quitting: the installer checked and hetu is quitting to start it. failed: the
 // download or the disk failed and Install can be clicked again. unavailable: nothing found to install, this machine
 // only links to the page, a build that doesn't check, or a check or an install under way
-export type Installed =
+export type InstallResult =
   | { outcome: 'quitting' }
   | { outcome: 'refused', reason: RefusedReason }
   | { outcome: 'failed', problem: QuietProblem }
@@ -53,7 +53,7 @@ export type Updater = {
   // Checks now whatever the switch, joining a check under way. A build that doesn't check answers its state
   check(): Promise<UpdateState>
   // Downloads the installer found and checks it against the signed file, then quits and starts it
-  install(): Promise<Installed>
+  install(): Promise<InstallResult>
   // The switch: off stops the checks at start and every 7 days, on checks at once once the core is ready
   switchChecks(on: boolean): void
   // The core is ready: the first check and the 7 days from it

@@ -2,7 +2,7 @@ import type { KeyObject } from 'node:crypto'
 import path from 'node:path'
 import type { Fetch } from '../lib/github.ts'
 import { checkLatest, releasePage, updateKey, versionParts, type Checked } from './check.ts'
-import type { Installed, LastCheck, Spawn, Updater, UpdaterRecording, UpdateFile, UpdateState } from './header.ts'
+import type { InstallResult, LastCheck, Spawn, Updater, UpdaterRecording, UpdateFile, UpdateState } from './header.ts'
 import { downloadInstaller, spawnDetached, startInstaller } from './install.ts'
 import { CheckTimer, type Later } from './timer.ts'
 
@@ -16,9 +16,9 @@ export type UpdaterOptions = {
   recording: UpdaterRecording
   // hetu's data folder, whose updates folder takes the installers
   dataDir: string
-  // Quits the way Quit does, then runs start just before the exit. start answers false when it started nothing, so
-  // hetu starts again
-  quit: (start: () => boolean) => void
+  // Quits the way Quit does, then runs start just before the exit, false when a quit is already under way, which then
+  // runs no start. start answers false when it started nothing, so hetu starts again
+  quit: (start: () => boolean) => boolean
   spawn?: Spawn
   // The switch as it stands at the start, on unless the human turned it off
   on?: boolean
@@ -120,10 +120,10 @@ export function createUpdater(options: UpdaterOptions): Updater {
   })
 
   // The installer offered, downloaded and checked, then hetu quits and starts it, hashed once more just before
-  const install = async (): Promise<Installed> => {
-    const found = state.last
+  const install = async (): Promise<InstallResult> => {
+    const last = state.last
     const offer = offered
-    if (!canCheck || closed || inFlight !== null || found.kind !== 'found' || !found.installable || offer === null) {
+    if (!canCheck || closed || inFlight !== null || last.kind !== 'found' || !last.installable || offer === null) {
       return { outcome: 'unavailable' }
     }
     set({ last: { kind: 'installing', version: offer.update.version } })
@@ -132,7 +132,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
     }).catch((): { problem: 'fault' } => ({ problem: 'fault' }))
     if ('problem' in got) {
       log(`update: the installer did not download (${got.problem})`)
-      set({ last: found })
+      set({ last })
       return { outcome: 'failed', problem: got.problem }
     }
     if ('refused' in got) {
@@ -141,13 +141,14 @@ export function createUpdater(options: UpdaterOptions): Updater {
       set({ last: { kind: 'refused', reason: got.refused, version: offer.update.version } })
       return { outcome: 'refused', reason: got.refused }
     }
-    options.quit(() => {
+    // A quit begun meanwhile, for whatever reason, starts no installer
+    const quitting = options.quit(() => {
       const started = startInstaller(got.file, offer.update, options.spawn ?? spawnDetached)
       if (started === 'changed') log('update: the installer changed on disk after its download and was not started')
       if (started === 'failed') log('update: the installer did not start')
       return started === 'started'
     })
-    return { outcome: 'quitting' }
+    return quitting ? { outcome: 'quitting' } : { outcome: 'unavailable' }
   }
 
   return {

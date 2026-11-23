@@ -15,7 +15,7 @@ import type { QuietProblem, Spawn, UpdateFile } from './header.ts'
 export const INSTALLER_ARGS: readonly string[] = Object.freeze(['/S', '--force-run'])
 
 // The last installers kept as the way back, run by hand, the one just written among them
-const KEPT = 2
+const KEPT_INSTALLERS = 2
 
 // Thirty minutes take a 200 MiB installer at about 1 Mbit/s
 const DOWNLOAD_MS = 1_800_000
@@ -29,7 +29,7 @@ export type Downloaded = { file: string } | { refused: 'size' | 'hash' } | { pro
 
 // Deletes every installer in the folder but the one just written and the newest other, by when each was last written.
 // Anything not named .exe stays, and so does an installer that can't be deleted now
-async function keepLast(dir: string, newest: string): Promise<void> {
+async function pruneInstallers(dir: string, newest: string): Promise<void> {
   const others: { name: string, at: number }[] = []
   for (const name of await readdir(dir)) {
     if (name === newest || !name.toLowerCase().endsWith('.exe')) continue
@@ -38,7 +38,7 @@ async function keepLast(dir: string, newest: string): Promise<void> {
   }
   others.sort((a, b) => b.at - a.at)
   // An installer held open stays until the next download deletes it, which costs only its room on disk
-  for (const { name } of others.slice(KEPT - 1)) await rm(path.join(dir, name), { force: true }).catch(() => undefined)
+  for (const { name } of others.slice(KEPT_INSTALLERS - 1)) await rm(path.join(dir, name), { force: true }).catch(() => undefined)
 }
 
 // Downloads the installer at url, capped at the signed size, and writes it as the signed name into dir once its bytes
@@ -57,19 +57,21 @@ export async function downloadInstaller(update: UpdateFile, url: string, dir: st
   try {
     await mkdir(dir, { recursive: true })
     await replaceFile(file, bytes)
-    await keepLast(dir, update.file)
   } catch {
     return { problem: 'disk' }
   }
+  // The installer is written and checked, so a folder that can't be listed now keeps its older installers a while
+  await pruneInstallers(dir, update.file).catch(() => undefined)
   return { file }
 }
 
 // What the start came to: started, changed (gone, or no longer the signed size and sha256, deleted when it can be) or
 // failed (the start threw)
-export type Started = 'started' | 'changed' | 'failed'
+export type StartResult = 'started' | 'changed' | 'failed'
 
-// Hashes the installer again and starts it. Synchronous, for the moment between Quit and the exit
-export function startInstaller(file: string, update: UpdateFile, start: Spawn): Started {
+// Hashes the installer at its path again and starts the program at that path. Synchronous, for the moment between
+// Quit and the exit. A swap between the read and the start is not covered, as Windows holds no lock across a start
+export function startInstaller(file: string, update: UpdateFile, start: Spawn): StartResult {
   let bytes: Buffer
   try {
     bytes = readFileSync(file)

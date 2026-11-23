@@ -72,7 +72,7 @@ async function start(): Promise<void> {
   let workers: WorkerRenderers | null = null
   let updater: Updater | null = null
   // An update's installer, started once Quit has run, false when it started nothing so hetu starts again
-  let afterQuit: (() => boolean) | null = null
+  let startAfterQuit: (() => boolean) | null = null
   let quitting: Promise<void> | null = null
   let code = 0
   // Restart hetu, and quitting after a failure, start a new run once this one has exited
@@ -95,7 +95,8 @@ async function start(): Promise<void> {
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
     })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => {
-      if (again || afterQuit?.() === false) app.relaunch()
+      // An installer started starts hetu again itself, so it wins over a restart
+      if (startAfterQuit !== null ? !startAfterQuit() : again) app.relaunch()
       app.exit(code)
     })
   })
@@ -289,8 +290,10 @@ async function start(): Promise<void> {
     updater = createUpdater({
       locked: LOCKED, running: app.getVersion(), platform: process.platform, recording: wired.recording, dataDir: booted.dataDir,
       quit: start => {
-        afterQuit = start
+        if (quitting !== null) return false
+        startAfterQuit = start
         app.quit()
+        return true
       },
     })
 
