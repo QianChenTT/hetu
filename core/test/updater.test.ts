@@ -52,7 +52,7 @@ function made(over: Partial<UpdaterOptions> = {}) {
   let told = 0
   const clock = fakeLater()
   const updater = createUpdater({
-    locked: true, running: '0.6.0', platform: 'win32', key: ours.publicKey, now: () => 1_000,
+    locked: true, running: '0.6.0', platform: 'win32', key: ours.publicKey, now: () => 1_000, dataDir: 'unused', quit: () => undefined,
     recording: { coreRecord: (event, fields) => records.push({ event, fields }) },
     log: line => lines.push(line), changed: () => told++, later: clock.later, ...over,
   })
