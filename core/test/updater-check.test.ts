@@ -1,7 +1,7 @@
 import { createPublicKey, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import type { Fetch } from '../backend/lib/github.ts'
-import { checkLatest, compareVersions, releasePage, SIGNATURE_FILE, UPDATE_FILE, updateKey, versionParts, type CheckOptions } from '../backend/updater/check.ts'
+import { checkLatest, compareVersions, releasePage, SIGNATURE_FILE_NAME, UPDATE_FILE_NAME, updateKey, versionParts, type CheckOptions } from '../backend/updater/check.ts'
 import { UPDATE_KEY } from '../backend/updater/key.ts'
 
 // A key pair made for this run, so no test holds a private key and none touches the real one
@@ -29,8 +29,8 @@ function github(release: Release = {}, latest?: () => Response): { fetch: Fetch,
   const file = release.file === undefined ? bytesOf(fields()) : release.file
   const signature = release.signature === undefined && file !== null ? signed(file) : release.signature ?? null
   const assets = [
-    ...(file !== null ? [asset(UPDATE_FILE)] : []),
-    ...(signature !== null ? [asset(SIGNATURE_FILE)] : []),
+    ...(file !== null ? [asset(UPDATE_FILE_NAME)] : []),
+    ...(signature !== null ? [asset(SIGNATURE_FILE_NAME)] : []),
     ...(release.installer !== false ? [asset(INSTALLER)] : []),
     ...(release.extra ?? []),
   ]
@@ -38,8 +38,8 @@ function github(release: Release = {}, latest?: () => Response): { fetch: Fetch,
   const fetch: Fetch = async url => {
     urls.push(url)
     if (url === LATEST) return latest?.() ?? Response.json({ tag_name: 'v0.6.1', assets })
-    if (url === download(UPDATE_FILE) && file !== null) return new Response(new Uint8Array(file))
-    if (url === download(SIGNATURE_FILE) && signature !== null) return new Response(new Uint8Array(signature))
+    if (url === download(UPDATE_FILE_NAME) && file !== null) return new Response(new Uint8Array(file))
+    if (url === download(SIGNATURE_FILE_NAME) && signature !== null) return new Response(new Uint8Array(signature))
     return new Response('', { status: 404 })
   }
   return { fetch, urls }
@@ -83,7 +83,7 @@ describe('a check of the latest release', () => {
   it('finds a higher version whose file the key signed, with the installer\'s link and the release page', async () => {
     const { fetch, urls } = github()
     expect(await checkLatest(options(fetch))).toEqual({ outcome: 'found', update: fields(), installer: download(INSTALLER) })
-    expect(urls).toEqual([LATEST, download(UPDATE_FILE), download(SIGNATURE_FILE)])
+    expect(urls).toEqual([LATEST, download(UPDATE_FILE_NAME), download(SIGNATURE_FILE_NAME)])
     expect(releasePage('0.6.1')).toBe('https://github.com/QianChenTT/hetu/releases/tag/v0.6.1')
   })
 
@@ -154,8 +154,13 @@ describe('a check of the latest release', () => {
       .toEqual({ outcome: 'found', update: fields(), installer: null })
   })
 
+  it('gives no installer link when the release points it off GitHub\'s hosts', async () => {
+    const away = { name: INSTALLER, size: 1, state: 'uploaded', browser_download_url: 'https://example.com/hetu-setup-0.6.1-x64.exe' }
+    expect(await checkLatest(options(github({ installer: false, extra: [away] }).fetch))).toEqual({ outcome: 'found', update: fields(), installer: null })
+  })
+
   it('reads only assets uploaded whole', async () => {
-    const half = { ...asset(SIGNATURE_FILE), state: 'starter' }
+    const half = { ...asset(SIGNATURE_FILE_NAME), state: 'starter' }
     const { fetch } = github({ signature: null, extra: [half] })
     expect(await checkLatest(options(fetch))).toEqual({ outcome: 'refused', reason: 'signature', version: null })
   })
@@ -186,8 +191,8 @@ describe('a check of the latest release', () => {
   })
 
   it('refuses a download link off GitHub\'s hosts before any request to it', async () => {
-    const away = { name: UPDATE_FILE, size: 1, state: 'uploaded', browser_download_url: 'https://example.com/hetu-update.json' }
-    const { fetch, urls } = github({ file: null, extra: [away, asset(SIGNATURE_FILE)] })
+    const away = { name: UPDATE_FILE_NAME, size: 1, state: 'uploaded', browser_download_url: 'https://example.com/hetu-update.json' }
+    const { fetch, urls } = github({ file: null, extra: [away, asset(SIGNATURE_FILE_NAME)] })
     expect(await checkLatest(options(fetch))).toEqual({ outcome: 'failed', problem: 'off-github' })
     expect(urls).toEqual([LATEST])
   })

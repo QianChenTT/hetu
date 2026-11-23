@@ -1,7 +1,7 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import type { Fetch } from '../backend/lib/github.ts'
-import { SIGNATURE_FILE, UPDATE_FILE } from '../backend/updater/check.ts'
+import { SIGNATURE_FILE_NAME, UPDATE_FILE_NAME } from '../backend/updater/check.ts'
 import { CHECK_EVERY_MS } from '../backend/updater/header.ts'
 import { CheckTimer, type Later } from '../backend/updater/timer.ts'
 import { createUpdater, type UpdaterOptions } from '../backend/updater/updater.ts'
@@ -21,9 +21,9 @@ function github(version = '0.6.1', forged = false): { fetch: Fetch, urls: string
   const fetch: Fetch = async url => {
     urls.push(url)
     if (offline) throw new TypeError('fetch failed')
-    if (url === LATEST) return Response.json({ tag_name: `v${version}`, assets: [asset(UPDATE_FILE), asset(SIGNATURE_FILE), asset(INSTALLER)] })
-    if (url === download(UPDATE_FILE)) return new Response(file)
-    if (url === download(SIGNATURE_FILE)) return new Response(signature)
+    if (url === LATEST) return Response.json({ tag_name: `v${version}`, assets: [asset(UPDATE_FILE_NAME), asset(SIGNATURE_FILE_NAME), asset(INSTALLER)] })
+    if (url === download(UPDATE_FILE_NAME)) return new Response(file)
+    if (url === download(SIGNATURE_FILE_NAME)) return new Response(signature)
     return new Response('', { status: 404 })
   }
   return { fetch, urls, down: () => (offline = true) }
@@ -63,10 +63,10 @@ describe('the updater\'s state', () => {
   it('holds a higher signed version found, with its page and Install on Windows', async () => {
     const { fetch } = github()
     const { updater, records, told } = made({ fetch })
-    expect(updater.state()).toEqual({ checks: true, on: true, checked: null, last: { kind: 'none' } })
+    expect(updater.state()).toEqual({ canCheck: true, on: true, checked: null, last: { kind: 'none' } })
     const state = await updater.check()
     expect(state).toEqual({
-      checks: true, on: true, checked: 1_000,
+      canCheck: true, on: true, checked: 1_000,
       last: { kind: 'found', version: '0.6.1', released: '2026-11-23T20:00:00Z', page: 'https://github.com/QianChenTT/hetu/releases/tag/v0.6.1', installable: true },
     })
     expect(updater.state()).toBe(state)
@@ -132,7 +132,7 @@ describe('the updater\'s state', () => {
     const { fetch, urls } = github()
     const { updater, clock } = made({ fetch, locked: false })
     updater.ready()
-    expect(await updater.check()).toEqual({ checks: false, on: true, checked: null, last: { kind: 'none' } })
+    expect(await updater.check()).toEqual({ canCheck: false, on: true, checked: null, last: { kind: 'none' } })
     updater.switchChecks(false)
     updater.switchChecks(true)
     await settle()
@@ -140,11 +140,20 @@ describe('the updater\'s state', () => {
     expect(clock.pending).toEqual([])
   })
 
+  it('never checks with a key that doesn\'t load, and still starts', async () => {
+    const { fetch, urls } = github()
+    const { updater, lines } = made({ fetch, key: undefined, pem: 'not a key' })
+    updater.ready()
+    expect((await updater.check()).canCheck).toBe(false)
+    expect(urls).toEqual([])
+    expect(lines).toEqual(['update: the key inside hetu does not load, so nothing checks'])
+  })
+
   it('never checks with a running version that isn\'t x.y.z', async () => {
     const { fetch, urls } = github()
     const { updater } = made({ fetch, running: '0.6.0-dev' })
     updater.ready()
-    expect((await updater.check()).checks).toBe(false)
+    expect((await updater.check()).canCheck).toBe(false)
     expect(urls).toEqual([])
   })
 
@@ -245,6 +254,19 @@ describe('the checks at start and every 7 days', () => {
     answer!()
     await settle()
     expect(clock.pending).toEqual([])
+  })
+
+  it('goes on after a check that rejects', async () => {
+    let checks = 0
+    const clock = fakeLater()
+    const timer = new CheckTimer({ check: () => (checks++, Promise.reject(new Error('a fault'))), locked: true, on: true, later: clock.later })
+    timer.ready()
+    await settle()
+    expect(clock.pending).toHaveLength(1)
+    clock.fire()
+    await settle()
+    expect(checks).toBe(2)
+    expect(clock.pending).toHaveLength(1)
   })
 
   it('never runs in a build that isn\'t locked', async () => {
