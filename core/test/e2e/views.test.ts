@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -285,6 +285,45 @@ describe('notes opened by plugins', () => {
     expect(codes).toEqual(['ok', 'not-granted'])
     await until(async () => (await editor.locator('#title').innerText()) === 'a.md')
     expect(await shown(editor).innerText()).toBe('open me')
+  })
+})
+
+// A real 1x1 png
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201ab4f5e0b0000000049454e44ae426082', 'hex')
+
+describe('images in a view', () => {
+  it("shows a note's image inside the plugin's read scope from a URL the plugin never holds, and none outside it", async () => {
+    const { app, editor, folder } = await started({
+      plugins: {
+        board: { granted: [{ type: 'ui.view' }, { type: 'luoshu.read', paths: ['pics/**'] }], manifest: { views: view('cards') } },
+        tiles: { granted: layoutGrants },
+      },
+    })
+    // A layout that places the view, as the drawer's plain layout places none
+    await pickLayout(editor, 'tiles')
+    const layout = await pluginWorker(app, 'tiles')
+    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    await drive(layout, async scope => {
+      const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
+      await scope.ctx.ui.layout.draw({ kind: 'slot', id: 's', instance: state.views[0]!.instance, style: { width: '300px', height: '300px' } })
+    })
+    await mkdir(path.join(folder, 'pics'))
+    await writeFile(path.join(folder, 'pics', 'dot.png'), PNG)
+    await writeFile(path.join(folder, 'secret.png'), PNG)
+    const board = await pluginWorker(app, 'board')
+    await until(async () => (await heard(board)).some(event => event.topic === 'view.opened'))
+    await drive(board, async scope => {
+      const opened = scope.heard.find(event => event.topic === 'view.opened') as unknown as { instance: string }
+      await scope.ctx.ui.views.draw(opened.instance, {
+        kind: 'box', id: 'root',
+        children: [{ kind: 'image', id: 'shown', path: 'pics/dot.png', alt: 'shown' }, { kind: 'image', id: 'refused', path: 'secret.png', alt: 'refused' }],
+      })
+    })
+    const image = (alt: string) => editor.locator(`#editors .hetu-image[alt="${alt}"]`)
+    await until(async () => (await image('shown').evaluate(element => (element as HTMLImageElement).naturalWidth)) === 1)
+    expect(await image('shown').getAttribute('src')).toMatch(/^hetu:\/\/images\/[0-9a-f]{32}$/)
+    expect(await image('refused').getAttribute('src')).toBe(null)
+    expect(JSON.stringify(await heard(board))).not.toContain('hetu://images')
   })
 })
 
