@@ -3,7 +3,8 @@ import { screenText } from './capabilities.ts'
 import { bridgeCall } from './editor.ts'
 import { defaultLimits } from './limits.ts'
 import { localName } from './ids.ts'
-import { plain, plainData } from './plain.ts'
+import { actionPathProblem } from './paths.ts'
+import { plain, plainData, table } from './plain.ts'
 import { pathProblem } from './scope.ts'
 import {
   MAX_CHILDREN_OF_SPLIT, MAX_FRAME_MESSAGE, MAX_NODE_TEXT, MAX_NODES, MAX_OPS, MAX_OPTIONS, MAX_PAYLOAD, MAX_TREE_DEPTH,
@@ -212,6 +213,9 @@ export type UiNode = Common & (
   | { kind: 'scroll', children?: UiNode[] }
   | { kind: 'text', text: string }
   | { kind: 'icon', src: string, alt?: string }
+  // An image in the notes folder, which the drawer shows only inside the owner's luoshu.read scope and the owner never
+  // holds as bytes. It came within the current major as an addition
+  | { kind: 'image', path: string, alt?: string }
   | { kind: 'button', text: string, disabled?: boolean }
   | { kind: 'input', value: string, placeholder?: string, disabled?: boolean }
   | { kind: 'checkbox', checked: boolean, label?: string, disabled?: boolean }
@@ -251,6 +255,22 @@ const payload = z.discriminatedUnion('type', [
 const icon = z.string().refine(value => pathProblem(value) === null && /\.(?:svg|png)$/.test(value), 'an svg or png file of the plugin')
 const label = z.string().max(MAX_NODE_TEXT)
 
+// The images a view may show, by extension in any case, each with the type main sniffs its first bytes as before it
+// serves one
+export const imageTypes: Readonly<Record<string, string>> = table({
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',
+  bmp: 'image/bmp', svg: 'image/svg+xml',
+})
+
+// The type an image's path names by its extension, null for a path no action takes or no image
+export function imageTypeOf(path: string): string | null {
+  if (actionPathProblem(path) !== null) return null
+  const extension = /\.([A-Za-z]{3,4})$/.exec(path)?.[1]?.toLowerCase()
+  return extension === undefined ? null : imageTypes[extension] ?? null
+}
+
+export const imagePath = z.string().refine(value => imageTypeOf(value) !== null, 'a png, jpeg, gif, webp, avif, bmp or svg note')
+
 const common = {
   id: nodeId,
   style: style.optional(),
@@ -284,6 +304,7 @@ export const node: z.ZodType<UiNode> = z.lazy(() => {
     z.strictObject({ ...common, kind: z.literal('scroll'), children }),
     z.strictObject({ ...common, kind: z.literal('text'), text: label }),
     z.strictObject({ ...common, kind: z.literal('icon'), src: icon, alt: z.string().max(200).optional() }),
+    z.strictObject({ ...common, kind: z.literal('image'), path: imagePath, alt: z.string().max(200).optional() }),
     z.strictObject({ ...common, kind: z.literal('button'), text: label, disabled: z.boolean().optional() }),
     z.strictObject({
       ...common, kind: z.literal('input'), value: label, placeholder: z.string().max(200).optional(), disabled: z.boolean().optional(),

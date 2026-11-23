@@ -86,13 +86,14 @@ describe('the sessions', () => {
     expect(editor.headers.get('content-security-policy')).not.toContain('worker-src')
   })
 
-  it('lets the editor page frame and show images from the views host, and no other page', async () => {
+  it('lets the editor page frame and show images from the views host and show the images host, and no other page', async () => {
     const editor = (await serve('editor', get('hetu://editor/'), root)).headers.get('content-security-policy') ?? ''
-    expect(editor).toContain('frame-src hetu://views')
-    expect(editor).toContain("img-src 'self' hetu://views")
+    expect(editor).toContain('frame-src hetu://views;')
+    expect(editor).toContain("img-src 'self' hetu://views hetu://images;")
     expect(editor).toContain("frame-ancestors 'none'")
     const trusted = (await serve('trusted', get('hetu://trusted/'), root)).headers.get('content-security-policy') ?? ''
     expect(trusted).not.toContain('hetu://views')
+    expect(trusted).not.toContain('hetu://images')
   })
 
   it('serves the views host from what main holds for it, with the frame\'s own CSP', async () => {
@@ -241,6 +242,6 @@ describe('where sessions are made', () => {
         if (/\bfromPartition\s*\(|\bfromPath\s*\(|\bpartition\s*:/.test(line)) made.push(`${file}: ${line.trim()} / ${lines[at + 1]?.trim()}`)
       })
     }
-    expect(made).toEqual(['main.ts: sessions[role] = session.fromPartition(partition(role)) / await lockDown(sessions[role], role, pages, views)'])
+    expect(made).toEqual(['main.ts: sessions[role] = session.fromPartition(partition(role)) / await lockDown(sessions[role], role, pages, views, images)'])
   })
 })

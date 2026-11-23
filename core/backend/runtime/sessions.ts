@@ -4,10 +4,11 @@ import path from 'node:path'
 import type { Session } from 'electron'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { SCHEME } from './before-ready.ts'
+import type { ServedHost } from './lib.ts'
 
 // Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts
 export const ROLES = Object.freeze({
-  editor: Object.freeze(['editor', 'views', 'content']),
+  editor: Object.freeze(['editor', 'views', 'images', 'content']),
   trusted: Object.freeze(['trusted']),
   workers: Object.freeze(['workers']),
 })
@@ -16,8 +17,8 @@ export type Role = keyof typeof ROLES
 // Without the persist: prefix a partition lives in memory, so nothing a page stores reaches the disk
 export const partition = (role: Role): string => `hetu-${role}`
 
-// The pages folder each host serves from. views is served from what main holds of each running plugin, content has
-// none until its pages exist
+// The pages folder each host serves from. views is served from what main holds of each running plugin, images from the
+// notes folder through the luoshu, content has none until its pages exist
 const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'editor', trusted: 'trusted', workers: 'workers' })
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -38,11 +39,12 @@ const CSP = [
   "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ')
 
-// The editor page frames plugins' views and shows their icons, both from the views host. Its page gets a nonce for the
-// style element CodeMirror makes, a fresh one each load, named only in that page's policy and on its script
+// The editor page frames plugins' views and shows their icons, both from the views host, and the images their nodes
+// name from the images host. A frame's own policy names neither host. Its page gets a nonce for the style element
+// CodeMirror makes, a fresh one each load, named only in that page's policy and on its script
 const editorCsp = (nonce: string | null) => [
   "default-src 'none'", "script-src 'self'", nonce === null ? "style-src 'self'" : `style-src 'self' 'nonce-${nonce}'`,
-  "img-src 'self' hetu://views", "font-src 'self'", 'frame-src hetu://views', "base-uri 'none'", "form-action 'none'",
+  "img-src 'self' hetu://views hetu://images", "font-src 'self'", 'frame-src hetu://views', "base-uri 'none'", "form-action 'none'",
   "frame-ancestors 'none'",
 ].join('; ')
 
@@ -51,9 +53,6 @@ const editorCsp = (nonce: string | null) => [
 export const NONCE_MARK = '{{style-nonce}}'
 // 128 random bits, as CSP3 asks of a nonce
 const freshNonce = () => randomBytes(16).toString('base64')
-
-// What main serves the views host from, faked in the tests
-export type ViewsHost = { serve(url: string): { bytes: Uint8Array, type: string, csp: string } | null }
 
 // The worker host page starts workers only from data: URLs, which take a copy of this policy: no eval, no network,
 // WebAssembly allowed
@@ -70,17 +69,18 @@ export function allowed(role: Role, url: string): boolean {
 
 const answer = (status: number) => new Response(null, { status })
 
-// A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the views host from
-// the bytes main holds
-export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ViewsHost): Promise<Response> {
+// A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the views and
+// images hosts from what main answers
+export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ServedHost, images?: ServedHost): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405)
   const at = parsedUrl(request.url)
   if (at === null || !allowed(role, request.url)) return answer(404)
-  if (at.hostname === 'views') {
-    const found = views?.serve(request.url) ?? null
+  if (at.hostname === 'views' || at.hostname === 'images') {
+    const found = (await (at.hostname === 'views' ? views : images)?.serve(request.url)) ?? null
     if (found === null) return answer(404)
     const headers = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
-    return new Response(request.method === 'HEAD' ? null : new Uint8Array(found.bytes), { status: 200, headers })
+    // The bytes main holds go out as they are, with no copy of a note's image beside the one read
+    return new Response(request.method === 'HEAD' ? null : found.bytes as Uint8Array<ArrayBuffer>, { status: 200, headers })
   }
   const folder = PAGES[at.hostname]
   const match = SERVABLE.exec(at.pathname)
@@ -125,7 +125,7 @@ const PROXY_TO_NOWHERE = Object.freeze({ mode: 'fixed_servers', proxyRules: 'soc
 // Denies every permission and device, every download and every request but the role's own hosts, and puts the session
 // behind the proxy to nowhere. Done once the proxy is set, and fails when it can't be. The default session gets role
 // null, so nothing loads in it
-export async function lockDown(ses: Session, role: Role | null, root: string, views?: ViewsHost): Promise<void> {
+export async function lockDown(ses: Session, role: Role | null, root: string, views?: ServedHost, images?: ServedHost): Promise<void> {
   const proxied = ses.setProxy({ ...PROXY_TO_NOWHERE })
   ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   ses.setPermissionCheckHandler(() => false)
@@ -134,6 +134,6 @@ export async function lockDown(ses: Session, role: Role | null, root: string, vi
   ses.setSpellCheckerEnabled(false)
   ses.on('will-download', event => event.preventDefault())
   ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: role === null || !allowed(role, details.url) }))
-  if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root, role === 'editor' ? views : undefined))
+  if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root, ...(role === 'editor' ? [views, images] : [])))
   await proxied
 }

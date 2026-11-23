@@ -56,6 +56,10 @@ window.addEventListener('message', function (event) {
   var image = document.createElement('img')
   image.src = 'hetu://views/icon/kanban/icon.svg'
   document.body.appendChild(image)
+  // And from the images host, which only the editor page's own image nodes load from
+  var note = document.createElement('img')
+  note.src = 'hetu://images/ffffffffffffffffffffffffffffffff'
+  document.body.appendChild(note)
   port.postMessage(JSON.stringify({ hello: location.pathname }))
 })
 `
@@ -201,6 +205,8 @@ describe('view frames', () => {
     await found('csp', { hello, refused: report.refused })
     expect(report.refused.some(entry => entry.startsWith('script-src'))).toBe(true)
     expect(report.refused.some(entry => entry.startsWith('img-src'))).toBe(true)
+    // Chromium names only the scheme of a blocked load, so the icon's and the images host's are one each
+    expect(report.refused.filter(entry => entry.startsWith('img-src'))).toHaveLength(2)
     const frame = editor.locator('#editors iframe.hetu-frame')
     expect(await frame.getAttribute('sandbox')).toBe('allow-scripts')
   })

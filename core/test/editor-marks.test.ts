@@ -1,7 +1,8 @@
-import { Text } from '@codemirror/state'
+import { EditorState, Text } from '@codemirror/state'
 import type { Decoration, DecorationSet } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
+import { pluginMarks, setMarks } from '../frontend/editor/editor.ts'
 import { drawMarks } from '../frontend/editor/marks.ts'
 
 const doc = Text.of(['first line', 'second line'])
@@ -74,5 +75,58 @@ describe('drawing marks', () => {
     ], doc)
     expect(ranges(hidden)).toEqual([])
     expect(ranges(marks)).toEqual([])
+  })
+
+  // A widget at a callout's line start once threw out the plugin's whole set: CodeMirror refuses a replacement over an
+  // empty range
+  it("draws a widget at a point at the note's start, a line's start, mid-line and the note's end with the rest of the set", () => {
+    const given: Mark[] = [
+      { kind: 'widget', from: 0, to: 0, text: 'a' },
+      { kind: 'widget', from: 11, to: 11, text: 'b' },
+      { kind: 'widget', from: 3, to: 3, text: 'c' },
+      { kind: 'widget', from: doc.length, to: doc.length, text: 'd' },
+      { kind: 'hide', from: 11, to: 13 },
+      { kind: 'mark', from: 3, to: 5, style: 'em' },
+      { kind: 'line', from: 11, style: 'quote' },
+    ]
+    const state = EditorState.create({ doc: doc.toString(), extensions: [pluginMarks] })
+    const { drawn } = state.update({ effects: setMarks.of({ owner: 'marks', set: 's', marks: given }) }).state.field(pluginMarks)
+    const hidden = ranges(drawn.hidden)
+    expect(hidden.map(r => [r.from, r.to, (r.spec.widget as { text: string } | undefined)?.text])).toEqual([
+      [0, 0, 'a'], [3, 3, 'c'], [11, 11, 'b'], [11, 13, undefined], [doc.length, doc.length, 'd'],
+    ])
+    expect(ranges(drawn.marks).map(r => [r.from, r.to])).toEqual([[3, 5], [11, 11]])
+  })
+
+  // Typed text lands after a widget at its place, as the versions map it, so the caret there is drawn after it too
+  it('draws a widget at a point before a caret at its place and one over a range in place of it', () => {
+    const { hidden } = drawMarks([{ kind: 'widget', from: 3, to: 3, text: '•' }, { kind: 'widget', from: 5, to: 7, text: '—' }], doc)
+    // A side below 0 draws a point before a caret at the same place
+    const drawn: [number, number, boolean][] = []
+    hidden.between(0, doc.length, (from, to, value) => {
+      drawn.push([from, to, value.startSide < 0])
+    })
+    expect(drawn).toEqual([[3, 3, true], [5, 7, false]])
+  })
+
+  // No mark the schema takes reaches CodeMirror's refusal, so these stand in for a gap past it. Each passes the drawer's
+  // own checks and only CodeMirror's range refuses it, with a RangeError: an empty style and hidden text ending before
+  // it starts
+  it('leaves out a mark CodeMirror refuses alone and draws the rest', () => {
+    const given = [
+      { kind: 'mark', from: 4, to: 4, style: 'em' },
+      { kind: 'mark', from: 0, to: 5, style: 'strong' },
+      { kind: 'hide', from: 7, to: 6 },
+      { kind: 'widget', from: 11, to: 12, text: '•' },
+    ] as Mark[]
+    const { marks, hidden } = drawMarks(given, doc)
+    expect(ranges(marks).map(r => [r.from, r.to])).toEqual([[0, 5]])
+    expect(ranges(hidden).map(r => [r.from, r.to])).toEqual([[11, 12]])
+  })
+
+  // Only CodeMirror's range is guarded, so an error in the drawer's own code shows. Hidden text starting past the end of
+  // doc reaches doc.lineAt, which throws before any range is made
+  it("throws an error from the drawer's own code before CodeMirror's range", () => {
+    expect(() => drawMarks([{ kind: 'hide', from: 30, to: 5 }] as Mark[], doc)).toThrow(/Invalid position 30/)
   })
 })

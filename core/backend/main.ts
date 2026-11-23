@@ -20,6 +20,8 @@ import { afterFailure, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedB
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { ViewFiles } from './runtime/views.ts'
+import { ViewImages } from './runtime/images.ts'
+import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
@@ -110,16 +112,23 @@ async function start(): Promise<void> {
     await lockDown(session.defaultSession, null, pages)
     // Each running plugin's frames and icons, served on the editor session's views host from the bytes it started with
     const views = new ViewFiles()
-    const sessions = {} as Record<Role, Session>
-    for (const role of Object.keys(ROLES) as Role[]) {
-      sessions[role] = session.fromPartition(partition(role))
-      await lockDown(sessions[role], role, pages, views)
-    }
-
     // The router and the plugins manager exist once the core is wired, before any worker starts
     let router: Router | null = null
     let pluginsManager: PluginsManager | null = null
     let modules: CoreModules | null = null
+    // The notes' images plugins' nodes name, read through the luoshu for a plugin running with a ui item while its
+    // luoshu.read reaches them, served on the editor session's images host
+    const images = new ViewImages({
+      running: plugin => views.incarnation(plugin),
+      reads: (caller, at) => router?.readsNote(caller, at) ?? false,
+      read: bytesReader(() => modules?.provider('luoshu') ?? null),
+    })
+    const sessions = {} as Record<Role, Session>
+    for (const role of Object.keys(ROLES) as Role[]) {
+      sessions[role] = session.fromPartition(partition(role))
+      await lockDown(sessions[role], role, pages, views, images)
+    }
+
     let recording: Recording | null = null
     // What paces a plugin's messages before main reads them follows flood control: with it off nothing paces them
     const limit = pacedLimit(
@@ -228,9 +237,9 @@ async function start(): Promise<void> {
               picking = false
             }
           }
-          if (call.action === 'editor.frame') {
-            const { plugin, frame } = call.args as { plugin: string, frame: string }
-            const url = views.mint(plugin, frame)
+          if (call.action === 'editor.frame' || call.action === 'editor.image') {
+            const { plugin, frame, path: at } = call.args as { plugin: string, frame?: string, path?: string }
+            const url = frame !== undefined ? views.mint(plugin, frame) : at !== undefined ? images.mint(call.caller, plugin, at) : null
             if (url === null) throw { code: 'not-found' }
             return { url }
           }
@@ -270,6 +279,7 @@ async function start(): Promise<void> {
       const unloaded = () => {
         drawers.unloaded(contents)
         views.unloaded()
+        images.unloaded()
       }
       contents.on('did-navigate', unloaded)
       contents.on('render-process-gone', unloaded)
