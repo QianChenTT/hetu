@@ -13,11 +13,12 @@ const electronVersion = (require('electron/package.json') as { version: string }
 // The Electron the lock file fetched and checksummed and the tests ran, so packaging downloads no second one
 const electronDist = path.join(path.dirname(require.resolve('electron/package.json')), 'dist')
 
-// Fixed for good: a new one would install a second hetu beside the first
-const UPGRADE_CODE = '6f3d2a8e-4b1c-4e7a-9d55-2c8b0e1f7a43'
+// The setup's id, which names its registry keys. Fixed for good: a new one would install a second hetu beside the first.
+// The value electron-builder derives from the app id, so it stays the same if the app id is ever changed
+export const INSTALL_GUID = '3af4a7b2-eaef-54c1-8e70-b491bbebeebd'
 
 export type PackageKind = {
-  // dir builds the unpacked folder alone, installer the folder and the MSI (Windows) around it
+  // dir builds the unpacked folder alone, installer the folder and the setup (Windows) around it
   target: 'dir' | 'installer'
   // false only for the build the end-to-end tests drive, which also keeps the inspector fuse on for Playwright and is
   // never made into an installer
@@ -29,8 +30,8 @@ export type PackageKind = {
 const ICON_PNG = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates', 'icons', 'electron-linux', '256x256.png')
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
-// An ICO file holding one 256 pixel PNG, as Windows reads them since Vista. The MSI's Start menu shortcut names an icon
-// whether or not one is set, so the installer needs one
+// An ICO file holding one 256 pixel PNG, as Windows reads them since Vista. The setup's and its uninstaller's icon and
+// the shortcuts' icon come from it
 export function icoFromPng(png: Buffer): Buffer {
   if (!png.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error('not a PNG')
   const header = Buffer.alloc(22)
@@ -63,9 +64,14 @@ async function resourcesIn(appOutDir: string, platform: string): Promise<string>
   return path.join(appOutDir, bundles[0]!, 'Contents', 'Resources')
 }
 
-// The MSI's file name as electron-builder's template. No space, since a GitHub release changes one in an asset's name
+// The setup's file name as electron-builder's template. No space, since a GitHub release changes one in an asset's name
 // and the name would no longer match its line in SHA256SUMS
-export const MSI_NAME = 'hetu-${version}-x64.${ext}'
+export const SETUP_NAME = 'hetu-setup-${version}-x64.${ext}'
+
+// The setups among the files a build made, the files SHA256SUMS covers
+export function setupsIn(made: readonly string[]): string[] {
+  return made.filter(file => /^hetu-setup-.+-x64\.exe$/.test(path.basename(file)))
+}
 
 export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<FuseName, boolean>>): Configuration {
   return {
@@ -94,18 +100,26 @@ export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Reco
     afterPack: async context => {
       await flipFuses(executableIn(context.appOutDir, context.electronPlatformName), fuseConfig(context.electronPlatformName, fuses))
     },
-    win: { target: kind.target === 'installer' ? ['msi'] : ['dir'], icon: path.join(stage, 'resources', 'icon.ico') },
-    // Per machine into Program Files with one UAC prompt, no folder to pick, never started by the installer, so hetu
-    // never runs elevated
-    msi: {
-      artifactName: MSI_NAME,
-      perMachine: true,
-      oneClick: true,
-      runAfterFinish: false,
-      createDesktopShortcut: false,
+    win: { target: kind.target === 'installer' ? ['nsis'] : ['dir'], icon: path.join(stage, 'resources', 'icon.ico') },
+    // For the current Windows account into %LOCALAPPDATA%\Programs\hetu with no UAC prompt: Welcome, the desktop shortcut
+    // box, progress and Finish with Run hetu. No folder to pick. The include script skips the page that asks just me or
+    // all users and makes every way to elevation a refusal
+    nsis: {
+      artifactName: SETUP_NAME,
+      oneClick: false,
+      allowElevation: false,
+      allowToChangeInstallationDirectory: false,
+      packElevateHelper: false,
+      runAfterFinish: true,
       createStartMenuShortcut: true,
+      // Made by the include script from its checkbox, which electron-builder doesn't offer
+      createDesktopShortcut: false,
       shortcutName: 'hetu',
-      upgradeCode: UPGRADE_CODE,
+      guid: INSTALL_GUID,
+      include: path.join(import.meta.dirname, 'installer.nsh'),
+      // The blockmap serves electron-updater's partial downloads, which hetu doesn't use
+      differentialPackage: false,
+      deleteAppDataOnUninstall: false,
       warningsAsErrors: true,
     },
     mac: { target: [{ target: 'dir', arch: ['arm64'] }], identity: null, hardenedRuntime: false },
@@ -127,7 +141,7 @@ export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: strin
   const platform = process.platform === 'win32' ? Platform.WINDOWS : process.platform === 'darwin' ? Platform.MAC : Platform.LINUX
   const arch = process.platform === 'darwin' ? Arch.arm64 : Arch.x64
   const made = await build({
-    targets: platform.createTarget(kind.target === 'installer' && process.platform === 'win32' ? ['msi'] : ['dir'], arch),
+    targets: platform.createTarget(kind.target === 'installer' && process.platform === 'win32' ? ['nsis'] : ['dir'], arch),
     config: configFor(stage, kind, fuses),
     // The staged app with its own package.json and no dependencies, so nothing from the repo is collected
     projectDir: path.join(stage, 'app'),
@@ -135,8 +149,7 @@ export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: strin
   const unpacked = (await readdir(kind.out)).find(name => /-unpacked$|^mac/.test(name))
   if (unpacked === undefined) throw new Error('no unpacked folder was made')
   const appOutDir = path.join(kind.out, unpacked)
-  const installers = made.filter(file => file.endsWith('.msi'))
-  const sums = await Promise.all(installers.map(async file => `${createHash('sha256').update(await readFile(file)).digest('hex')}  ${path.basename(file)}`))
+  const sums = await Promise.all(setupsIn(made).map(async file => `${createHash('sha256').update(await readFile(file)).digest('hex')}  ${path.basename(file)}`))
   if (sums.length > 0) await writeFile(path.join(kind.out, 'SHA256SUMS'), `${sums.join('\n')}\n`)
   return { appOutDir, made }
 }
