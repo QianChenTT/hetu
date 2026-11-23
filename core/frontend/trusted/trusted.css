@@ -18,6 +18,61 @@ main {
   padding: 16px;
 }
 
+/* The tabs on the left, the picked one's content on the right */
+main.tabbed {
+  display: grid;
+  grid-template-columns: 13em minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.side {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.side [role="tablist"] {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #d5d5d5;
+}
+
+.tab {
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  border-left-color: #1d2b3a;
+  background: #e8edf2;
+  font-weight: 600;
+}
+
+.tab .mark {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #c9a227;
+  color: #1d1d1d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.app-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 section {
   margin-bottom: 20px;
 }
@@ -115,14 +170,6 @@ label {
 
 .done {
   color: #2d6a2d;
-}
-
-.menu {
-  margin-bottom: 12px;
-}
-
-.menu summary {
-  cursor: pointer;
 }
 
 .install-controls input {

@@ -27,6 +27,13 @@ export type Part = { text: string, label: boolean }
 // A pair's row: its field in quotes, then the rest of its line
 export type IdentityRow = { label: string, line: string, change: Change | null }
 
+// The tabs on the left, one drawn at a time on the right. What waits for a Confirm is drawn above whichever is picked
+export const tabs = ['plugins', 'switches', 'notes', 'identities', 'limits'] as const
+export type Tab = typeof tabs[number]
+const tabLabels: Readonly<Record<Tab, string>> = Object.freeze({
+  plugins: 'Plugins', switches: 'Switches', notes: 'Notes folder', identities: 'Identities', limits: 'Limits',
+})
+
 export type Limit = { constant: LimitName, fixed: number, all: number | null, plugins: { plugin: string, value: number }[] }
 
 export type Screen = {
@@ -50,6 +57,10 @@ export type Screen = {
   installing: InstallBox | null
   // The startup screen's steps, null while it isn't shown
   startup: Startup | null
+  // The tab drawn and every tab with its name. mark says what on a tab waits for the human, drawn beside its name so
+  // nothing waits unseen on a tab not shown
+  tab: Tab
+  tabs: { id: Tab, label: string, mark: string | null }[]
 }
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
@@ -213,7 +224,7 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
   return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
 }
 
-export function screen(list: SecurityList, flow: InstallFlow | null = null, shown: StartupShown = 'auto'): Screen {
+export function screen(list: SecurityList, flow: InstallFlow | null = null, shown: StartupShown = 'auto', tab: Tab = 'plugins'): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
@@ -233,7 +244,17 @@ export function screen(list: SecurityList, flow: InstallFlow | null = null, show
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
     installing: installBox(flow),
     startup: startupScreen(list, shown),
+    tab,
+    tabs: tabs.map(id => ({ id, label: tabLabels[id], mark: id === 'plugins' ? waitingMark(list) : null })),
   }
+}
+
+// The plugins that wait for the human: a new folder plugin waiting for Approve, one that crashed, failed or stopped
+// answering
+function waitingMark(list: SecurityList): string | null {
+  const waiting = list.plugins.filter(plugin => (plugin.from === 'folder' && plugin.state === 'found' && plugin.reason === 'new')
+    || plugin.state === 'crashed' || plugin.state === 'failed' || plugin.state === 'unresponsive').length
+  return waiting === 0 ? null : `${waiting} waiting`
 }
 
 // What a refused Confirm or change tells the human
@@ -258,6 +279,7 @@ export class TrustedPage {
   private last: SecurityList | null = null
   private note: string | null = null
   private startup: StartupShown = 'auto'
+  private tab: Tab = 'plugins'
   readonly installer: Installer
 
   constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void) {
@@ -320,7 +342,13 @@ export class TrustedPage {
     })
   }
 
-  // The startup screen closed for now or shown again from the menu, for this window's life
+  // The tab the human picked, for this window's life
+  pickTab(tab: Tab): void {
+    this.tab = tab
+    this.redraw()
+  }
+
+  // The startup screen closed for now or shown again from below the tabs, for this window's life
   closeStartup(): void {
     this.startup = 'closed'
     this.redraw()
@@ -366,7 +394,7 @@ export class TrustedPage {
   }
 
   private redraw(): void {
-    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.startup), this.note)
+    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.startup, this.tab), this.note)
   }
 
   private heard(message: unknown): void {
