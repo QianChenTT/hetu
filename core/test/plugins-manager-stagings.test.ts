@@ -154,6 +154,26 @@ function github(zips: Record<string, Buffer>, digests: Record<string, string | n
 }
 
 describe('a staging from a release', () => {
+  it('downloads and stages one at a time, however many are asked for at once', async () => {
+    let open = 0
+    let most = 0
+    const zip = zipOf(plugin('alpha'))
+    const { fetch: answer } = github({ 'a.zip': zip })
+    const fetch: Fetch = async (url, init) => {
+      if (url.startsWith('https://api.github.com/')) return answer(url, init)
+      open++
+      most = Math.max(most, open)
+      await tick(20)
+      open--
+      return answer(url, init)
+    }
+    const { stagings } = await made(fetch)
+    const found = await stagings.findRelease('https://github.com/o/r') as { release: string }
+    const made3 = await Promise.all([0, 0, 0].map(place => stagings.stageRelease(found.release, place)))
+    expect(made3.every(one => 'handle' in one)).toBe(true)
+    expect(most).toBe(1)
+  })
+
   it('keeps the release\'s zips under a handle and stages one by its place, saying whether its checksum matched', async () => {
     const { fetch, asked } = github({ 'a.zip': zipOf(plugin('alpha')), 'b.zip': zipOf(plugin('tags')) }, { 'b.zip': null })
     const { stagings } = await made(fetch)
@@ -218,10 +238,35 @@ async function joined(fetch?: Fetch) {
 }
 
 describe('the install actions main serves', () => {
-  it('answers a picked staging with each plugin\'s class as if installed alone, then installs it on the Confirm and starts it', async () => {
+  // The list draws the class the Confirm will show with every plugin it can install ticked, as each starts ticked
+  it('answers each plugin with the class it takes beside the others found, a folder never approved refused', async () => {
     const made = await joined()
     await made.pluginsManager.start()
-    const staged = made.pluginsManager.stagedAnswer(await made.stagings.stagePicked('folder', await picked(made.base, plugin('search', { capabilities: [notes] }))))
+    await writeFolder(path.join(made.dataDir, 'plugins', 'kept'), plugin('kept'))
+    const calls = { type: 'plugin.call', targets: ['sender'] }
+    const staged = await made.pluginsManager.stagedAnswer(await made.stagings.stagePicked('folder', await picked(made.base, {
+      ...Object.fromEntries(Object.entries(plugin('reader', { capabilities: [notes, calls] })).map(([name, data]) => [`reader/${name}`, data])),
+      ...Object.fromEntries(Object.entries(plugin('sender', { capabilities: [{ type: 'net.fetch', hosts: ['example.com'] }] })).map(([name, data]) => [`sender/${name}`, data])),
+      ...Object.fromEntries(Object.entries(plugin('kept')).map(([name, data]) => [`kept/${name}`, data])),
+    })))
+    if (!('staged' in staged)) throw new Error('nothing staged')
+    expect(staged.plugins.map(one => [one.id, one.class, one.problem])).toEqual([['kept', null, 'unapproved'], ['reader', 4, null], ['sender', 4, null]])
+  })
+
+  it('drops a staging it can’t answer, as one made while nothing may be staged', async () => {
+    const made = await joined()
+    const handle = handleOf(await made.stagings.stagePicked('folder', await picked(made.base, plugin('search'))))
+    expect(await code(made.pluginsManager.stagedAnswer({ handle }))).toBe('unavailable')
+    expect(made.stagings.held(handle)).toBeNull()
+    expect(() => made.pluginsManager.canStage()).toThrow()
+    await made.pluginsManager.start()
+    made.pluginsManager.canStage()
+  })
+
+  it('answers a picked staging with each plugin\'s class, then installs it on the Confirm and starts it', async () => {
+    const made = await joined()
+    await made.pluginsManager.start()
+    const staged = await made.pluginsManager.stagedAnswer(await made.stagings.stagePicked('folder', await picked(made.base, plugin('search', { capabilities: [notes] }))))
     if (!('staged' in staged)) throw new Error('nothing staged')
     expect(staged.plugins).toMatchObject([{ id: 'search', name: 'search', version: '1.0.0', capabilities: [notes], class: 1, replaces: null, problem: null }])
     const answer = await made.pluginsManager.request({ kind: 'plugin.install', staged: staged.staged, plugins: [{ id: 'search', digest: staged.plugins[0].digest }] }, trusted)

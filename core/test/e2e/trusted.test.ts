@@ -496,6 +496,13 @@ describe('the Install button', () => {
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)
     await tick(PAST_DELAY)
+    // Cancel drops the staging main made
+    await page.getByRole('button', { name: 'Install from a zip' }).first().click()
+    await showing(page, '"Greeter" (greeter), version 1.0.0')
+    await page.locator('section.installing').getByRole('button', { name: 'Cancel' }).click()
+    await until(async () => !(await text(page)).includes('"Greeter" (greeter)'))
+    await until(async () => (await readdir(path.join(dataDir, 'staging', 'installs'))).length === 0)
+    await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Install from a zip' }).first().click()
     await showing(page, '"Greeter" (greeter), version 1.0.0')
     await showing(page, `From the zip ${JSON.stringify(zip)}`)

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SecurityList, Staged, StagedPlugin } from '../api/actions.ts'
 import { capabilityTypes, type Capability } from '../api/capabilities.ts'
-import { grantSentence } from '../api/trusted.ts'
+import { grantSentence, installProblemWords } from '../api/trusted.ts'
 import { installBox } from '../frontend/trusted/install.ts'
 import { TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
@@ -110,6 +110,12 @@ describe('what the install box draws', () => {
     ])
   })
 
+  it('says a plugin whose folder hetu never approved can’t be installed until it is removed', () => {
+    const box = installBox(staging([found({ class: null, problem: 'unapproved' })]))
+    if (box?.step !== 'found') throw new Error('no found box')
+    expect(box.plugins[0]).toMatchObject({ problem: 'A folder for this plugin is already there and hetu never approved it. Remove it first', picked: false })
+  })
+
   it('says what a plugin replaces, a class it couldn’t give, a plugin that asks for nothing and why one can’t be installed', () => {
     const box = installBox(staging([
       found({ replaces: '1.0.0', class: null, capabilities: [] }),
@@ -190,7 +196,7 @@ describe('the install flow against a fake main', () => {
   it('picks a zip in main\'s dialog, stages it and draws what was found with the plugins that can install ticked', () => {
     const { sent, page, answer, last } = started()
     page.installer.pick('zip')
-    expect(sent.at(-1)).toMatchObject({ action: 'app.pickPlugins', args: { source: 'zip' } })
+    expect(sent.at(-1)).toMatchObject({ action: 'app.stagePicked', args: { source: 'zip' } })
     answer(staged([found({}), found({ id: 'bad', problem: 'invalid' })]))
     const box = last().screen.installing
     if (box?.step !== 'found') throw new Error('no found box')
@@ -209,7 +215,7 @@ describe('the install flow against a fake main', () => {
     page.installer.install('s2')
     const asked = sent.filter(message => typeof message.action === 'string' && message.action !== 'security.list' && message.action !== 'events.subscribe')
     expect(asked.map(message => [message.action, message.args])).toEqual([
-      ['app.pickPlugins', { source: 'folder' }],
+      ['app.stagePicked', { source: 'folder' }],
       ['core.findRelease', { link: 'https://github.com/someone/plugins' }],
       ['core.unstage', { staged: 's1' }],
       ['core.stage', { release: 'g1', zip: 1 }],
@@ -221,7 +227,7 @@ describe('the install flow against a fake main', () => {
   it('asks for nothing more when the dialog was cancelled', () => {
     const { sent, page, answer } = started()
     page.installer.pick('folder')
-    expect(sent.at(-1)).toMatchObject({ action: 'app.pickPlugins', args: { source: 'folder' } })
+    expect(sent.at(-1)).toMatchObject({ action: 'app.stagePicked', args: { source: 'folder' } })
     const before = sent.length
     answer(null)
     expect(sent.length).toBe(before)
@@ -249,7 +255,7 @@ describe('the install flow against a fake main', () => {
     const { sent, page, answer, last } = started()
     page.installer.find('https://github.com/someone/nothing')
     answer({ problem: 'no-release' })
-    expect(last()).toMatchObject({ note: 'That repository has no release', screen: { installing: null } })
+    expect(last()).toMatchObject({ note: installProblemWords['no-release'], screen: { installing: null } })
     page.installer.pick('zip')
     answer({ problem: 'same-id' })
     expect(last().note).toBe('It holds two plugins with one id, so nothing was taken')
@@ -373,7 +379,7 @@ describe('the install flow against a fake main', () => {
     for (const link of ['https://example.com/someone/plugins', 'github.com/someone/plugins', 'https://github.com/someone', `https://github.com/someone/${'x'.repeat(2048)}`]) {
       page.installer.find(link)
       answer(calm())
-      expect(last().note).toBe('That isn’t a link to a GitHub repository or release')
+      expect(last().note).toBe(installProblemWords['not-github'])
     }
     expect(sent.some(message => message.action === 'core.findRelease')).toBe(false)
   })
@@ -401,9 +407,9 @@ describe('the install flow when answers come late, out of order or twice', () =>
   it('drops a staging that answers after a newer one and unstages it', () => {
     const { page, answerTo, lastOf, unstaged, last } = started()
     page.installer.pick('zip')
-    const first = lastOf('app.pickPlugins')
+    const first = lastOf('app.stagePicked')
     page.installer.pick('folder')
-    const second = lastOf('app.pickPlugins')
+    const second = lastOf('app.stagePicked')
     answerTo(second, staging('s2', '/tmp/b'))
     answerTo(first, staging('s1'))
     expect(last().screen.installing).toMatchObject({ staged: 's2' })
@@ -415,7 +421,7 @@ describe('the install flow when answers come late, out of order or twice', () =>
     page.installer.find('https://github.com/someone/plugins')
     const release = lastOf('core.findRelease')
     page.installer.pick('folder')
-    answerTo(lastOf('app.pickPlugins'), staging('s2', '/tmp/b'))
+    answerTo(lastOf('app.stagePicked'), staging('s2', '/tmp/b'))
     const before = sent.length
     answerTo(release, { release: 'g1', tag: 'v1', assets: [{ name: 'a.zip', bytes: 1 }] })
     expect(sent.slice(before).some(message => message.action === 'core.stage')).toBe(false)
@@ -425,7 +431,7 @@ describe('the install flow when answers come late, out of order or twice', () =>
   it('drops a staging that answers after Cancel and unstages it', () => {
     const { page, answerTo, lastOf, unstaged, last } = started()
     page.installer.pick('zip')
-    const stage = lastOf('app.pickPlugins')
+    const stage = lastOf('app.stagePicked')
     page.installer.cancel()
     answerTo(stage, staging('s1'))
     expect(last().screen.installing).toBeNull()
@@ -435,9 +441,9 @@ describe('the install flow when answers come late, out of order or twice', () =>
   it('sends nothing for a click on a staging that is no longer the one shown', () => {
     const { sent, page, answerTo, lastOf } = started()
     page.installer.pick('zip')
-    answerTo(lastOf('app.pickPlugins'), staging('s1'))
+    answerTo(lastOf('app.stagePicked'), staging('s1'))
     page.installer.pick('folder')
-    answerTo(lastOf('app.pickPlugins'), staging('s2', '/tmp/b'))
+    answerTo(lastOf('app.stagePicked'), staging('s2', '/tmp/b'))
     page.installer.install('s1')
     expect(sent.some(message => message.action === 'security.request')).toBe(false)
   })
@@ -445,7 +451,7 @@ describe('the install flow when answers come late, out of order or twice', () =>
   it('sends one request for a double click and draws Install busy until it answers', () => {
     const { sent, page, answerTo, lastOf, last } = started()
     page.installer.pick('zip')
-    answerTo(lastOf('app.pickPlugins'), staging('s1'))
+    answerTo(lastOf('app.stagePicked'), staging('s1'))
     page.installer.install('s1')
     page.installer.install('s1')
     expect(sent.filter(message => message.action === 'security.request')).toHaveLength(1)
@@ -457,11 +463,11 @@ describe('the install flow when answers come late, out of order or twice', () =>
   it('never clears a newer box with a late answer to an older request', () => {
     const { page, answerTo, lastOf, unstaged, last } = started()
     page.installer.pick('zip')
-    answerTo(lastOf('app.pickPlugins'), staging('s1'))
+    answerTo(lastOf('app.stagePicked'), staging('s1'))
     page.installer.install('s1')
     const confirm = lastOf('security.request')
     page.installer.pick('folder')
-    answerTo(lastOf('app.pickPlugins'), staging('s2', '/tmp/b'))
+    answerTo(lastOf('app.stagePicked'), staging('s2', '/tmp/b'))
     // The staging a request is on its way for is the core's to drop
     expect(unstaged()).toEqual([])
     answerTo(confirm, { held: 'r1' })
