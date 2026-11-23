@@ -46,6 +46,12 @@ export type StandInOptions = {
 }
 // Each call delivered to the stand-in, oldest first
 export type StandIn = { readonly id: string, readonly delivered: readonly Delivered[] }
+// hetu's door as a test plays it: handle is one door.handle call on behalf of label, the pair of the door and the label's
+// client holding pairGrants when named
+export type FakeDoor = {
+  handle(args: unknown, label?: string, pairGrants?: Capability[]): Promise<FakeReply>
+  close(): void
+}
 // A core action that reached the part the core serves, which the fake core plays for core.bindFailed alone
 export type CoreCall = { action: string, args: unknown, caller: Caller }
 
@@ -265,6 +271,7 @@ export class FakeCore {
   private reason: string | null = null
   private waiting: Plugin | null = null
   private live: Caller | null = null
+  private playedDoor: FakeDoor | null = null
 
   constructor(options: FakeCoreOptions) {
     this.manifest = manifestOf(options.manifest)
@@ -443,6 +450,58 @@ export class FakeCore {
     this.missing.delete(id)
     this.placeStandIn(id)
     return { id, delivered }
+  }
+
+  // hetu's door played on the router: a port registered as the utility process the core started, which the floor alone
+  // takes for the door, and the role door.handle given to the plugin under test, as the plugins manager gives it to the
+  // one plugin granted it. A reply past the call deadline and the router's own timeout answers timeout
+  door(): FakeDoor {
+    if (this.playedDoor !== null) throw new Error('the door is played already')
+    if (!(this.manifest.capabilities ?? []).some(item => item.type === 'door.handle')) {
+      throw new Error(`${this.manifest.id} is not granted door.handle, which the plugins manager gives the role to`)
+    }
+    const holder = this.pluginsManager.roles.get('door.handle')
+    if (holder !== undefined) throw new Error(`door.handle is held by ${holder} already`)
+    const caller: Caller = { kind: 'plugin', id: doorId, half: 'host', incarnation: 1 }
+    this.infos(doorId, { state: 'ready', place: 'utility', incarnation: 1, serves: 'host', actions: {}, topics: [] })
+    this.pluginsManager.roles.set('door.handle', this.manifest.id)
+    const { port1, port2 } = new MessageChannel()
+    this.ports.push(port1, port2)
+    this.router.register(port1, caller, 'utility')
+    const waiting = new Map<number, (reply: FakeReply) => void>()
+    port2.on('message', (message: Record<string, unknown>) => {
+      if (message.kind !== 'reply' || typeof message.id !== 'number') return
+      const reply: FakeReply = message.ok === true ? { ok: true, result: message.result } : { ok: false, refusal: message.refusal as Refusal }
+      waiting.get(message.id)?.(reply)
+      waiting.delete(message.id)
+    })
+    let next = 1
+    const door: FakeDoor = {
+      handle: (args, label, pairGrants) => {
+        if (pairGrants !== undefined) {
+          if (label === undefined) throw new Error('pairGrants needs a label, which names the pair')
+          this.gate.pairs.set(pairKey({ plugin: doorId, field: grantKeyOf(label) }), pairGrants)
+        }
+        const id = next++
+        return new Promise(resolve => {
+          const timer = setTimeout(() => {
+            waiting.delete(id)
+            resolve({ ok: false, refusal: { code: 'timeout', action: 'door.handle' } })
+          }, defaultLimits.callDeadlineMs + 5000)
+          waiting.set(id, reply => {
+            clearTimeout(timer)
+            resolve(reply)
+          })
+          port2.postMessage({ v: VERSION, kind: 'call', id, action: 'door.handle', args, ...(label === undefined ? {} : { onBehalf: label }) })
+        })
+      },
+      close: () => {
+        port1.close()
+        port2.close()
+      },
+    }
+    this.playedDoor = door
+    return door
   }
 
   // Sets a stand-in's state and tells the plugin under test with deps, as the plugins manager does on every change
