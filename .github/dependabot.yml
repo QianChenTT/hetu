@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # npm dependencies of both workspaces
+  # npm dependencies of the workspaces
   - package-ecosystem: npm
     directory: /
     schedule:

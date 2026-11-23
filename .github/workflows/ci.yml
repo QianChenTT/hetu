@@ -18,7 +18,7 @@ jobs:
         os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     env:
-      # The daemon commits with the machine's git identity and a fresh runner has none
+      # Tests that make a git repo of their own commit with the machine's git identity and a fresh runner has none
       GIT_AUTHOR_NAME: hetu-ci
       GIT_AUTHOR_EMAIL: ci@hetu.invalid
       GIT_COMMITTER_NAME: hetu-ci
@@ -190,7 +190,7 @@ jobs:
           persist-credentials: false
       # --error: any finding fails the job, --metrics=off: send no usage data to Semgrep
       - name: semgrep scan
-        run: semgrep scan --config p/javascript --config p/typescript --config p/react --error --metrics=off
+        run: semgrep scan --config p/javascript --config p/typescript --error --metrics=off
 
   # SAST with data flow: CodeQL follows input from source to sink across files, which pattern
   # rules can't. Results land in the Security tab.

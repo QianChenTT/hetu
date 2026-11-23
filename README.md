@@ -12,46 +12,34 @@ hetu is a local notes app designed around that problem
 - **Plugins hold no power of their own:** every plugin runs isolated and asks the core for narrow capabilities, such as committing these paths, instead of raw disk, process or network access. Before a plugin's code runs, the core checks its files against the build the user approved
 - **Security changes need the human:** turning a guard off, granting a plugin more power or changing which plugins load needs a Confirm click in a separate trusted window that shows the exact change. hetu keeps its security state in files only it writes and checks each against a recorded hash at start, which catches careless edits by tools that don't know hetu. Never an agent over MCP, never another plugin
 - **The user can switch anything off:** every check, security included, can be switched off with a Confirm click in the trusted window. A banner shows while it is off and the event log records the switch. A check that judges yes or no follows one rule: switched off by the user its step doesn't exist and answers yes, crashed while hetu runs it refuses and failed at start it stops hetu in a fail-safe offering Quit, Try again and Start with it switched off
-- **Detection where prevention stops:** an agent with a shell can write notes without going through MCP. hetu can't prevent that, so changes hetu didn't make are flagged and committed as an unknown writer. A program on your machine that targets hetu itself is out of scope, hetu assumes the machine is free of such programs
+- **Detection where prevention stops:** an agent with a shell can write notes without going through MCP. hetu can't prevent that, so changes hetu didn't make reach plugins as outside changes. A program on your machine that targets hetu itself is out of scope, hetu assumes the machine is free of such programs
 
 Many security decisions in hetu are still handed to the user: approving a plugin, giving it more power, switching a guard off. Most people are here for the features and can't be expected to know what each approval risks. So an approval made for convenience points to a gap in hetu's design, not a mistake by the user. Each confirmation says plainly what is being changed. The goal is fewer of these decisions left to the user and a safe choice that is also the easy one
 
-The Electron app runs the core today: boot, plugins-manager, router and runtime with eleven core modules bundled into `main.js` (the gate, the grant risk classifier, flood control, the heartbeat, recording, the security view, storage, the luoshu, history, exec and the lock), the door MCP clients come in through, core code built into `door.js` beside `main.js`, with its HTTP door and local pipe in a utility process of its own and the `hetu.exe --mcp-stdio` shim, no plugin shipped, the layout and hidden marks installed by the human as community plugins, the editor window, the trusted window and a Windows installer. The core has no agents of its own: a call made for one carries a pair of the root plugin and a label the gate judges beside the plugin's grants. The MCP plugin and OAuth aren't built here and both doors stay closed without the MCP plugin, so no agent reaches the new core yet. Leases, MCP for agents and the commit per write still run only in the older daemon. The core map shows the whole design, built or not: [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
+The Electron app runs the core today: boot, plugins-manager, router and runtime with eleven core modules bundled into `main.js` (the gate, the grant risk classifier, flood control, the heartbeat, recording, the security view, storage, the luoshu, history, exec and the lock), the door MCP clients come in through, core code built into `door.js` beside `main.js`, with its HTTP door and local pipe in a utility process of its own and the `hetu.exe --mcp-stdio` shim, no plugin shipped, the layout and hidden marks installed by the human as community plugins, the editor window, the trusted window and a Windows installer. The core has no agents of its own: a call made for one carries a pair of the root plugin and a label the gate judges beside the plugin's grants. MCP for agents, leases and the commit per write come from the `mcp` plugin in [hetu-plugins](https://github.com/QianChenTT/hetu-plugins), which holds the role the door calls. OAuth isn't built, so an agent connects through the local pipe and the `hetu.exe --mcp-stdio` shim. The core map shows the whole design, built or not: [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
 
 ## Names
 
-Hetu and Luoshu are the two diagrams of an old Chinese story, the Yellow River Chart and the Luo River Writing. hetu is the app. **luoshu** is the folder of notes it keeps and the core module that serves it, what other notes apps call a vault. Plugins read and write notes through `luoshu.read` and `luoshu.write` and hear about changes on `luoshu.changed`. The old daemon still says vault until the core replaces it
+Hetu and Luoshu are the two diagrams of an old Chinese story, the Yellow River Chart and the Luo River Writing. hetu is the app. **luoshu** is the folder of notes it keeps and the core module that serves it, what other notes apps call a vault. Plugins read and write notes through `luoshu.read` and `luoshu.write` and hear about changes on `luoshu.changed`.
 
 ## Layout
 
 - [core/](core/): the core, the four parts that can't be switched off (boot, plugins-manager, router and runtime), the core modules and the door beside them in `core/backend`, the Electron entry, the three fixed pages, the SDK and the build. Each folder's README says what it holds and where it moves
-- [daemon/](daemon/): today's vault daemon, removed file by file as the core replaces it. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
-- [editor/](editor/): today's text-first CodeMirror 6 editor, removed the same way. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
 - [docs/](docs/): the interactive core map, published with GitHub Pages
 - [docs/flows.md](docs/flows.md): five flows to know before reading the code
-- [fixtures/](fixtures/): test notes and artifacts. The playground vault is seeded from here
-- [scripts/dev.ts](scripts/dev.ts): starts the daemon, waits for it, then starts the editor
+- [fixtures/](fixtures/): test notes and artifacts. `fixtures/artifact-starter/` keeps the retired editor's artifact code (the line parser, the sandboxed frame and its grants) as starter code for the artifact embed. It ran against the retired daemon's REST API and runs nowhere now
 - [scripts/e2e-packaged.ts](scripts/e2e-packaged.ts): drives a packed build that isn't locked
-- `playground_vault/`: a throwaway vault with its own git repo, not tracked here
+- `playground_vault/`: a local notes folder to try hetu on, not tracked here
 
 ## Run
 
 ```
 npm install
-npm run seed
-npm run dev
-```
-
-The editor runs at http://localhost:5174 and the daemon at http://127.0.0.1:4747. `npm run seed:fresh` replaces the playground and its history. `npm test` runs the tests of every workspace that has them and `npm run typecheck` checks them
-
-The new core starts as an Electron app:
-
-```
 npm run build:main
 npx electron .
 ```
 
-A run from the source keeps its data in its own `hetu-dev` folder, or in `HETU_DATA_DIR` when that is set. `npm run test:e2e` builds the app and drives it with Playwright
+A run from the source keeps its data in its own `hetu-dev` folder, or in `HETU_DATA_DIR` when that is set. `npm test` runs the core's tests, `npm run typecheck` checks every workspace and `npm run test:e2e` builds the app and drives it with Playwright
 
 ## Install
 

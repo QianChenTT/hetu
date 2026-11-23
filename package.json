@@ -9,15 +9,10 @@
   },
   "workspaces": [
     "core",
-    "core/sdk",
-    "daemon",
-    "editor"
+    "core/sdk"
   ],
   "scripts": {
-    "dev": "node scripts/dev.ts",
-    "seed": "npm run seed -w daemon",
-    "seed:fresh": "npm run seed -w daemon -- --fresh",
-    "test": "npm test -w core -w daemon --if-present",
+    "test": "npm test -w core --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:copies": "node scripts/check-copies.ts",
     "build:main": "node core/build/main.ts",
