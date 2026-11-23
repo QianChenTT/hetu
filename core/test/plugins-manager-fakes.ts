@@ -498,7 +498,7 @@ export function coreModules(
   dirs: { dataDir: string, installDir: string }, link: FakeLink, fakes: ModuleFakes = {}, limit?: (plugin: string | null, name: LimitName) => number,
 ): CoreModules {
   return realModules({
-    ...dirs, ...fakes, publish: (topic, path) => link.router?.publishCore('luoshu', topic, path), ...(limit !== undefined ? { limit } : {}),
+    ...dirs, ...fakes, publish: (owner, topic, path, fields) => link.router?.publishCore(owner, topic, path, fields), ...(limit !== undefined ? { limit } : {}),
   })
 }
 

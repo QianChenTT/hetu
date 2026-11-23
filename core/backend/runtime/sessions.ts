@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Session } from 'electron'
+import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { SCHEME } from './before-ready.ts'
 
 // Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts
@@ -61,19 +62,10 @@ const WORKERS_CSP = [
   "frame-ancestors 'none'",
 ].join('; ')
 
-function parsed(url: string): URL | null {
-  try {
-    return new URL(url)
-  } catch {
-    return null
-  }
-}
-
 // Whether a request may leave a role's session: only to hetu on the role's own hosts, with no user or port
 export function allowed(role: Role, url: string): boolean {
-  const at = parsed(url)
-  return at !== null && at.protocol === `${SCHEME}:` && (ROLES[role] as readonly string[]).includes(at.hostname)
-    && at.username === '' && at.password === '' && at.port === ''
+  const at = parsedUrl(url)
+  return at !== null && at.protocol === `${SCHEME}:` && (ROLES[role] as readonly string[]).includes(at.hostname) && hostOnly(at)
 }
 
 const answer = (status: number) => new Response(null, { status })
@@ -82,7 +74,7 @@ const answer = (status: number) => new Response(null, { status })
 // the bytes main holds
 export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ViewsHost): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405)
-  const at = parsed(request.url)
+  const at = parsedUrl(request.url)
   if (at === null || !allowed(role, request.url)) return answer(404)
   if (at.hostname === 'views') {
     const found = views?.serve(request.url) ?? null
