@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Session } from 'electron'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { SCHEME } from './before-ready.ts'
+import type { ServedHost } from './lib.ts'
 
 // Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts
 export const ROLES = Object.freeze({
@@ -53,10 +54,6 @@ export const NONCE_MARK = '{{style-nonce}}'
 // 128 random bits, as CSP3 asks of a nonce
 const freshNonce = () => randomBytes(16).toString('base64')
 
-// What main serves the views host and the images host from, faked in the tests
-type Found = { bytes: Uint8Array, type: string, csp: string } | null
-export type ViewsHost = { serve(url: string): Found | Promise<Found> }
-
 // The worker host page starts workers only from data: URLs, which take a copy of this policy: no eval, no network,
 // WebAssembly allowed
 const WORKERS_CSP = [
@@ -74,7 +71,7 @@ const answer = (status: number) => new Response(null, { status })
 
 // A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the views and
 // images hosts from what main answers
-export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ViewsHost, images?: ViewsHost): Promise<Response> {
+export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ServedHost, images?: ServedHost): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405)
   const at = parsedUrl(request.url)
   if (at === null || !allowed(role, request.url)) return answer(404)
@@ -82,7 +79,8 @@ export async function serve(role: Role, request: { url: string, method: string }
     const found = (await (at.hostname === 'views' ? views : images)?.serve(request.url)) ?? null
     if (found === null) return answer(404)
     const headers = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
-    return new Response(request.method === 'HEAD' ? null : new Uint8Array(found.bytes), { status: 200, headers })
+    // The bytes main holds go out as they are, with no copy of a note's image beside the one read
+    return new Response(request.method === 'HEAD' ? null : found.bytes as Uint8Array<ArrayBuffer>, { status: 200, headers })
   }
   const folder = PAGES[at.hostname]
   const match = SERVABLE.exec(at.pathname)
@@ -127,7 +125,7 @@ const PROXY_TO_NOWHERE = Object.freeze({ mode: 'fixed_servers', proxyRules: 'soc
 // Denies every permission and device, every download and every request but the role's own hosts, and puts the session
 // behind the proxy to nowhere. Done once the proxy is set, and fails when it can't be. The default session gets role
 // null, so nothing loads in it
-export async function lockDown(ses: Session, role: Role | null, root: string, views?: ViewsHost, images?: ViewsHost): Promise<void> {
+export async function lockDown(ses: Session, role: Role | null, root: string, views?: ServedHost, images?: ServedHost): Promise<void> {
   const proxied = ses.setProxy({ ...PROXY_TO_NOWHERE })
   ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   ses.setPermissionCheckHandler(() => false)

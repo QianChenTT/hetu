@@ -2,17 +2,23 @@ import { randomBytes } from 'node:crypto'
 import type { Caller } from '../../api/envelope.ts'
 import { imageTypeOf } from '../../api/ui.ts'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
-import { IMAGE_CSP, type Served } from './views.ts'
+import { IMAGE_CSP, type Served } from './lib.ts'
 
 // The images host: images of the notes folder the drawer shows for plugins' image nodes, never handed to a plugin as
 // bytes. The drawer asks for a URL for each image it draws and main mints hetu://images/<token>, which names the
 // plugin, its incarnation and the path and loads once within TOKEN_MS. On that request main asks again whether the
 // plugin runs as that incarnation and whether its luoshu.read reaches the path, reads the note under the luoshu's own
 // path rules and answers its bytes only when they sniff as the type its extension names. Every token ends when the
-// editor page unloads, and one whose plugin stopped, was removed or lost the grant answers nothing
+// editor page unloads, and one whose plugin stopped, was removed or lost the grant answers nothing. With the gate off
+// by the human every read is let on, so an image is too, wherever in the notes it is
 
 // How long a token waits for its one request. The drawer sets the URL as soon as it has it
 const TOKEN_MS = 10_000
+// The most tokens waiting at once for one plugin and in all, past which a mint is refused, and the most notes read at
+// once, the rest waiting their turn, so images never hold much of main's memory or keep the luoshu's latches from notes
+const PER_PLUGIN = 32
+const IN_ALL = 128
+const READS_AT_ONCE = 4
 
 export type ImagesOptions = {
   // The incarnation the plugin runs as with a ui item, null when it doesn't
@@ -20,7 +26,7 @@ export type ImagesOptions = {
   // Whether the plugin's luoshu.read reaches a path now, as the gate answers
   reads(caller: Caller, path: string): boolean
   // The note's bytes under the luoshu's path rules, reads asked about each path the read resolves, null when refused
-  read(caller: Caller, path: string, reads: (path: string) => boolean): Promise<Uint8Array | null>
+  read(caller: Caller, path: string, reads: (path: string) => boolean): Promise<{ bytes: Uint8Array } | null>
   token?: () => string
   now?: () => number
 }
@@ -35,6 +41,8 @@ export class ViewImages {
   private readonly options: ImagesOptions
   private readonly token: () => string
   private readonly now: () => number
+  private reading = 0
+  private readonly waiting: (() => void)[] = []
 
   constructor(options: ImagesOptions) {
     this.options = options
@@ -42,13 +50,14 @@ export class ViewImages {
     this.now = options.now ?? Date.now
   }
 
-  // A URL the editor page loads the image from once, null for another window, a plugin not running or a path its
-  // luoshu.read doesn't reach. Only the editor window draws plugins' trees
+  // A URL the editor page loads the image from once, null for another window, a plugin not running, a path its
+  // luoshu.read doesn't reach or past the tokens waiting. Only the editor window draws plugins' trees
   mint(by: Caller, plugin: string, path: string): string | null {
     const incarnation = this.options.running(plugin)
     if (by.kind !== 'window' || by.role !== 'editor' || incarnation === null || imageTypeOf(path) === null || !this.options.reads(callerOf(plugin, incarnation), path)) return null
-    const now = this.now()
-    for (const [token, held] of this.tokens) if (held.until < now) this.tokens.delete(token)
+    const now = this.expired()
+    const mine = [...this.tokens.values()].filter(held => held.plugin === plugin).length
+    if (mine >= PER_PLUGIN || this.tokens.size >= IN_ALL) return null
     let token = this.token()
     while (this.tokens.has(token)) token = this.token()
     this.tokens.set(token, { plugin, incarnation, path, until: now + TOKEN_MS })
@@ -66,13 +75,34 @@ export class ViewImages {
     if (token === null || held === undefined) return null
     this.tokens.delete(token)
     const live = () => this.options.running(held.plugin) === held.incarnation
-    if (held.until < this.now() || !live()) return null
+    if (held.until < this.expired() || !live()) return null
     const caller = callerOf(held.plugin, held.incarnation)
-    const bytes = await this.options.read(caller, held.path, path => this.options.reads(caller, path))
+    const got = await this.turn(() => (live() ? this.options.read(caller, held.path, path => this.options.reads(caller, path)) : Promise.resolve(null)))
+    const bytes = got?.bytes ?? null
     const type = imageTypeOf(held.path)
     // Asked again, since the plugin can stop while its note is read
     if (bytes === null || type === null || sniffed(bytes) !== type || !live()) return null
     return { bytes, type, csp: IMAGE_CSP }
+  }
+
+  // Drops the tokens past their time, answering now. At most IN_ALL are held, so a walk over them costs little
+  private expired(): number {
+    const now = this.now()
+    for (const [token, held] of this.tokens) if (held.until < now) this.tokens.delete(token)
+    return now
+  }
+
+  // Runs one read once fewer than READS_AT_ONCE run, a finished read handing its turn to the next waiting
+  private async turn<T>(read: () => Promise<T>): Promise<T> {
+    if (this.reading < READS_AT_ONCE) this.reading++
+    else await new Promise<void>(resolve => this.waiting.push(resolve))
+    try {
+      return await read()
+    } finally {
+      const next = this.waiting.shift()
+      if (next === undefined) this.reading--
+      else next()
+    }
   }
 }
 
@@ -93,8 +123,9 @@ function bmpHeader(bytes: Uint8Array): boolean {
   return [12, 40, 52, 56, 64, 108, 124].includes(size)
 }
 
-// An SVG document: a byte order mark, an XML declaration, comments and a doctype at most before its svg root
-const SVG = /^﻿?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--(?:(?!-->)[^])*-->\s*)*(?:<!DOCTYPE svg[^>[]*(?:\[[^\]]*\])?\s*>\s*)?(?:<!--(?:(?!-->)[^])*-->\s*)*<svg[\s>/]/i
+// An SVG document: a byte order mark, which \s takes, an XML declaration, comments and a doctype at most before its
+// svg root
+const SVG = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--(?:(?!-->)[^])*-->\s*)*(?:<!DOCTYPE svg[^>[]*(?:\[[^\]]*\])?\s*>\s*)?(?:<!--(?:(?!-->)[^])*-->\s*)*<svg[\s>/]/i
 
 // The type the first bytes say the image is, null for none of the types a view may show. An SVG's root has to come
 // within its first 4 KiB

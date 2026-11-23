@@ -75,7 +75,7 @@ export class Router implements RouterDoor {
   // Whether a plugin's luoshu.read reaches a path now, asked as the bus asks before it hands a reader a path: yes with
   // the gate off by the human, the gate's canRead while it can be asked and no otherwise, from shutdown on too. Main's
   // image host asks it on each request
-  reads(caller: Caller, path: string): boolean {
+  readsNote(caller: Caller, path: string): boolean {
     if (this.c.closed || this.c.shutting) return false
     const { paths } = busState(this.c)
     return paths === 'all' || (paths === 'ask' && readable(this.c, caller, path))

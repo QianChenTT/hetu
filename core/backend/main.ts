@@ -20,7 +20,7 @@ import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { ViewImages } from './runtime/images.ts'
-import { readBytes } from './providers/luoshu/bytes.ts'
+import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
@@ -118,8 +118,8 @@ async function start(): Promise<void> {
     // luoshu.read reaches them, served on the editor session's images host
     const images = new ViewImages({
       running: plugin => views.incarnation(plugin),
-      reads: (caller, at) => router?.reads(caller, at) ?? false,
-      read: async (caller, at, reads) => (await readBytes(modules?.provider('luoshu') ?? null, caller, at, reads))?.bytes ?? null,
+      reads: (caller, at) => router?.readsNote(caller, at) ?? false,
+      read: bytesReader(() => modules?.provider('luoshu') ?? null),
     })
     const sessions = {} as Record<Role, Session>
     for (const role of Object.keys(ROLES) as Role[]) {

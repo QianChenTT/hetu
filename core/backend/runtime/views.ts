@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { PluginFile } from '../../lib/hash-files.ts'
+import { IMAGE_CSP, type Served } from './lib.ts'
 
 // The views host: each running plugin's frames and icons, served from the bytes the plugins manager checked when it started the
 // plugin's worker, never read from disk again. A frame loads once from a single-use hetu://views/<token>/<entry>: the
@@ -32,14 +33,9 @@ export function frameCsp(token: string): string {
   ].join('; ')
 }
 
-// An icon or a note's image is one the editor page shows with an img element, where no script in it runs. An SVG opened
-// as a document runs nothing either and loads nothing
-export const IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 
 type Running = { incarnation: number, files: ReadonlyMap<string, Uint8Array>, frames: Readonly<Record<string, string>> }
 type Token = { plugin: string, incarnation: number, entry: string, served: boolean }
-
-export type Served = { bytes: Uint8Array, type: string, csp: string }
 
 export class ViewFiles {
   private readonly running = new Map<string, Running>()
