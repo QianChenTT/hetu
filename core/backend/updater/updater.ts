@@ -62,8 +62,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
   const lastOf = (checked: Checked): LastCheck => {
     switch (checked.outcome) {
       case 'found': {
-        const { version, released } = checked.update
-        return { kind: 'found', version, released, page: releasePage(version), installable: options.platform === 'win32' && checked.installer !== null }
+        const { version, built } = checked.update
+        return { kind: 'found', version, built, page: releasePage(version), installable: options.platform === 'win32' && checked.installer !== null }
       }
       case 'current':
         return { kind: 'current', version: checked.update.version }

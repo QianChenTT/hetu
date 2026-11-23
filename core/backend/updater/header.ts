@@ -19,8 +19,9 @@ export type RefusedReason = typeof refusedReasons[number]
 export type QuietProblem = FetchProblem | 'no-update-file' | 'fault'
 
 // The signed update file's fields, read only once its signature checked: the version, the installer's asset name in the
-// release, its size in bytes and sha256 as lower case hex and when it was released, as ISO 8601 in UTC
-export type UpdateFile = { version: string, file: string, size: number, sha256: string, released: string }
+// release, its size in bytes and sha256 as lower case hex and when the release build made the installer, as ISO 8601
+// in UTC
+export type UpdateFile = { version: string, file: string, size: number, sha256: string, built: string }
 
 // What the last check came to. current: the latest release is the running version. found: a higher signed version,
 // with the release page and whether this machine can install it (Windows with the installer in the release) or only
@@ -30,7 +31,7 @@ export type LastCheck =
   | { kind: 'checking' }
   | { kind: 'current', version: string }
   | { kind: 'failed', problem: QuietProblem }
-  | { kind: 'found', version: string, released: string, page: string, installable: boolean }
+  | { kind: 'found', version: string, built: string, page: string, installable: boolean }
   | { kind: 'refused', reason: RefusedReason, version: string | null }
 
 // canCheck: whether this build checks at all, a locked build with an x.y.z version and the key loaded. on: the switch

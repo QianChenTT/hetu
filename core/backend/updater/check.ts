@@ -49,7 +49,7 @@ const updateFileSchema = z.object({
   file: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.exe$/),
   size: z.number().int().positive().max(1024 * MiB),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
-  released: z.iso.datetime(),
+  built: z.iso.datetime(),
 })
 
 // The key a check verifies with, made from the PEM inside hetu unless a test hands its own. Anything but an Ed25519
