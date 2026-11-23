@@ -9,7 +9,8 @@ import type { UpdateFile } from '../backend/updater/header.ts'
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
-// The fields for one built setup: its version, name, size and sha256 and when the file was made, in UTC
+// The fields for one built setup: its version, name, size and sha256 and when the file was made, in UTC. The build
+// makes it, so released is the build time, not the hour the draft is published
 export async function updateFileFor(setup: string, version: string, released: Date): Promise<UpdateFile> {
   if (versionParts(version) === null) throw new Error(`the version ${version} isn't x.y.z`)
   const bytes = await readFile(setup)
@@ -19,7 +20,7 @@ export async function updateFileFor(setup: string, version: string, released: Da
 export const updateFileText = (update: UpdateFile): string => `${JSON.stringify(update, null, 2)}\n`
 
 // Beside a build's setup: the update file naming it and SHA256SUMS over both. Nothing for a build with no setup
-export async function writeReleaseFiles(out: string, setups: readonly string[], version: string, released: Date): Promise<void> {
+export async function writeUpdateAndSums(out: string, setups: readonly string[], version: string, released: Date): Promise<void> {
   if (setups.length === 0) return
   if (setups.length > 1) throw new Error(`expected one setup in ${out}, found ${setups.length}`)
   const update = path.join(out, UPDATE_FILE_NAME)

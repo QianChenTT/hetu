@@ -5,7 +5,7 @@ import { flipFuses } from '@electron/fuses'
 import { Arch, build, Platform, type Configuration } from 'electron-builder'
 import { FUSES, fuseConfig, type FuseName } from './fuses.ts'
 import { STAGED_APP, stageInstall } from './stage.ts'
-import { writeReleaseFiles } from './update-file.ts'
+import { writeUpdateAndSums } from './update-file.ts'
 
 const repo = path.join(import.meta.dirname, '..', '..')
 const require = createRequire(import.meta.url)
@@ -149,7 +149,7 @@ export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: strin
   const unpacked = (await readdir(kind.out)).find(name => /-unpacked$|^mac/.test(name))
   if (unpacked === undefined) throw new Error('no unpacked folder was made')
   const appOutDir = path.join(kind.out, unpacked)
-  await writeReleaseFiles(kind.out, setupsIn(made), STAGED_APP.version, new Date())
+  await writeUpdateAndSums(kind.out, setupsIn(made), STAGED_APP.version, new Date())
   return { appOutDir, made }
 }
 
