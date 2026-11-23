@@ -1,3 +1,4 @@
+import { lstat } from 'node:fs/promises'
 import path from 'node:path'
 import { roleActions, type PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
@@ -33,14 +34,24 @@ export abstract class PluginsChanges extends PluginsInventory {
       return Promise.reject({ code: 'invalid', reason: 'role-taken' })
     }
     const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
-    if (change.kind === 'plugin.install') {
-      try {
-        this.stagingOf(change)
-      } catch (refusal) {
-        return Promise.reject(refusal)
-      }
-    }
+    if (change.kind === 'plugin.install') return this.installRequest(change, from)
     return this.requests.request(change, from)
+  }
+
+  protected async installRequest(change: Extract<Change, { kind: 'plugin.install' }>, from: Caller): Promise<RequestAnswer> {
+    this.stagingOf(change)
+    await this.noUnapproved(change)
+    return this.requests.request(change, from)
+  }
+
+  // A folder at plugins/<id> with no entry is a plugin the human never approved, found at start or put there since. An
+  // install would swap it out unseen, so it is refused invalid with unapproved until the human removes it
+  protected async noUnapproved(change: Extract<Change, { kind: 'plugin.install' }>): Promise<void> {
+    for (const { id } of change.plugins) {
+      if (this.state.plugins[id] !== undefined) continue
+      const found = this.known.has(id) || await lstat(folders.plugins(this.dataDir, id)).then(() => true, () => false)
+      if (found) throw { code: 'invalid', reason: 'unapproved' }
+    }
   }
 
   // The staging a plugin.install names with each plugin ticked in it under the digest the human was shown and nothing
@@ -443,6 +454,10 @@ export abstract class PluginsChanges extends PluginsInventory {
   protected async install(change: Extract<Change, { kind: 'plugin.install' }>, confirm: boolean): Promise<void> {
     try {
       await this.installNow(change, confirm)
+    } catch (err) {
+      // What a failure left is judged now, so a plugin written with its build not allowed reads refused unsigned
+      this.replan()
+      throw err
     } finally {
       // Installed or failed, nothing installs from it again
       this.dropStaging(change.staged)
@@ -453,6 +468,7 @@ export abstract class PluginsChanges extends PluginsInventory {
     if (this.closing) throw { code: 'stopped' }
     if (this.phase !== 'all') throw { code: 'unavailable' }
     const staging = this.stagingOf(change)
+    await this.noUnapproved(change)
     const stagings = this.stagings!
     const asks = this.installAsks(change, staging)
     const taken: { id: string, read: Read, classed: Classed }[] = []
