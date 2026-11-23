@@ -428,7 +428,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     // down, and only for a build allowUnsigned names, since no Confirm allows it. Its record lands first as any update's
     // does
     const allowed = isOne(this.state.switches.allowUnsigned, read.hash!)
-    if (allowed && this.classes('update', id, k.entry, false, read.manifest!.capabilities ?? []).unasked) {
+    if (allowed && this.classes('update', id, k.entry, false, { requested: read.manifest!.capabilities ?? [] }).unasked) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }

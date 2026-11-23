@@ -220,3 +220,77 @@ describe('stagings that throw', () => {
     expect(made.pluginsManager.pending()).toEqual([])
   })
 })
+
+const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
+const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+const PAIR = 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out'
+
+// The Install button's Confirm for the plugins ticked, the lines under each id by that id
+async function wordsOf(made: Awaited<ReturnType<typeof started>>, ids: string[]): Promise<Map<string, string[]>> {
+  heldId(await made.pluginsManager.request(install(ids.map(id => ({ id, digest: DIGEST }))), trusted))
+  const [request] = (await made.list()).requests.filter(one => one.kind === 'plugin.install')
+  return new Map(ids.map(id => [id, request.notes.filter(line => line.startsWith(`${id}: `)).map(line => line.slice(id.length + 2))]))
+}
+
+// Links between plugins are declared in their manifests and enforced by the router, so the plugins installed together
+// are classed with each other's links and grants as if installed
+describe('an install of several plugins', () => {
+  it('classes each with the others\' plugin.call links and grants, so the pair shows on the one Confirm', async () => {
+    const made = await started([staged('reader', { asks: [notes, calls('sender')] }), staged('sender', { asks: [fetch] })])
+    const words = await wordsOf(made, ['reader', 'sender'])
+    expect(words.get('reader')).toContain(PAIR)
+    expect(words.get('sender')).toContain(PAIR)
+    expect(words.get('sender')).toContain('Plugins that read and are connected to it through plugin.call: reader')
+  })
+
+  it('follows a subscription from the plugin that owns the topic to the one that hears it', async () => {
+    const made = await started([staged('speaker', { asks: [notes] }), staged('listener', { asks: [hears('speaker.changed'), fetch] })])
+    const words = await wordsOf(made, ['speaker', 'listener'])
+    expect(words.get('listener')).toContain(PAIR)
+    expect(words.get('listener')).toContain('Plugins that read and can reach it through events: speaker')
+    expect(words.get('speaker')).toContain(PAIR)
+    expect(words.get('speaker')).toContain('Plugins with network it can reach through events: listener')
+  })
+
+  it('never follows a subscription back, so a reader hearing a network plugin makes no pair', async () => {
+    const made = await started([staged('quiet', { asks: [notes, hears('noisy.changed')] }), staged('noisy', { asks: [fetch] })])
+    const words = await wordsOf(made, ['quiet', 'noisy'])
+    expect(words.get('quiet')).toContain('Class 1, Reader')
+    expect(words.get('noisy')).toContain('Class 3, Network')
+  })
+
+  it('counts no link the manifests don\'t declare', async () => {
+    const made = await started([staged('reader', { asks: [notes] }), staged('sender', { asks: [fetch] })])
+    const words = await wordsOf(made, ['reader', 'sender'])
+    expect(words.get('reader')).toEqual(['Read the notes at "notes/**"', 'Class 1, Reader'])
+    expect(words.get('sender')).toEqual(['Send data to and get data from "example.com" over the network', 'Class 3, Network'])
+  })
+
+  it('counts the plugins installed as well, as a single install does', async () => {
+    const made = await started([staged('reader', { asks: [notes, calls('mail')] }), staged('tags', { asks: [{ type: 'ui.view' }] })], {
+      folder: { mail: filesFor(workerManifest('mail', { capabilities: [fetch] })) },
+      entries: { mail: root => entryFor(root, { granted: [fetch], class: 3 }) },
+    })
+    const words = await wordsOf(made, ['reader', 'tags'])
+    expect(words.get('reader')).toContain(PAIR)
+    expect(words.get('reader')).toContain('Raises mail from class 3, Network to class 4, Powerful')
+    expect(words.get('tags')).toEqual(['Show panes and items of its own in the editor window', 'Class 0, Contained'])
+  })
+
+  it('counts a plugin it updates with the grants its new version asks for', async () => {
+    const made = await started([staged('reader', { asks: [notes, calls('alpha')] }), staged('alpha', { version: '2.0.0', asks: [fetch] })], {
+      folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: root => entryFor(root, { class: 0 }) },
+    })
+    const words = await wordsOf(made, ['reader', 'alpha'])
+    expect(words.get('reader')).toContain(PAIR)
+    expect(words.get('alpha')).toContain(PAIR)
+  })
+})
+
+describe('an install of one plugin', () => {
+  it('is classed against the plugins installed, never another plugin of its staging left unticked', async () => {
+    const made = await started([staged('reader', { asks: [notes, calls('sender')] }), staged('sender', { asks: [fetch] })])
+    const words = await wordsOf(made, ['reader'])
+    expect(words.get('reader')).toEqual(['Read the notes at "notes/**"', 'Call the plugin "sender"', 'Class 1, Reader'])
+  })
+})
