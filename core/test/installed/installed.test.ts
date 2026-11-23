@@ -26,6 +26,10 @@ describe.runIf(installed !== undefined && process.platform === 'win32')('the ins
     expect(statSync(uninstaller).isFile()).toBe(true)
   })
 
+  it('has its Start menu shortcut in the account\'s own Start menu', () => {
+    expect(statSync(path.join(process.env.APPDATA!, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'hetu.lnk')).isFile()).toBe(true)
+  })
+
   it('ships no elevation helper', () => {
     expect(existsSync(path.join(dir, 'resources', 'elevate.exe'))).toBe(false)
   })

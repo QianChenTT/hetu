@@ -3,15 +3,15 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { configFor, icoFromPng, INSTALL_GUID, packageHetu, SETUP_NAME, setupsIn } from '../build/package.ts'
+import { configFor, icoFromPng, INSTALL_GUID, packageHetu, SETUP_NAME_TEMPLATE, setupsIn } from '../build/package.ts'
 import { FUSES } from '../build/fuses.ts'
 
 // A release asset's name is changed where it holds a space, so a name with one wouldn't match its line in SHA256SUMS
 describe('the setup\'s file name', () => {
   it('holds the version and the architecture and no space', () => {
-    const name = SETUP_NAME.replace('${version}', '0.5.0').replace('${ext}', 'exe')
+    const name = SETUP_NAME_TEMPLATE.replace('${version}', '0.5.0').replace('${ext}', 'exe')
     expect(name).toBe('hetu-setup-0.5.0-x64.exe')
-    expect(SETUP_NAME).not.toMatch(/\s/)
+    expect(SETUP_NAME_TEMPLATE).not.toMatch(/\s/)
   })
 
   it('is the one file of a build SHA256SUMS covers', () => {
@@ -54,6 +54,13 @@ describe('the Windows installer', () => {
     expect(INSTALL_GUID).toBe('3af4a7b2-eaef-54c1-8e70-b491bbebeebd')
   })
 
+  // NsisTarget.js derives the id as a UUID v5 of the app id in electron-builder's own namespace when none is given
+  it('is the id electron-builder derives from the app id', () => {
+    const lib = createRequire(createRequire(path.join(path.dirname(createRequire(import.meta.url).resolve('electron-builder/package.json')), 'package.json')).resolve('app-builder-lib/package.json'))
+    const { UUID } = lib('builder-util-runtime') as { UUID: { v5(name: string, namespace: Buffer): string, parse(text: string): Buffer } }
+    expect(UUID.v5(config.appId!, UUID.parse('50e065bc-3134-11e6-9bab-38c9862bdaf3'))).toBe(INSTALL_GUID)
+  })
+
   // A misspelled option would otherwise be read as unset and the setup built without it
   it('passes electron-builder\'s own schema, which refuses an option it doesn\'t know', async () => {
     const require = createRequire(path.join(path.dirname(createRequire(import.meta.url).resolve('electron-builder/package.json')), 'package.json'))
@@ -64,8 +71,8 @@ describe('the Windows installer', () => {
     await expect(validateConfiguration({ ...config, nsis: { ...nsis, allowElevaton: false } }, new DebugLogger(false))).rejects.toThrow('configuration')
   })
 
-  it('names the setup, writes no blockmap and keeps app data on uninstall', () => {
-    expect(nsis.artifactName).toBe(SETUP_NAME)
+  it('names the setup and sets the build options electron-builder reads', () => {
+    expect(nsis.artifactName).toBe(SETUP_NAME_TEMPLATE)
     expect(nsis.differentialPackage).toBe(false)
     expect(nsis.deleteAppDataOnUninstall).toBe(false)
     expect(nsis.warningsAsErrors).toBe(true)

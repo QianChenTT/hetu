@@ -48,7 +48,7 @@ describe('the include script\'s lock to the current user', () => {
     it(`refuses /allusers and an elevated inner copy, then sets the current user's mode, in ${hook}`, async () => {
       const all = macros(await readFile(script, 'utf8'))
       const body = bodyOf(all, hook)
-      const lock = body.includes('!insertmacro hetuCurrentUserOnly') ? bodyOf(all, 'hetuCurrentUserOnly') : body
+      const lock = body.includes('!insertmacro hetuLockToCurrentUser') ? bodyOf(all, 'hetuLockToCurrentUser') : body
       expect(lock).toMatch(/\$\{isForAllUsers\}[\s\S]*\$\{UAC_IsInnerInstance\}[\s\S]*!insertmacro hetuRefuseElevation/)
       expect(lock).toMatch(/StrCpy\s+\$hasPerMachineInstallation\s+"0"/)
       expect(lock).toMatch(/!insertmacro setInstallModePerUser/)
@@ -58,8 +58,8 @@ describe('the include script\'s lock to the current user', () => {
   it('refuses with ERROR_ELEVATION_REQUIRED and quits', async () => {
     const text = await readFile(script, 'utf8')
     const body = bodyOf(macros(text), 'hetuRefuseElevation')
-    expect(code(text)).toMatch(/!define\s+HETU_REFUSED_ELEVATION\s+740\b/)
-    expect(body).toMatch(/SetErrorLevel\s+\$\{HETU_REFUSED_ELEVATION\}/)
+    expect(code(text)).toMatch(/!define\s+HETU_EXIT_ELEVATION_REFUSED\s+740\b/)
+    expect(body).toMatch(/SetErrorLevel\s+\$\{HETU_EXIT_ELEVATION_REFUSED\}/)
     expect(body).toMatch(/^\s*Quit\s*$/m)
   })
 
@@ -98,8 +98,8 @@ describe('the include script\'s pages and shortcut', () => {
 
   it('makes the desktop shortcut only when the box was ticked and removes it only when it was cleared', async () => {
     const body = bodyOf(macros(await readFile(script, 'utf8')), 'customInstall')
-    expect(body).toMatch(/\$\{If\}\s+\$hetuDesktopWanted\s+==\s+\$\{BST_CHECKED\}\s+CreateShortCut\s+"\$newDesktopLink"/)
-    expect(body).toMatch(/\$\{ElseIf\}\s+\$hetuDesktopWanted\s+==\s+\$\{BST_UNCHECKED\}[\s\S]*Delete\s+"\$newDesktopLink"/)
+    expect(body).toMatch(/\$\{If\}\s+\$hetuDesktopBoxState\s+==\s+\$\{BST_CHECKED\}\s+CreateShortCut\s+"\$newDesktopLink"/)
+    expect(body).toMatch(/\$\{ElseIf\}\s+\$hetuDesktopBoxState\s+==\s+\$\{BST_UNCHECKED\}[\s\S]*Delete\s+"\$newDesktopLink"/)
   })
 
   it('keeps the desktop shortcut through an update and removes it on an uninstall', async () => {
