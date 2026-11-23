@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
-import { type FolderDialog, INPUT_DELAY_MS, InputDelay, pickFolder, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
+import { type FolderDialog, INPUT_DELAY_MS, InputDelay, pickFolder, pickPlugins, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
 
 const key = (type: 'keyDown' | 'keyUp', code: string, isAutoRepeat = false) => ({ type, code, isAutoRepeat })
 const mouse = (type: string, button: 'left' | 'right' | 'middle' = 'left') => ({ type, button })
@@ -205,6 +205,35 @@ describe('picking the notes folder', () => {
       asked++
       return { canceled: false, filePaths: ['/notes'] }
     })).toBeNull()
+    expect(asked).toBe(0)
+  })
+})
+
+describe('picking plugins to install', () => {
+  it('opens a dialog for one zip or one folder over the trusted window and answers the path, or null when cancelled', async () => {
+    const { window } = trusted()
+    const parent = window.show()
+    const asked: { parent: TrustedLike, properties: string[], filters?: { name: string, extensions: string[] }[] }[] = []
+    const dialog: FolderDialog = async (over, options) => {
+      asked.push({ parent: over, properties: options.properties, filters: options.filters })
+      return { canceled: false, filePaths: ['/Users/someone/plugins.zip'] }
+    }
+    expect(await pickPlugins(window, dialog, 'zip')).toBe('/Users/someone/plugins.zip')
+    expect(await pickPlugins(window, dialog, 'folder')).toBe('/Users/someone/plugins.zip')
+    expect(asked).toEqual([
+      { parent, properties: ['openFile'], filters: [{ name: 'Plugin zip', extensions: ['zip'] }] },
+      { parent, properties: ['openDirectory'], filters: undefined },
+    ])
+    expect(await pickPlugins(window, async () => ({ canceled: true, filePaths: [] }), 'zip')).toBeNull()
+  })
+
+  it('opens no dialog while no trusted window is open', async () => {
+    const { window } = trusted()
+    let asked = 0
+    expect(await pickPlugins(window, async () => {
+      asked++
+      return { canceled: false, filePaths: ['/p.zip'] }
+    }, 'zip')).toBeNull()
     expect(asked).toBe(0)
   })
 })

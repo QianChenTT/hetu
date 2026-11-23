@@ -51,10 +51,13 @@ function fakeStagings(plugins: StagedRead[], source: StagedSource = { kind: 'zip
       const plugin = held.get(handle)?.plugins.find(one => one.id === id)
       return plugin === undefined || plugin.manifest === null ? null : bytesOf(plugin)
     },
+    findRelease: async () => ({ problem: 'offline' }),
+    stageRelease: async () => ({ problem: 'offline' }),
     unstage: handle => {
       unstaged.push(handle)
       held.delete(handle)
     },
+    close: async () => {},
   }
   return { held, reads, unstaged, stagings }
 }
@@ -109,12 +112,12 @@ describe('the Install button\'s Confirm', () => {
   })
 
   it('names the release a link\'s zip came from', async () => {
-    const fake = fakeStagings([staged('search')], { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip', tag: 'v2' })
+    const fake = fakeStagings([staged('search')], { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip', tag: 'v2', verified: true })
     const made = await harness({ pluginsManager: { stagings: fake.stagings } })
     await made.pluginsManager.start()
     heldId(await made.pluginsManager.request(install([{ id: 'search', digest: DIGEST }]), trusted))
     const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
-    expect(list.requests[0].notes[0]).toBe('From "plugins.zip" in the release "v2" of "https://github.com/someone/plugins"')
+    expect(list.requests[0].notes[0]).toBe('From "plugins.zip" in the release "v2" of "https://github.com/someone/plugins", matching the checksum GitHub lists for it')
   })
 
   it('installs on its Confirm, after the Confirm record, from the staging with each plugin\'s digest', async () => {
