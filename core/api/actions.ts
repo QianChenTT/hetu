@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type CapabilityType } from './capabilities.ts'
-import { askedCapability, change, clientName, MAX_ASK_ITEMS, MAX_CLIENT_ID_LENGTH, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
+import {
+  askedCapability, change, clientName, MAX_ASK_ITEMS, MAX_CLIENT_ID_LENGTH, MAX_FOLDER_LENGTH, MAX_REDIRECT_LENGTH, type ChangeKind,
+} from './changes.ts'
 import { label, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
@@ -113,6 +115,39 @@ const frameName = localName.refine(name => name !== 'worker' && name !== 'host' 
 export const FRAME_TOKEN = /^[0-9a-f]{32}$/
 const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
 
+// The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub
+// link whose release main lists the zip assets of. The core copies the source into a staging folder of its own and
+// answers what it found there. Install then sends plugin.install through security.request, held like every other
+// change, and its one Confirm installs the plugins the human ticked from those staged bytes and approves each with the
+// hash of what it wrote, so the bytes shown are the bytes that run. Each is the trusted window's alone and none is a
+// read, so inside the input delay each counts for nothing. The core may drop a staging nobody installed or cancelled,
+// as it does once one is installed
+
+// The longest link the human may paste
+export const MAX_LINK_LENGTH = 2048
+// The longest file name of a release's asset
+const MAX_ASSET_LENGTH = 255
+
+const link = screenText(MAX_LINK_LENGTH)
+// What the core stages: a zip or a folder the dialog answered, or one zip asset of the link's release
+const installSource = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal(['zip', 'folder']), path: screenText(MAX_FOLDER_LENGTH) }),
+  z.strictObject({ kind: z.literal('link'), link, asset: screenText(MAX_ASSET_LENGTH) }),
+])
+export type InstallSource = z.infer<typeof installSource>
+
+const installTable = {
+  // The OS dialog over the trusted window for a plugin zip or a folder holding one plugin or several, answering the
+  // path picked or null when the human cancelled
+  'app.pickPlugins': { from: 'trusted', args: z.strictObject({ source: z.enum(['zip', 'folder']) }) },
+  // The latest release of the GitHub repository a link names, or the release it names, with its zip assets
+  'core.findRelease': { from: 'trusted', args: z.strictObject({ link }) },
+  // Copies the source into a staging folder of the core's own and answers each plugin found there under a handle
+  'core.stage': { from: 'trusted', args: z.strictObject({ source: installSource }) },
+  // Cancel: the staging dropped with nothing installed
+  'core.unstage': { from: 'trusted', args: z.strictObject({ staged: token }) },
+} satisfies Record<string, CoreAction>
+
 const coreTable = {
   // The caller as its way in names it
   'core.self': { from: 'any', args: nothing, reads: true },
@@ -148,6 +183,7 @@ const coreTable = {
   // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.pick,
   // which waits for the Confirm
   'app.pickFolder': { from: 'trusted', args: nothing },
+  ...installTable,
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
   // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
   'gate.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }), reads: true },
@@ -401,7 +437,7 @@ export type StateKind = 'switches' | 'luoshu' | 'plugins'
 
 // What an action answers with where that is settled: the router's own actions and the luoshu's, which keep the daemon's
 // shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
-export type ActionResults = {
+export type ActionResults = InstallResults & {
   'core.self': Caller
   'core.status': CoreStatus
   'security.list': SecurityList
@@ -461,3 +497,50 @@ export type CoreViewsPlugin = {
   theme: ThemeSpec | null
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown
+
+// Why a link or a source gave nothing to install. A link: not a GitHub repository or release, no release, no zip asset,
+// GitHub's rate limit or no network. A zip or folder: it doesn't read, a name that could land outside the staging, two
+// names for one file, a link or other special entry, an encrypted entry, past the cap on entries or bytes, not a
+// folder, two plugins with one id, or no plugin in it
+export const installProblems = frozen([
+  'not-github', 'no-release', 'no-zip', 'rate-limited', 'offline', 'invalid', 'name', 'duplicate', 'special', 'encrypted', 'too-many',
+  'too-big', 'not-a-folder', 'same-id', 'none',
+] as const)
+export type InstallProblem = typeof installProblems[number]
+
+// One zip asset of a release, its file name and size in bytes
+export type ReleaseAsset = { name: string, bytes: number }
+export type FoundRelease = { tag: string, assets: ReleaseAsset[] } | { problem: InstallProblem }
+
+// Why one plugin found can't be installed: its manifest doesn't parse or check out, it asks for what only hetu's own
+// install holds, it needs a core API this hetu doesn't have or its id is one hetu keeps
+export type StagedProblem = 'invalid' | 'install-only' | 'api' | 'reserved'
+
+// One plugin found: its id, the name and version its manifest gives, null where it didn't read, what it asks for, the
+// class the grant risk classifier would give it, null for none known, and the classifier's lines on why, as an approval's
+// Confirm shows them. replaces is the version it replaces, null for a new one. digest is the SHA-256 of the manifest's
+// bytes as staged, which the Confirm sends back
+export type StagedPlugin = {
+  id: string
+  name: string | null
+  version: string | null
+  capabilities: Capability[]
+  class: number | null
+  lines: string[]
+  replaces: string | null
+  digest: string
+  problem: StagedProblem | null
+}
+
+// Where a staging came from as the core staged it, a link's with the tag of the release it took the zip from
+export type StagedSource = Exclude<InstallSource, { kind: 'link' }> | (Extract<InstallSource, { kind: 'link' }> & { tag: string })
+
+// A staging: its handle, its source and each plugin found
+export type Staged = { staged: string, source: StagedSource, plugins: StagedPlugin[] } | { problem: InstallProblem }
+
+export type InstallResults = {
+  'app.pickPlugins': string | null
+  'core.findRelease': FoundRelease
+  'core.stage': Staged
+  'core.unstage': null
+}

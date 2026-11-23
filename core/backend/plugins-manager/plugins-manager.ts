@@ -1,13 +1,14 @@
 import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { capabilityText } from '../../api/trusted.ts'
+import { capabilityText, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
+import type { Staging } from './header.ts'
 import type { Served } from '../router/header.ts'
 import { clearStartMarker, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
 import { type ConnectAsked } from './connects.ts'
@@ -170,6 +171,11 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         ...this.classes('approve', change.plugin, this.approval(k), true).lines,
       ]
     }
+    if (change.kind === 'plugin.install') {
+      const staging = this.heldStaging(change.staged)
+      if (staging === null) return []
+      return [sourceLine(staging.source), UNSIGNED, ...change.plugins.flatMap(({ id }) => this.installWords(id, staging))]
+    }
     if (change.kind === 'plugin.update') {
       const read = this.staged.get(change.plugin)?.read
       const to = read?.manifest?.version
@@ -189,6 +195,23 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       return k?.from === 'folder' && k.entry !== null ? [...this.classes(change.kind === 'plugin.remove' ? 'remove' : 'reset', change.plugin, null, true).lines] : []
     }
     return []
+  }
+
+  // One plugin an install takes: its name as its author wrote it in quotes with its id and version and the version it
+  // replaces, then each grant as a plain sentence and the grant risk classifier's lines, each under the plugin's id so
+  // no line reads as another plugin's. Classed as the approval or update it is, from the manifest staged
+  protected installWords(id: string, staging: Staging): string[] {
+    const staged = staging.plugins.find(plugin => plugin.id === id)
+    const manifest = staged?.manifest
+    if (staged === undefined || manifest === undefined || manifest === null) return []
+    const asks = manifest.capabilities ?? []
+    const before = this.known.get(id)?.from === 'folder' ? this.state.plugins[id] : undefined
+    const after: Plugin = { version: manifest.version, contentHash: staged.digest, signer: null, granted: [...asks], class: null, enabled: true }
+    const lines = this.classes(before === undefined ? 'approve' : 'update', id, after, true).lines
+    return [
+      `${JSON.stringify(manifest.name)} (${id}), version ${manifest.version}${before === undefined ? '' : `, replacing version ${before.version}`}`,
+      ...[...(asks.length === 0 ? ['It asks for nothing'] : asks.map(grantSentence)), ...lines].map(line => `${id}: ${line}`),
+    ]
   }
 
   // What a window's banner shows, from the plugins manager's own states and the state it runs with

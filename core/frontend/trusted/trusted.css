@@ -72,3 +72,79 @@ label {
   display: block;
   margin: 8px 0;
 }
+
+.unsigned {
+  font-weight: 600;
+}
+
+.installing fieldset {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border: 1px solid #e3e3e3;
+  background: #fff;
+}
+
+.installing legend label,
+.install-controls label {
+  display: inline;
+}
+
+.installing ul,
+.installing p {
+  overflow-wrap: anywhere;
+}
+
+.startup {
+  padding: 12px 16px;
+  border: 1px solid #b9c6d3;
+  background: #f1f5f9;
+}
+
+.startup h2 {
+  margin-top: 0;
+}
+
+.startup h3 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+
+.startup p {
+  margin: 4px 0;
+}
+
+.done {
+  color: #2d6a2d;
+}
+
+.menu {
+  margin-bottom: 12px;
+}
+
+.menu summary {
+  cursor: pointer;
+}
+
+.install-controls input {
+  width: 24em;
+  max-width: 100%;
+}
+
+.high {
+  font-weight: 600;
+  color: #8a1c1c;
+}
+
+.why {
+  color: #5a3b00;
+}
+
+/* Read out by a screen reader and not drawn */
+.status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

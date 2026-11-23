@@ -28,6 +28,14 @@ export function describeChange(change: Change): Described {
   switch (change.kind) {
     case 'plugin.approve':
       return { text: `Approve ${change.plugin} with the grants its manifest asks for`, notes: [] }
+    // What each plugin asks for, its class and where it came from are the plugins manager's to add, from the staging
+    case 'plugin.install': {
+      const one = change.plugins.length === 1
+      return {
+        text: `Install ${change.plugins.map(plugin => plugin.id).join(', ')} into the plugin folder and approve ${one ? 'it' : 'each'} with the grants its manifest asks for`,
+        notes: [],
+      }
+    }
     case 'plugin.update':
       return { text: `Update ${change.plugin} to the version staged beside it`, notes: ['It stops with the plugins that need it and starts again on the new version'] }
     case 'plugin.on':
