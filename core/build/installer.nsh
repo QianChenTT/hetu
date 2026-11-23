@@ -7,11 +7,11 @@
 !include UAC.nsh
 
 # ERROR_ELEVATION_REQUIRED, the exit code of a setup or uninstaller that stopped where administrator rights were asked for
-!define HETU_REFUSED_ELEVATION 740
+!define HETU_EXIT_ELEVATION_REFUSED 740
 
 !macro hetuRefuseElevation
   MessageBox MB_OK|MB_ICONSTOP "hetu installs for this Windows account only and never asks for administrator rights" /SD IDOK
-  SetErrorLevel ${HETU_REFUSED_ELEVATION}
+  SetErrorLevel ${HETU_EXIT_ELEVATION_REFUSED}
   Quit
 !macroend
 
@@ -36,7 +36,7 @@
 # Runs after the templates picked the mode from the registry and the command line. /allusers asks for the per machine
 # mode and an inner instance is the elevated half of a UAC start, so both are refused. A per machine entry found in the
 # registry no longer picks the mode
-!macro hetuCurrentUserOnly
+!macro hetuLockToCurrentUser
   ${If} ${isForAllUsers}
   ${OrIf} ${UAC_IsInnerInstance}
     !insertmacro hetuRefuseElevation
@@ -47,11 +47,11 @@
 !macroend
 
 !macro customInit
-  !insertmacro hetuCurrentUserOnly
+  !insertmacro hetuLockToCurrentUser
 !macroend
 
 !macro customUnInit
-  !insertmacro hetuCurrentUserOnly
+  !insertmacro hetuLockToCurrentUser
 !macroend
 
 !macro customWelcomePage
@@ -60,11 +60,12 @@
   !insertmacro MUI_PAGE_WELCOME
 !macroend
 
-# The desktop shortcut as a checkbox before the install, ticked when the shortcut is already there. The box's state is
+# The desktop shortcut as a checkbox before the install, ticked when the shortcut is already there. electron-builder's
+# hook for a page after the folder page, which this setup doesn't show, so it follows Welcome. The box's state is
 # kept only when the page was shown, so a silent run or an update leaves the shortcut as it was
 !macro customPageAfterChangeDir
   Var hetuDesktopBox
-  Var hetuDesktopWanted
+  Var hetuDesktopBoxState
 
   Page custom hetuDesktopPage hetuDesktopLeave
 
@@ -81,17 +82,17 @@
   FunctionEnd
 
   Function hetuDesktopLeave
-    ${NSD_GetState} $hetuDesktopBox $hetuDesktopWanted
+    ${NSD_GetState} $hetuDesktopBox $hetuDesktopBoxState
   FunctionEnd
 !macroend
 
 !macro customInstall
-  ${If} $hetuDesktopWanted == ${BST_CHECKED}
+  ${If} $hetuDesktopBoxState == ${BST_CHECKED}
     CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
     ClearErrors
     WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
     System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
-  ${ElseIf} $hetuDesktopWanted == ${BST_UNCHECKED}
+  ${ElseIf} $hetuDesktopBoxState == ${BST_UNCHECKED}
   ${AndIf} ${FileExists} "$newDesktopLink"
     WinShell::UninstShortcut "$newDesktopLink"
     Delete "$newDesktopLink"
@@ -99,7 +100,8 @@
   ${EndIf}
 !macroend
 
-# An update runs the older uninstaller with --updated, which keeps the shortcut for the newer setup
+# An update runs the older uninstaller with --updated, which keeps the shortcut for the newer setup. A setup run with
+# --delete-app-data passes that flag in its place, so the shortcut goes then
 !macro customUnInstall
   ${IfNot} ${isUpdated}
     WinShell::UninstShortcut "$newDesktopLink"

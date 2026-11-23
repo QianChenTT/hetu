@@ -66,7 +66,7 @@ async function resourcesIn(appOutDir: string, platform: string): Promise<string>
 
 // The setup's file name as electron-builder's template. No space, since a GitHub release changes one in an asset's name
 // and the name would no longer match its line in SHA256SUMS
-export const SETUP_NAME = 'hetu-setup-${version}-x64.${ext}'
+export const SETUP_NAME_TEMPLATE = 'hetu-setup-${version}-x64.${ext}'
 
 // The setups among the files a build made, the files SHA256SUMS covers
 export function setupsIn(made: readonly string[]): string[] {
@@ -105,7 +105,7 @@ export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Reco
     // box, progress and Finish with Run hetu. No folder to pick. The include script skips the page that asks just me or
     // all users and makes every way to elevation a refusal
     nsis: {
-      artifactName: SETUP_NAME,
+      artifactName: SETUP_NAME_TEMPLATE,
       oneClick: false,
       allowElevation: false,
       allowToChangeInstallationDirectory: false,
