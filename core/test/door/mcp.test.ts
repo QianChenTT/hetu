@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Refused } from '@hetu/sdk'
-import { MAX_REFUSAL_COUNT } from 'hetu-core/api/actions.ts'
-import { refusalReasons, type RefusalReason } from '../src/checks.ts'
-import { type CallHolder, mcpServe } from '../src/mcp.ts'
-import { refusalCounter } from '../src/report.ts'
-import type { Passed } from '../src/server.ts'
+import { Refused } from '../../sdk/index.ts'
+import { MAX_REFUSAL_COUNT } from '../../api/actions.ts'
+import { refusalReasons, type RefusalReason } from '../../backend/door/checks.ts'
+import { type CallHolder, mcpServe } from '../../backend/door/mcp.ts'
+import { refusalCounter } from '../../backend/door/report.ts'
+import type { Passed } from '../../backend/door/server.ts'
 
 afterEach(() => {
   vi.useRealTimers()

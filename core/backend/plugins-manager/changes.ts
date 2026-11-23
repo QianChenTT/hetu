@@ -2,7 +2,7 @@ import path from 'node:path'
 import type { PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
 import { grantKeyOf, type Caller } from '../../api/envelope.ts'
-import { isNewer } from '../../api/install.ts'
+import { isNewer } from '../../api/plugin-version.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
@@ -12,12 +12,12 @@ import { plan, type Node } from './graph.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import type { Staging } from './header.ts'
 import { readPlugin, type Read } from './verify.ts'
-import { PluginsInstall } from './install.ts'
+import { PluginsInventory } from './inventory.ts'
 import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, toggled, bare } from './base.ts'
 
 // The changes: the queue of held requests, applying a change the human confirmed or that narrows and the staged
 // updates, each written through the state store
-export abstract class PluginsChanges extends PluginsInstall {
+export abstract class PluginsChanges extends PluginsInventory {
   // ---- the state
 
   // A security request from a window, which the security view decides. The router has checked the caller is a window.
@@ -222,7 +222,7 @@ export abstract class PluginsChanges extends PluginsInstall {
         this.bump()
       }
     })
-    if (k.from === 'install') k.held = { kind: 'held', state: 'stopped', reason: 'restart-hetu' }
+    if (k.from === 'core') k.held = { kind: 'held', state: 'stopped', reason: 'restart-hetu' }
     this.replan()
   }
 
@@ -266,12 +266,8 @@ export abstract class PluginsChanges extends PluginsInstall {
     // A plugin the human switched off holds nothing from the change on, so a call it makes in its stop grace passes on
     // no grant
     for (const [id, entry] of Object.entries(this.state.plugins)) {
-      if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
+      if (this.known.get(id)?.from === 'core' || !entry.enabled || entry.granted.length === 0) continue
       plugins[id] = items(entry.granted, entry.off ?? [], asks ? entry.firstUse ?? [] : [])
-    }
-    for (const k of this.known.values()) {
-      const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
-      if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
     // Each pair's items and the pairs revoked in the run, from memory
     const { pairs, revoked } = this.pairsSnapshot()
@@ -323,7 +319,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const k = this.known.get(id)
     // An expected guard has its switch whether it is installed or not, as the fail-safe's start with it switched off needs
     if (k === undefined && !this.expected().includes(id)) throw new Error(`no plugin ${id}`)
-    if (k === undefined || k.from === 'install') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
+    if (k === undefined || k.from === 'core') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
     if (k.entry === null) throw new Error(`no entry for ${id}`)
     const entry = { ...k.entry, enabled: on }
     await this.store.writePlugin(id, entry)
@@ -411,7 +407,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     if (k === undefined || k.from !== 'folder' || k.entry === null) return { outcome: 'refused', reason: 'missing' }
     // An entry naming a signer is refused signer as the folder check refuses it, so no update carries one on
     if (k.entry.signer !== null) return { outcome: 'refused', reason: 'signer' }
-    const read = await readPlugin(dir, id, 'folder')
+    const read = await readPlugin(dir, id)
     if (read.problem !== null) return { outcome: 'refused', reason: read.problem }
     if (!isNewer(read.manifest!.version, k.entry.version)) return { outcome: 'refused', reason: 'not-newer' }
     const nodes: Node[] = [...this.known.values()].map(other => {
@@ -484,7 +480,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     }
     k.entry = entry
     k.read = read
-    k.place = placeOf(k.id, read, 'folder')
+    k.place = placeOf('folder')
     await this.allowBuild(old.contentHash, entry.contentHash)
     if (k.held?.reason === 'update') k.held = null
     this.bump()

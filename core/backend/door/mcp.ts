@@ -1,4 +1,4 @@
-import { Refused } from '@hetu/sdk'
+import { Refused } from '../../sdk/index.ts'
 import { doorLimits, labelOk, type Refusal } from './checks.ts'
 import type { Answer, Passed } from './server.ts'
 

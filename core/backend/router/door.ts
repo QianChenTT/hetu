@@ -11,12 +11,12 @@ import { call, answered } from './route.ts'
 // read. A way that ends or dies takes its subscriptions and its calls with it
 
 // Binds a plugin half to one end of a channel. The router starts the port, since a paused MessagePortMain emits
-// nothing, close included
-export function register(c: Context, port: Port, caller: Caller): void {
+// nothing, close included. utility is the port of a utility process the core started, as the plugins manager says
+export function register(c: Context, port: Port, caller: Caller, via: 'port' | 'utility' = 'port'): void {
   const bound = bindable(c, caller)
   if (c.ports.has(port)) throw new Error('port already registered')
   c.ports.add(port)
-  const way = addWay(c, bound, 'port', message => port.postMessage(message), () => port.close())
+  const way = addWay(c, bound, via, message => port.postMessage(message), () => port.close())
   port.on('message', message => receive(c, way, message, way.send!))
   // A message that couldn't be read still counts against the rate
   port.on('messageerror', () => receive(c, way, undefined, way.send!))
@@ -156,7 +156,7 @@ function receive(c: Context, way: Way, message: unknown, answer: Send): void {
   // Everything main hears from a utility half counts as alive, noted before the rate so one dropped for it or one
   // that can't be read counts too. A worker's messages pass its relay first, which drops some unheard, so a worker
   // keeps the heartbeat alone
-  if (way.via === 'port' && way.caller.kind === 'plugin' && way.caller.half === 'host' && c.info(way.caller.id)?.place === 'utility') {
+  if (way.via === 'utility') {
     c.tell(c.heard, way.caller, 'alive')
   }
   const verdict = admit(c, way)

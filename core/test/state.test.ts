@@ -6,10 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CAPABILITIES } from '../api/capabilities.ts'
 import { MAX_FOLDER_LENGTH } from '../api/changes.ts'
 import { MAX_TIMER_MS } from '../api/limits.ts'
-import { coreModuleIds, corePluginIds } from '../api/ids.ts'
+import { coreModuleIds, doorId } from '../api/ids.ts'
 
-// Every id the off switches may name: the core modules and the core plugins
-const switchable = [...coreModuleIds, ...corePluginIds]
+// Every id the off switches may name: the core modules and the door
+const switchable = [...coreModuleIds, doorId]
 import {
   defaultState, defaultSwitches, MAX_LISTED, StateStore, type Check, type Loaded,
 } from '../backend/boot/state.ts'
@@ -41,7 +41,7 @@ const noSwitches = {
 }
 // Most switches away from the defaults, so a field the code drops or mixes up shows
 const switchesIn = {
-  off: ['gate', 'net'],
+  off: ['gate', 'mcp-http-handler'],
   devMode: ['my-plugin'],
   skipVerification: false,
   allowUnsigned: [HASH],
@@ -150,7 +150,7 @@ describe('defaults', () => {
 
   it('hands out a new object each time, so a caller can not change the next default', () => {
     const changed = defaultState()
-    changed.switches.off.push('net')
+    changed.switches.off.push('mcp-http-handler')
     changed.switches.devMode.push('search')
     changed.switches.limits.all.callsInFlight = 1000
     changed.switches.limits.plugins.search = { readyMs: 1 }
@@ -284,7 +284,7 @@ describe('writing', () => {
     await store.writePlugin('search', state.plugins.search)
     const again = await store.load()
     expect(again.suspect).toBe(false)
-    expect(again.state.switches).toEqual({ ...switchesIn, off: ['gate', 'net', 'history'] })
+    expect(again.state.switches).toEqual({ ...switchesIn, off: ['gate', 'mcp-http-handler', 'history'] })
     expect(again.state.luoshu).toEqual(luoshuIn)
     expect(again.state.plugins.search).toEqual(state.plugins.search)
   })
@@ -670,7 +670,7 @@ const kinds: Kind[] = [
       ['off as a string', switchesText({ off: 'gate' })],
       ['a first-party id in off', switchesText({ off: ['layout'] })],
       ['an id outside the grammar in off', switchesText({ off: ['../net'] })],
-      ['an id twice in off', switchesText({ off: ['gate', 'net', 'gate'] })],
+      ['an id twice in off', switchesText({ off: ['gate', 'mcp-http-handler', 'gate'] })],
       ['a namespace no plugin holds in dev mode', switchesText({ devMode: ['ui'] })],
       ['an id outside the grammar in dev mode', switchesText({ devMode: ['Search'] })],
       ['an id twice in execAnyCommand', switchesText({ execAnyCommand: ['search', 'search'] })],
@@ -975,15 +975,16 @@ describe('the retired recordNothing', () => {
   })
 })
 
-// The watchdog and leases, core plugins before they were dropped, may still be switched off in a file: read with the id
-// dropped. leases is a community plugin's id now, whose switch lives in its own entry
+// The watchdog and leases, core plugins before they were dropped, and net, a core plugin never built, may still be
+// switched off in a file: read with the id dropped. leases is a community plugin's id now, whose switch lives in its own
+// entry
 describe('the dropped core plugins', () => {
-  it.each(['watchdog', 'leases'])('reads a file naming %s in off with the id dropped and the rest of off kept, then writes the switches back without it', async id => {
+  it.each(['watchdog', 'leases', 'net'])('reads a file naming %s in off with the id dropped and the rest of off kept, then writes the switches back without it', async id => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, devMode: ['alpha'], off: ['gate', id, 'net'] }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, devMode: ['alpha'], off: ['gate', id, 'mcp-http-handler'] }))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.state.switches.off).toEqual(['gate', 'net'])
+    expect(loaded.state.switches.off).toEqual(['gate', 'mcp-http-handler'])
     expect(loaded.state.switches.devMode).toEqual(['alpha'])
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toContain(id)
@@ -995,10 +996,10 @@ describe('the dropped core plugins', () => {
 describe('hidden marks off from when it ran in the page', () => {
   it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'hidden-marks', 'net'] }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'hidden-marks', 'mcp-http-handler'] }))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.state.switches.off).toEqual(['gate', 'net'])
+    expect(loaded.state.switches.off).toEqual(['gate', 'mcp-http-handler'])
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toContain('hidden-marks')
   })
@@ -1094,7 +1095,7 @@ describe('what the hash does not catch', () => {
     // The old file carries its own hash line, so a plain copy puts it back
     await writeFile(switchesPath(), oldFile)
     const loaded = await store.load()
-    expect(loaded.state.switches.off).toEqual(['gate', 'net'])
+    expect(loaded.state.switches.off).toEqual(['gate', 'mcp-http-handler'])
     expect(loaded.suspect).toBe(false)
   })
 })

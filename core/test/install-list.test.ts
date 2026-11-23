@@ -1,50 +1,9 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { installList, isNewer, MAX_INSTALL_LIST_BYTES, pluginVersion } from '../api/install.ts'
+import { isNewer, pluginVersion } from '../api/plugin-version.ts'
 import { bindFailures, dependencyReason, depsMessage, init, reason, ready, stop, stopped, stopReasons } from '../api/lifecycle.ts'
-import { parseStrict } from '../lib/hashed-file.ts'
 
-const hash = 'a'.repeat(64)
-const list = (plugins: object) => ({ format: 1, plugins })
-
-describe('the install list', () => {
-  it('takes core plugins', () => {
-    const parsed = installList.parse(list({
-      'mcp-http-handler': { path: 'plugins/mcp-http-handler', version: '1.0.0', hash },
-    }))
-    expect(parsed.plugins['mcp-http-handler']).toEqual({ path: 'plugins/mcp-http-handler', version: '1.0.0', hash })
-    // No prototype, so an id naming one of Object's members finds nothing
-    expect(Object.getPrototypeOf(parsed.plugins)).toBe(null)
-  })
-
-  it.each([
-    ['a core module, which the core holds and no list names', { gate: { path: 'plugins/gate', version: '1.0.0', hash } }],
-    ['the first-party mark an older build wrote', { 'mcp-http-handler': { path: 'g', version: '1.0.0', hash, firstParty: true } }],
-    ['layout, which the install no longer ships', { layout: { path: 'g', version: '1.0.0', hash, firstParty: true } }],
-    ['a plugin-folder id', { 'my-plugin': { path: 'g', version: '1.0.0', hash } }],
-    ['a folder named twice', { 'mcp-http-handler': { path: 'p', version: '1.0.0', hash }, log: { path: 'p', version: '1.0.0', hash } }],
-    ['a path out of the install', { 'mcp-http-handler': { path: '../mcp-http-handler', version: '1.0.0', hash } }],
-    ['an absolute path', { 'mcp-http-handler': { path: '/opt/mcp-http-handler', version: '1.0.0', hash } }],
-    ['a drive', { 'mcp-http-handler': { path: 'C:/mcp-http-handler', version: '1.0.0', hash } }],
-    ['a backslash', { 'mcp-http-handler': { path: 'plugins\\mcp-http-handler', version: '1.0.0', hash } }],
-    ['a version range', { 'mcp-http-handler': { path: 'g', version: '^1.0.0', hash } }],
-    ['an uppercase hash', { 'mcp-http-handler': { path: 'g', version: '1.0.0', hash: 'A'.repeat(64) } }],
-    ['a field it does not know', { 'mcp-http-handler': { path: 'g', version: '1.0.0', hash, signer: 'x' } }],
-  ])('refuses %s', (_name, plugins) => {
-    expect(installList.safeParse(list(plugins)).success).toBe(false)
-  })
-
-  it('refuses another format, a field it does not know and a list past its size', () => {
-    expect(installList.safeParse({ format: 2, plugins: {} }).success).toBe(false)
-    expect(installList.safeParse({ format: 1, plugins: {}, extra: true }).success).toBe(false)
-    expect(installList.safeParse({ format: 1, plugins: {}, pad: 'x'.repeat(MAX_INSTALL_LIST_BYTES) }).success).toBe(false)
-  })
-
-  it('refuses a duplicate key through the strict parser, which JSON.parse would let through', () => {
-    const text = `{"format":1,"plugins":{"mcp-http-handler":{"path":"a","version":"1.0.0","hash":"${hash}"},"mcp-http-handler":{"path":"b","version":"1.0.0","hash":"${hash}"}}}`
-    expect(() => parseStrict(Buffer.from(text), installList)).toThrow()
-  })
-
+describe('plugin versions', () => {
   it('orders versions by their numbers, not their text', () => {
     expect(isNewer('1.10.0', '1.9.0')).toBe(true)
     expect(isNewer('2.0.0', '1.99.99')).toBe(true)

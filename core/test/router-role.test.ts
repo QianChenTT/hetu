@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Recording } from '../backend/recording/header.ts'
-import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, trusted, windowWay, worker } from './router-fakes.ts'
+import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, tick, trusted, windowWay, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -85,6 +85,15 @@ describe('door.handle', () => {
     const { http, gate, mcp } = door()
     expect(code(await http.ask('door.handle', request))).toBe('invalid')
     expect(gate.asked).toEqual([])
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  // Only the way the core recorded as the utility process it started, so another host half on a port is refused though
+  // the table places it in a utility process
+  it('refuses a host half on a port the core never recorded as its utility process', async () => {
+    const { connect, pluginsManager, mcp } = door()
+    pluginsManager.utility('other')
+    expect(code(await connect(host('other'), 'port').ask('door.handle', request, as))).toBe('not-granted')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
@@ -198,5 +207,23 @@ describe('door.handle', () => {
     const { http, pluginsManager } = door()
     pluginsManager.holderOf = () => { throw new Error('table down') }
     expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
+  })
+
+  // A door that floods has its way closed: the call it has in flight is given up and the holder told, so its answer and
+  // any call it makes under it reach nothing
+  it('gives up a door.handle call in flight once the door is closed for a flood, telling the holder and refusing its call under it', async () => {
+    const { http, mcp, pluginsManager, gate } = door()
+    gate.grants.mcp = [{ type: 'storage' }]
+    pluginsManager.human.plugins['mcp-http-handler'] = { messagesPerSecond: 2, floodFactor: 2, floodMs: 1000 }
+    http.call('door.handle', request, as)
+    const delivered = await mcp.delivered('door.handle')
+    // Served under the call while the door's way is open
+    expect(await mcp.ask('storage.get', { key: 'k' }, { parent: delivered.callId })).toMatchObject({ ok: true })
+    for (let i = 0; i < 6; i++) http.post({ v: 1, kind: 'pong' })
+    await tick(30)
+    expect(pluginsManager.crashes).toEqual([{ caller: host('mcp-http-handler'), reason: 'flood' }])
+    expect(mcp.inbox).toContainEqual(expect.objectContaining({ kind: 'cancel', callId: delivered.callId }))
+    // The call it was under is gone, so a call naming it as parent is refused
+    expect(code(await mcp.ask('storage.get', { key: 'k' }, { parent: delivered.callId }))).toBe('invalid')
   })
 })

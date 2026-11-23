@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coreModuleIds, corePluginIds } from '../api/ids.ts'
 import { plan, type Node, type Status } from '../backend/plugins-manager/graph.ts'
-import { bootOrder } from '../backend/plugins-manager/plugins-manager.ts'
 
 const ok: Status = { kind: 'ok' }
 const node = (id: string, requires: string[] = [], status: Status = ok, rank = 0): Node => ({ id, status, requires, rank })
@@ -78,12 +76,5 @@ describe('the requires graph', () => {
     expect(plan(nodes).verdicts.get('p1999')).toEqual({ kind: 'start' })
     const looped = [...nodes.slice(1), node('p0', ['p1999'])]
     expect(plan(looped).verdicts.get('p1000')).toEqual({ kind: 'refused', reason: 'cycle' })
-  })
-})
-
-describe('the boot order', () => {
-  it('names every core plugin once and no core module, which start before any plugin', () => {
-    expect([...bootOrder].sort()).toEqual([...corePluginIds].sort())
-    for (const id of coreModuleIds) expect(bootOrder).not.toContain(id)
   })
 })

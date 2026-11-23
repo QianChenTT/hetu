@@ -1,17 +1,13 @@
 import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
-import { writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, records, temp, until } from './helpers.ts'
 
 afterEach(cleanup)
 
-// An install holding no plugin. The gate and the other core modules ship inside the core
-async function install(): Promise<string> {
-  const dir = await temp()
-  await writeInstall(dir, {})
-  return dir
-}
+// An empty install folder, so no door runs and the door reads as missing. The gate and the other core modules ship
+// inside the core
+const install = temp
 
 async function data(switches: Partial<Switches> = {}): Promise<string> {
   const dataDir = await temp()

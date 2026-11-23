@@ -18,9 +18,6 @@ import { type HalfName, type Run, type Live, type Known, isOne, isModule, ok, Pl
 // graph order and starts in graph order, starting and stopping incarnations, the stops the human asked for and the
 // stopped mode
 export abstract class PluginsLifecycle extends PluginsBase {
-  // The install's step that records what started, which a plugin's ready calls
-  protected abstract saveInstalled(): Promise<void>
-
   // A way closed under its plugin, was closed for a flood or the worker host page cut its worker off for a flood or a
   // message that wasn't text within the cap. Every dependent is waiting before this returns, then the
   // ways of the plugin's other halves end. A close during a planned stop is that stop ending. A caller from an
@@ -252,7 +249,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
   // A plugin's own requires and plugin.call targets, as it may know them, and for a utility half each role a utility
   // half calls, by the role's action, as its holder is. A core module is ready while on
   protected depsOf(k: Known): Record<string, DepState> {
-    const granted = k.from === 'install' ? k.read.manifest?.capabilities ?? [] : k.entry?.granted ?? []
+    const granted = this.grantsHeld(k)
     const targets = granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
     const stateOf = (id: string): DepState => {
       if (isModule(id)) return this.moduleServes(id) ? 'ready' : this.modules.state(id) === 'starting' ? 'starting' : 'unavailable'
@@ -264,7 +261,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
     for (const id of [...new Set([...(k.read.manifest?.requires ?? []), ...targets])].sort()) deps[id] = stateOf(id)
     if (k.place === 'utility') {
       for (const [action, spec] of Object.entries(roleActions)) {
-        if (spec.from !== 'utility') continue
+        if (spec.from !== 'door') continue
         const holder = this.holderOf(action)
         deps[action] = holder === null ? 'unavailable' : stateOf(holder)
       }
@@ -357,24 +354,11 @@ export abstract class PluginsLifecycle extends PluginsBase {
 
   protected async launch(k: Known, live: Live): Promise<void> {
     try {
-      if (k.updated !== null) await this.applyInstalled(k)
       if (live.over) return
       this.mint(k, live)
     } catch {
       if (!live.over) this.die(k, 'start-failed')
     }
-  }
-
-  // An app update to a core plugin: once plugin.updated has landed its cache is cleared and it hears the version
-  // it replaced. A record that never lands leaves the marker as it was, so the next start tries again
-  protected async applyInstalled(k: Known): Promise<void> {
-    const from = k.updated!
-    const landing = await this.landing(k.id, 'plugin.updated', { plugin: k.id, from, to: k.listed!.version })
-    if (landing === 'lost') return
-    k.updated = null
-    await this.clearSpace('cache', k.id).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
-    k.previousVersion = from
-    await this.saveInstalled()
   }
 
   // Mints each half's port and registers it with the router in the same step, starts the half from the verified bytes
@@ -393,7 +377,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
       // to main, so it holds no role
       const run: Run = { caller: caller('host'), ready: false, stopped: false }
       const { core, plugin } = this.runtime.channel(k.id, true)
-      this.link.register(core, run.caller)
+      this.link.register(core, run.caller, 'utility')
       live.halves.set('host', run)
       const code = k.read.files.find(file => file.path === host)!.bytes
       this.runtime.startUtility({ id: k.id, incarnation: live.n, code, port: plugin, exited: how => this.exited(k, live, how.killed) })

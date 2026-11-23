@@ -31,10 +31,6 @@ function shipped(): string[] {
     }
   }
   for (const dir of ['core/api', 'core/lib', 'core/sdk', 'core/frontend', 'core/backend']) walk(path.join(repo, dir))
-  for (const plugin of readdirSync(path.join(repo, 'core-plugins'))) {
-    const src = path.join(repo, 'core-plugins', plugin, 'src')
-    if (statSync(path.join(repo, 'core-plugins', plugin)).isDirectory() && statSync(src, { throwIfNoEntry: false })?.isDirectory()) walk(src)
-  }
   return files.filter(file => !file.startsWith('core/sdk/build/')).sort()
 }
 
@@ -128,7 +124,7 @@ const sources = new Map(files.map(file => [file, readFileSync(path.join(repo, fi
 
 describe('the size ratchet', () => {
   it('has files to check in every shipped folder', () => {
-    for (const dir of ['core/api/', 'core/lib/', 'core/sdk/', 'core/frontend/', 'core/backend/', 'core-plugins/mcp-http-handler/src/']) {
+    for (const dir of ['core/api/', 'core/lib/', 'core/sdk/', 'core/frontend/', 'core/backend/', 'core/backend/door/']) {
       expect(files.some(file => file.startsWith(dir)), dir).toBe(true)
     }
     expect(files.filter(file => /\/(test|testing)\/|^core\/sdk\/build\/|\.test\.ts$/.test(file))).toEqual([])
@@ -155,7 +151,7 @@ describe('the size ratchet', () => {
   })
   // The proof the later move of this walk to shipped-files.ts leans on
   it('walks the files shippedFiles lists', () => {
-    expect(files).toEqual(shippedFiles({ kinds: ['ts', 'js', 'css', 'html'], plugins: 'src' }))
+    expect(files).toEqual(shippedFiles({ kinds: ['ts', 'js', 'css', 'html'] }))
   })
 })
 

@@ -1,11 +1,11 @@
-import { cp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, readdir } from 'node:fs/promises'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
-import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
+import { DOOR_FILE } from '../../backend/plugins-manager/verify.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
@@ -52,15 +52,10 @@ const builtWorker = async (text: string) => {
   return built!.text
 }
 
-// The shipped install as built, which holds http and never mcp
+// An install folder holding the door as built, which holds no mcp
 async function install(): Promise<string> {
   const dir = await temp()
-  const dist = path.join(repo, 'core', 'dist')
-  await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true })
-  const list = JSON.parse(await readFile(path.join(dist, INSTALL_LIST), 'utf8')) as { format: number, plugins: Record<string, unknown> }
-  expect(Object.keys(list.plugins)).toContain('mcp-http-handler')
-  expect(Object.keys(list.plugins)).not.toContain('mcp')
-  await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
+  await copyFile(path.join(repo, 'core', 'dist', DOOR_FILE), path.join(dir, DOOR_FILE))
   return dir
 }
 

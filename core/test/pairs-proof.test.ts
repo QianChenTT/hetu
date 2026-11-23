@@ -10,8 +10,8 @@ import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
 import {
-  coreInstall, entryFor, FakeRuntime, filesFor, hashOf, hostManifest, tempBase, throwingClassifier, tick, workerManifest, writeFolder,
-  writeInstall, type Half, type Message,
+  DOOR_CODE, entryFor, FakeRuntime, filesFor, hashOf, tempBase, throwingClassifier, tick, workerManifest, writeDoor, writeFolder,
+  type Half, type Message,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -23,12 +23,14 @@ const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 const inbox: Capability = { type: 'luoshu.read', paths: ['inbox/**'] }
 const privateNotes: Capability = { type: 'luoshu.read', paths: ['private/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
-const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), version })
+// The role the door calls, which mcp holds beside its items
+const role: Capability = { type: 'door.handle' }
+const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities: [role, ...capabilities] }), version })
 
-// One folder of notes and one install, booted as often as the proof needs: the real boot, plugins manager, router, gate and
-// luoshu, mcp-http-handler the install's utility plugin the test drives as the root of each chain and mcp a
-// plugin-folder plugin approved unsigned by its hash, a worker the test answers for, holding read on every note unless
-// items names its own. history adds hetu's history as it ships
+// One folder of notes and the door's code, booted as often as the proof needs: the real boot, plugins manager, router,
+// gate and luoshu, mcp-http-handler the door the test drives as the root of each chain and mcp a plugin-folder plugin
+// approved unsigned by its hash, a worker the test answers for, holding door.handle and read on every note unless items
+// names its own. history adds hetu's history as it ships
 async function world(options: { items?: Capability[], history?: boolean } = {}) {
   const items = options.items ?? [everything]
   const base = await tempBase()
@@ -39,10 +41,7 @@ async function world(options: { items?: Capability[], history?: boolean } = {}) 
   await mkdir(path.join(folder, 'private'), { recursive: true })
   await writeFile(path.join(folder, 'inbox', 'a.md'), 'inbox text')
   await writeFile(path.join(folder, 'private', 'b.md'), 'private text')
-  await writeInstall(installDir, {
-    ...coreInstall(),
-    'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
-  })
+  const doorFile = await writeDoor(installDir, DOOR_CODE)
   const store = new StateStore(dataDir)
   const root = path.join(dataDir, 'plugins', 'mcp')
   // mcp's bytes at a version in the plugin folder, its entry and allowUnsigned naming the hash of those bytes, as the
@@ -52,7 +51,7 @@ async function world(options: { items?: Capability[], history?: boolean } = {}) 
     await writeFolder(root, mcpOf(mcpVersion, items))
     const hash = await hashOf(root)
     await store.writeSwitches({ ...defaultSwitches(), off: options.history === true ? [] : ['history'], allowUnsigned: [...allowed, hash] })
-    await store.writePlugin('mcp', await entryFor(root, { version: mcpVersion, signer: null, granted: items, class: 1 }))
+    await store.writePlugin('mcp', await entryFor(root, { version: mcpVersion, signer: null, granted: [role, ...items], class: 1 }))
   }
   // History switched off unless the test asks for it, as when the install held none
   await place('1.0.0', [])
@@ -77,7 +76,7 @@ async function world(options: { items?: Capability[], history?: boolean } = {}) 
     const runtime = new FakeRuntime()
     // The core modules the core makes, closed at the plugins manager's shutdown
     const modules = grantRiskClassifier === undefined ? {} : { grantRiskClassifier }
-    const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+    const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile, runtime, modules, confirmDelayMs: 0 })
     const stop = async () => {
       await pluginsManager.shutdown().catch(() => {})
       router.close()
@@ -113,16 +112,16 @@ async function ask(half: Half, action: string, args: unknown, extra: object = {}
 // The handler hands mcp a request for the field, giving the parent mcp's calls under it name
 const taken = new WeakSet<object>()
 async function request(door: Half, mcp: Half, label: string) {
-  door.send({ v: 1, kind: 'call', id: 9000 + next++, action: 'mcp.handle', args: { body: '{}' }, onBehalf: label })
+  door.send({ v: 1, kind: 'call', id: 9000 + next++, action: 'door.handle', args: { body: '{}', headers: {} }, onBehalf: label })
   for (let waited = 0; waited < 3000; waited += 5) {
-    const got = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle' && message.onBehalf === label && !taken.has(message))
+    const got = mcp.inbox.find(message => message.kind === 'call' && message.action === 'door.handle' && message.onBehalf === label && !taken.has(message))
     if (got !== undefined) {
       taken.add(got)
       return { parent: got.callId as string }
     }
     await tick(5)
   }
-  throw new Error('mcp.handle never arrived')
+  throw new Error('door.handle never arrived')
 }
 
 const outcome = (reply: Message) => (reply.ok === true ? (reply.result as { text?: string }).text ?? JSON.stringify(reply.result) : (reply.refusal as { code: string }).code)

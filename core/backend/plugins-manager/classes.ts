@@ -53,10 +53,10 @@ export abstract class PluginsClasses extends PluginsIdentities {
     { requested, staged = new Map() }: ClassExtras = {},
   ): ClassTable {
     const ids = new Set([
-      ...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), ...staged.keys(),
+      ...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'core').map(k => k.id), ...staged.keys(),
     ])
     const plugins = [...ids].map(other => {
-      const entry = this.known.get(other)?.from === 'install' ? null : this.state.plugins[other] ?? null
+      const entry = this.known.get(other)?.from === 'core' ? null : this.state.plugins[other] ?? null
       const stored = entry === null ? null
         : { class: entry.class, firstUse: entry.firstUse ?? [], unclassed: entry.unclassed === true, owed: entry.owed ?? null }
       return { id: other, granted: staged.get(other) ?? this.grantsOf(other), stored }
@@ -104,7 +104,7 @@ export abstract class PluginsClasses extends PluginsIdentities {
     const own = id === null ? null : after === null ? { id, entry: null, changed: before !== null, rises: false } : entryOf(id, before, after)
     const others: Decided[] = []
     for (const [other, entry] of Object.entries(this.state.plugins)) {
-      if (other === id || this.known.get(other)?.from === 'install' || (answer !== null && !verdicts.has(other))) continue
+      if (other === id || this.known.get(other)?.from === 'core' || (answer !== null && !verdicts.has(other))) continue
       const decided = entryOf(other, entry, entry)
       if (decided.changed) others.push(decided)
     }
