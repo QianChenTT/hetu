@@ -9,7 +9,7 @@ import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createHistory } from '../backend/providers/history/history.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { coreInstall, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
+import { FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -28,7 +28,6 @@ async function world(folders: Record<string, Capability[]>) {
   const folder = path.join(base, 'notes')
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   // The grant risk classifier off, so no item of a class 4 plugin asks at first use
   await store.writeSwitches({ ...defaultSwitches(), off: ['grant-risk-classifier'] })
@@ -54,7 +53,7 @@ async function world(folders: Record<string, Capability[]>) {
   const runtime = new FakeRuntime()
   // History as the core holds it around that provider, started on the data folder as the plugins manager starts
   const modules = { gate: createGate(), luoshu, history: { ...history, provider } }
-  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile: null, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
     history.close()

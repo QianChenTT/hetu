@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreModuleIds, coreNamespaces, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
-  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, utilityIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
+  coreModuleIds, coreNamespaces, guardableActions, guards, doorId, doorNode, isReservedId, localName, MAX_ID_LENGTH,
+  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
   failSafeControls, serverOf,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
@@ -114,30 +114,27 @@ describe('policy jobs, providers and guards', () => {
     expect(isSecurityControl('lock')).toBe(true)
   })
 
-  it('lists the core plugins, with CodeMirror in the drawer and no editor-core', () => {
-    expect(corePluginIds).toEqual(['net', 'mcp-http-handler'])
-  })
-
-  it('lists the core modules main holds apart from the core plugins', () => {
+  it('lists the core modules main holds apart from the door', () => {
     expect(coreModuleIds).toEqual([
       'gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view', 'lock',
     ])
-    for (const id of coreModuleIds) expect(corePluginIds).not.toContain(id)
+    expect(coreModuleIds).not.toContain(doorId)
   })
 
   // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
-  it('runs http alone in a utility process, a core plugin that holds no policy job, guard or provider role', () => {
-    expect(utilityIds).toEqual(['mcp-http-handler'])
-    for (const id of utilityIds) {
-      expect(corePluginIds).toContain(id)
-      expect(isSecurityControl(id)).toBe(false)
-      expect(Object.values(providers)).not.toContain(id)
-      expect(Object.values(guards).flat()).not.toContain(id)
-    }
+  it('names the door by an id of its own, reserved, with its built-ins, which is no policy job, guard or provider role', () => {
+    expect(doorId).toBe('mcp-http-handler')
+    expect(doorNode).toEqual(['http', 'net', 'os', 'fs'])
+    expect(isReservedId(doorId)).toBe(true)
+    expect(isSecurityControl(doorId)).toBe(false)
+    expect(Object.values(providers)).not.toContain(doorId)
+    expect(Object.values(guards).flat()).not.toContain(doorId)
   })
 
-  it('serves every provider from a core module or a core plugin', () => {
-    for (const id of Object.values(providers)) expect([...coreModuleIds, ...corePluginIds]).toContain(id)
+  // net is designed and not built, a namespace the core keeps with no part behind it yet
+  it('serves every provider but net from a core module', () => {
+    for (const id of Object.values(providers).filter(id => id !== 'net')) expect(coreModuleIds).toContain(id)
+    expect(providers.net).toBe('net')
   })
 })
 
@@ -183,8 +180,7 @@ describe('the tables', () => {
     expect(() => (reservedIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (judgingModuleIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
-    expect(() => (corePluginIds as unknown as string[]).push('mine')).toThrow()
-    expect(() => (utilityIds as unknown as string[]).push('mine')).toThrow()
+    expect(() => (doorNode as unknown as string[]).push('mine')).toThrow()
     expect(() => { (providers as Record<string, string>).luoshu = 'mine' }).toThrow()
     expect(() => { (guards['luoshu.write'] as string[]).push('mine') }).toThrow()
     expect(isReservedId('mine')).toBe(false)

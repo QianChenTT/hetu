@@ -1,6 +1,6 @@
 import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
-import { coreModuleIds, corePluginIds } from '../../api/ids.ts'
+import { coreModuleIds, doorId } from '../../api/ids.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { cleanup, editorPage, launch, temp, until, visibleWindows } from './helpers.ts'
 
@@ -9,10 +9,10 @@ afterEach(cleanup)
 // D-637, the page half of D-512's incomplete note taking app. Playwright sees no native box, so the test checks what
 // each box hetu has leaves behind: the start's error box exits hetu, the stopped mode's box closes the editor first and
 // holds main until the human closes it, and the stopped mode shows in core.status
-describe('hetu with every core module and core plugin switched off', () => {
+describe('hetu with every core module and the door switched off', () => {
   it('opens the editor saying how to open a note, with no error box', async () => {
     const dataDir = await temp()
-    await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), off: [...coreModuleIds, ...corePluginIds] })
+    await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), off: [...coreModuleIds, doorId] })
     const app = await launch(dataDir)
     // Each throw in the editor page, the ones at its start too, so listened for on every window from launch on
     const thrown: string[] = []

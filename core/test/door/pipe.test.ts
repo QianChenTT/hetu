@@ -5,11 +5,11 @@ import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { doorLimits, type Refusal, type RefusalReason } from '../src/checks.ts'
-import { type Clients, clientsOf } from '../src/clients.ts'
-import { mcpServe } from '../src/mcp.ts'
-import { openPipe, type Pipe } from '../src/pipe.ts'
-import type { Answer, Passed } from '../src/server.ts'
+import { doorLimits, type Refusal, type RefusalReason } from '../../backend/door/checks.ts'
+import { type Clients, clientsOf } from '../../backend/door/clients.ts'
+import { mcpServe } from '../../backend/door/mcp.ts'
+import { openPipe, type Pipe } from '../../backend/door/pipe.ts'
+import type { Answer, Passed } from '../../backend/door/server.ts'
 
 // Every test drives the pipe with a real named pipe or socket, so any framing can be sent as written
 

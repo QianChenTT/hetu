@@ -42,8 +42,9 @@ export type Served = (call: Call) => Promise<unknown>
 // What the router offers the plugins manager, which calls it and is never called back but through what it handed in:
 // its table, the namespaces it serves, the prompt behind an ask and the listeners for what the ways in heard
 export type RouterDoor = {
-  // Binds a half's port to its caller. The plugins manager calls it in the same step that mints the port
-  register(port: Port, caller: Caller): void
+  // Binds a half's port to its caller. The plugins manager calls it in the same step that mints the port, with utility
+  // for the port of a utility process the core started, which the floor reads as the core's own record of it
+  register(port: Port, caller: Caller, via?: 'port' | 'utility'): void
   // Ends a way: a planned stop or a revoked incarnation. Its calls answer code and nothing more arrives from it
   end(caller: Caller, code?: 'stopped' | 'crashed'): void
   // A lifecycle message down a half's own way: init, deps, stop or ping. Dropped when the way is gone

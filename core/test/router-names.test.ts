@@ -133,13 +133,7 @@ describe('the router names check itself', () => {
   })
 
   it('reads the single-name constants of every module of core/api', async () => {
-    expect((await apiConstants(new Map([['hetu-install.json', 'install']]))).get('INSTALL_LIST')).toBe('install')
-  })
-
-  it('takes no plugins with paths from core/, which would cut core/ off core-plugins/ too', () => {
-    // @ts-expect-error the two options together
-    const both = () => shippedFiles({ kinds: ['ts'], plugins: 'src', from: 'core' })
-    expect(both).toThrow("plugins: 'src' takes paths from the repo, not from: 'core'")
+    expect((await apiConstants(new Map([['mcp-http-handler', 'door']]))).get('doorId')).toBe('door')
   })
 
   it.each([

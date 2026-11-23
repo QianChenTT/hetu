@@ -1,15 +1,13 @@
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
-import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
-import { hashFiles, readFiles } from '../lib/hash-files.ts'
+import { doorNode } from '../api/ids.ts'
+import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import { buildHost } from '../sdk/build/esbuild.ts'
 import { checkModuleImports } from './module-imports.ts'
 
-// The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
-// utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
-// main.js
-const INSTALL = ['mcp-http-handler']
+// What an older build wrote beside main.js and this one doesn't: the install list and the core plugins' folders
+const RETIRED = ['hetu-install.json', 'plugins']
 
 const core = path.join(import.meta.dirname, '..')
 const frontend = path.join(core, 'frontend')
@@ -37,8 +35,8 @@ export type Built = {
   prelude: string
 }
 
-// main.ts and everything it imports as one ES module, electron left to the runtime, with the install list and the
-// core plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
+// main.ts and everything it imports as one ES module, electron left to the runtime, with the utility bootstrap and the
+// door beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
 // host page's script as text, and the workers preload to dist
 // packaged and locked are fixed into main.js as the two constants of backend/runtime/packaged.ts. A run from the
 // source has neither
@@ -70,26 +68,11 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     format: 'esm',
     target: NODE,
   })
-  // The core plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the plugins manager checks
-  // before it starts the host half in its utility process
-  const plugins: Record<string, unknown> = {}
-  // A plugin folder an older build wrote and this one doesn't, never listed and never read, goes
-  const stale = await readdir(path.join(outDir, 'plugins')).catch(() => [])
-  for (const name of stale) if (!INSTALL.includes(name)) await rm(path.join(outDir, 'plugins', name), { recursive: true, force: true })
-  for (const id of INSTALL) {
-    const source = path.join(core, '..', 'core-plugins', id)
-    const root = path.join(outDir, 'plugins', id)
-    await rm(root, { recursive: true, force: true })
-    await mkdir(path.join(root, 'dist'), { recursive: true })
-    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
-    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
-    const { version, node = [] } = JSON.parse(manifest.toString('utf8')) as { version: string, node?: string[] }
-    const built = await buildHost(source, 'src/host.ts', node)
-    await writeFile(path.join(root, 'dist', 'host.js'), built.text)
-    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
-  }
-  const list = { format: INSTALL_LIST_FORMAT, plugins }
-  await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
+  // The door, beside main.js and inside app.asar with it, importing only the Node built-ins core/api names for it. The
+  // plugins manager reads it once and starts it in a utility process of its own through the bootstrap
+  const door = await buildHost(core, 'backend/door/host.ts', doorNode)
+  await writeFile(path.join(outDir, DOOR_FILE), door.text)
+  for (const name of RETIRED) await rm(path.join(outDir, name), { recursive: true, force: true })
 
   // As written: a transform would turn its top-level this into undefined and make the plugin's code strict
   const prelude = await readFile(path.join(frontend, 'workers', 'prelude.js'), 'utf8')

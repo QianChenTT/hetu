@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { StateStore } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, fakeLuoshu, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, until,
+  allowAll, cleanup, DOOR_CODE, entryFor, fakeLuoshu, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, until,
   workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
 
@@ -267,7 +267,7 @@ describe("the grants snapshot's grants", () => {
   async function started() {
     const gate = allowAll()
     const made = await harness({
-      install: { ...coreInstall(), [http]: { files: filesFor(hostManifest(http, { capabilities: [{ type: 'log.read' }] })) } },
+      door: DOOR_CODE,
       folder: { alpha: worker('alpha', { capabilities: [read, panel] }), beta: worker('beta') },
       entries: { alpha: signed({ granted: [read, panel], class: 1 }), beta: signed({ class: 0 }) },
       modules: { gate },
@@ -276,15 +276,14 @@ describe("the grants snapshot's grants", () => {
     return { ...made, gate }
   }
 
-  it("carry each plugin's grants as items, a folder plugin's from its entry and a core plugin's from its manifest", async () => {
+  it("carry each plugin's grants as items, a folder plugin's from its entry, the door holding none", async () => {
     const { gate } = await started()
     const view = gate.seen[0]
     expect(view.n).toBe(1)
     expect(view.foldCase).toBe(false)
     expect(view.plugins.alpha).toEqual([item(read), item(panel)])
-    expect(view.plugins[http]).toEqual([item({ type: 'log.read' })])
-    // A plugin holding nothing is left out, and an id every object has finds nothing
-    expect(Object.keys(view.plugins).sort()).toEqual(['alpha', http])
+    // A plugin holding nothing is left out, the door too, and an id every object has finds nothing
+    expect(Object.keys(view.plugins).sort()).toEqual(['alpha'])
     expect(Object.getPrototypeOf(view.plugins)).toBe(null)
     expect(view.plugins.constructor).toBeUndefined()
     expect(Object.isFrozen(view.plugins.alpha[0].capability)).toBe(true)
@@ -311,7 +310,7 @@ describe("the grants snapshot's grants", () => {
     expect((await made.store.load()).state.plugins.alpha.off ?? []).toEqual([])
   })
 
-  it("refuse a switch for an item the plugin wasn't granted, a plugin with no entry and a core plugin, applying nothing", async () => {
+  it("refuse a switch for an item the plugin wasn't granted, a plugin with no entry and the door, applying nothing", async () => {
     const made = await started()
     await expect(made.pluginsManager.apply({ kind: 'item.off', plugin: 'alpha', capability: { type: 'luoshu.read', paths: ['other/**'] } })).rejects.toThrow()
     await expect(made.pluginsManager.apply({ kind: 'item.off', plugin: 'nobody', capability: read })).rejects.toThrow()
@@ -320,10 +319,10 @@ describe("the grants snapshot's grants", () => {
   })
 
   // Its stop grace runs after the switch, and a call it makes then must not pass on grants the human took away
-  it("leave out a plugin the human switched off from the next one, before its stop has ended, and a core plugin switched off", async () => {
+  it("leave out a plugin the human switched off from the next one, before its stop has ended, and the door switched off", async () => {
     const gate = allowAll()
     const made = await harness({
-      install: { ...coreInstall(), [http]: { files: filesFor(hostManifest(http, { capabilities: [{ type: 'log.read' }] })) } },
+      door: DOOR_CODE,
       folder: { alpha: worker('alpha', { capabilities: [read] }) },
       entries: { alpha: signed({ granted: [read] }) },
       switches: { off: [http] },

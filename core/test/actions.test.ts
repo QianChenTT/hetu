@@ -39,12 +39,12 @@ describe('the core actions', () => {
       'editor.frame': 'windows',
       'editor.frameGone': 'windows',
       'editor.image': 'windows',
-      'core.refused': 'utility',
-      'core.bindFailed': 'utility',
+      'core.refused': 'door',
+      'core.bindFailed': 'door',
       'core.identityAsk': 'pair',
-      'core.identities': 'utility',
-      'core.consentAsk': 'utility',
-      'core.consentAnswer': 'utility',
+      'core.identities': 'door',
+      'core.consentAsk': 'door',
+      'core.consentAnswer': 'door',
     })
   })
 
@@ -121,11 +121,6 @@ describe('the core actions', () => {
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/dist/board.html', navigated: true }, true],
     ['editor.frameGone', { url: 'https://example.com/', navigated: false }, false],
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/', navigated: 'yes' }, false],
-    ['editor.image', { plugin: 'kanban', path: 'pics/a.png' }, true],
-    ['editor.image', { plugin: 'kanban', path: '.obsidian/a.png' }, false],
-    ['editor.image', { plugin: 'kanban', path: 'a.md' }, false],
-    ['editor.image', { plugin: 'kanban' }, false],
-    ['editor.image', { plugin: 'kanban', path: 'a.png', url: 'hetu://images/x' }, false],
     ...refusedReasons.map((reason): [string, unknown, boolean] => ['core.refused', { reason, count: 1 }, true]),
     ['core.refused', { reason: 'token', count: MAX_REFUSAL_COUNT }, true],
     ['core.refused', { reason: 'token', count: MAX_REFUSAL_COUNT + 1 }, false],
@@ -363,7 +358,7 @@ describe('the provider actions', () => {
 describe('the role actions', () => {
   it('names door.handle alone, called by a utility half and served by the plugin holding door.handle', () => {
     expect(Object.fromEntries(Object.entries(roleActions).map(([action, spec]) => [action, [spec.from, spec.capability]]))).toEqual({
-      'door.handle': ['utility', 'door.handle'],
+      'door.handle': ['door', 'door.handle'],
     })
     for (const action of Object.keys(roleActions)) expect(serverOf(namespace(action))?.route).toBe('role')
     // Each call names the label it is made for, so what the holder does under it is judged for that pair

@@ -10,6 +10,7 @@ import type { Recording } from './recording/header.ts'
 import type { PluginsManager } from './plugins-manager/plugins-manager.ts'
 import type { Failure } from './runtime/header.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
+import { DOOR_FILE } from './plugins-manager/verify.ts'
 import { LOCKED, PACKAGED } from './runtime/packaged.ts'
 import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
@@ -27,8 +28,8 @@ import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietP
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
-// The bundle sits in core/dist with the install list, the built pages and the workers preload beside it. A packaged
-// build keeps its core plugins beside app.asar
+// The bundle sits in core/dist with the utility bootstrap, the door, the built pages and the workers preload beside it.
+// A packaged build keeps all of them inside app.asar
 const here = import.meta.dirname
 const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
@@ -44,9 +45,9 @@ function tell(err: unknown): void {
 
 async function start(): Promise<void> {
   let installDir: string
-  let listDir: string
+  let codeDir: string
   try {
-    ;({ installDir, listDir } = installDirFor({ packaged: PACKAGED, locked: LOCKED, env: process.env, here, resourcesPath: process.resourcesPath, platform: process.platform }))
+    ;({ installDir, codeDir } = installDirFor({ packaged: PACKAGED, locked: LOCKED, env: process.env, here, resourcesPath: process.resourcesPath, platform: process.platform }))
   } catch (err) {
     tell(err)
     return app.exit(1)
@@ -199,7 +200,7 @@ async function start(): Promise<void> {
     const wired = wireCore({
       booted,
       installDir,
-      listDir,
+      doorFile: path.join(codeDir, DOOR_FILE),
       runtime,
       // A plugin's running workers and utility halves get its limits again after each change
       limited: plugin => {
@@ -304,7 +305,7 @@ async function start(): Promise<void> {
     freezeIntrinsics()
     await wired.pluginsManager.start()
     if (quitting !== null) return
-    // The install list didn't check out: only the trusted window opens, or the native box with the security view off
+    // A control failed at start: only the trusted window opens, or the native box with the security view off
     const stopped = wired.pluginsManager.stopped()
     if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
     else editor = show(editorWindow())

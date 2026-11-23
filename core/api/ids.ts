@@ -132,13 +132,13 @@ export const coreModuleIds = frozen([
 ] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
-// Core plugins, which load only from the install: mcp-http-handler in a utility process. net is designed and not built.
-// They start in this order, each after the core modules
-export const corePluginIds = frozen(['net', 'mcp-http-handler'] as const)
-
-// Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
-// main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
-export const utilityIds = frozen(['mcp-http-handler'] as const)
+// The door MCP clients come in through: core code, built beside main.js, that runs in a utility process of its own and
+// never in main: Node, no sandbox, none of main's environment and no data folder. It keeps the id it had as a core
+// plugin, so pairs, records and consent text read as before, and calls as its host half. It holds no grant: the role
+// door.handle and the core actions marked from door are all it reaches, and the floor knows it by the port of the
+// process the core started. Node's http, net, os and fs are all it imports
+export const doorId = 'mcp-http-handler'
+export const doorNode = frozen(['http', 'net', 'os', 'fs'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,
@@ -146,7 +146,7 @@ const reserved = new Set<string>([
   ...Object.values(providers),
   ...Object.values(guards).flat(),
   ...coreModuleIds,
-  ...corePluginIds,
+  doorId,
 ])
 
 // Ids a plugin-folder plugin can't take

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { classCauses, classNumber, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
-import { coreModuleIds, corePluginIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { coreModuleIds, doorId, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
@@ -21,7 +21,7 @@ const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
 
 // A core module or an install id, so a state file written while the modules were core plugins still reads
-const coreId = z.enum([...coreModuleIds, ...corePluginIds])
+const coreId = z.enum([...coreModuleIds, doorId])
 // An id some plugin or module can hold: a core module or install id, or one the reserved list leaves to community
 // plugins. The namespaces the core serves, cache included, name none
 const anyPlugin = pluginId.refine(id => !isReservedId(id) || coreId.safeParse(id).success, 'an id no plugin holds')
@@ -117,13 +117,13 @@ const format = z.literal(FORMAT)
 // A list an older build wrote that this one reads and drops, whatever it names
 const dropped = z.array(z.unknown()).max(MAX_LISTED, { abort: true }).optional()
 // recordNothing is how a file from before recording was a core module says recording is off. It is read once as
-// recording in off and never written again. watchdog and leases in off are core plugins that are gone and hidden-marks
-// one that became a first-party plugin, each read with the id dropped and written back without it once, the drop recorded
-// by boot. removed held the tombstones of the first-party plugins the human removed, which went with the first-party
+// recording in off and never written again. watchdog and leases in off are core plugins that are gone, net one that was
+// never built and hidden-marks one that became a first-party plugin, each read with the id dropped and written back
+// without it once, the drop recorded by boot. removed held the tombstones of the first-party plugins the human removed, which went with the first-party
 // plugins, so it is read and dropped and the switches written back without it once
-const droppedOff = ['watchdog', 'leases', 'hidden-marks'] as const
+const droppedOff = ['watchdog', 'leases', 'net', 'hidden-marks'] as const
 const switchesFields = {
-  ...switches.shape, recordNothing: z.boolean().optional(), off: list(z.enum([...coreModuleIds, ...corePluginIds, ...droppedOff])),
+  ...switches.shape, recordNothing: z.boolean().optional(), off: list(z.enum([...coreModuleIds, doorId, ...droppedOff])),
   removed: dropped,
 }
 const switchesFile = z.strictObject({ format, ...switchesFields })
