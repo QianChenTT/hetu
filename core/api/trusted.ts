@@ -1,3 +1,4 @@
+import type { StagedSource } from './actions.ts'
 import type { Capability } from './capabilities.ts'
 
 // What the trusted window's page shares with the core, kept apart from zod so the page bundles none of it
@@ -36,4 +37,56 @@ export function capabilityText(granted: Capability): string {
     default:
       return granted.type
   }
+}
+
+const list = (values: readonly string[]) => values.map(quoted).join(', ')
+
+// Notes by their scopes: ** and **/* reach every note, any other scope is quoted as data
+function notes(paths: readonly string[]): string {
+  if (paths.includes('**') || paths.includes('**/*')) return 'all your notes'
+  return paths.length === 0 ? 'no notes' : `the notes at ${list(paths)}`
+}
+
+type Sentences = { readonly [T in Capability['type']]: (granted: Extract<Capability, { type: T }>) => string }
+
+// What each capability type lets a plugin do, as a plain sentence for a Confirm, one row a type. Each scope, host,
+// topic, command, variable and plugin a plugin named is quoted as data
+const sentences: Sentences = {
+  'luoshu.read': ({ paths }) => `Read ${notes(paths)}`,
+  'luoshu.write': ({ paths }) => `Create, change, move and delete ${notes(paths)}`,
+  'luoshu.list': ({ paths }) => `See the names of ${notes(paths)}`,
+  'ui.read': ({ paths }) => `Read ${notes(paths)} while you have them open`,
+  'ui.edit': ({ paths }) => `Edit ${notes(paths)} while you have them open, for you to save`,
+  'lock.set': ({ paths }) => `Lock ${notes(paths)} so nothing else changes them for a while`,
+  history: ({ access, paths }) => (access === 'read' ? `Read the earlier versions of ${notes(paths)}` : `Save versions of ${notes(paths)} into hetu’s history`),
+  'net.fetch': ({ hosts }) => (hosts.length === 0
+    ? 'Send data to and get data from no site'
+    : `Send data to and get data from ${hosts.includes('*') ? 'any site' : list(hosts)} over the network`),
+  'ui.view': () => 'Show panes and items of its own in the editor window',
+  'ui.layout': () => 'Lay out the whole editor window once you pick it as the layout',
+  'ui.decoration': () => 'Mark up how the text of an open note looks',
+  'ui.command': () => 'Add commands and keyboard shortcuts',
+  'ui.keys': () => 'See each key you press in an open note',
+  'events.subscribe': ({ topics }) => (topics.length === 0 ? 'Hear no events' : `Hear the events ${list(topics)}`),
+  storage: () => 'Keep data of its own',
+  // A command runs as a program of the human's, not in the plugin's sandbox
+  exec: ({ commands, env }) => `Run the command${commands.length === 1 ? '' : 's'} ${commands.map(command => JSON.stringify(command)).join(', ')} outside the sandbox with your rights on this computer${env.length > 0 ? `, with ${list(env)} from your environment` : ''}`,
+  'plugin.call': ({ targets }) => (targets.length === 0 ? 'Call no other plugin' : `Call the plugin${targets.length === 1 ? '' : 's'} ${list(targets)}`),
+  'guard.hook': () => 'Check each change to a note before it is written',
+  'log.read': () => 'Read hetu’s event log',
+  // The door hands this plugin every request an outside program makes to hetu's local connection
+  'door.handle': () => 'Answer the requests other programs on this computer send to hetu',
+}
+
+export function grantSentence(granted: Capability): string {
+  return (sentences[granted.type] as (granted: Capability) => string)(granted)
+}
+
+// What an install says of the plugins it takes, which no signature proves yet
+export const UNSIGNED = 'Unsigned: nothing proves who made these plugins. Install only what comes from a source you trust'
+
+// The source as the core staged it, a link's with the release it took the zip from
+export function sourceLine(source: StagedSource): string {
+  if (source.kind === 'link') return `From ${quoted(source.asset)} in the release ${quoted(source.tag)} of ${quoted(source.link)}`
+  return `From the ${source.kind} ${quoted(source.path)}`
 }

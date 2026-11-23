@@ -22,7 +22,8 @@ export type StoredClass = {
 }
 
 // One plugin as the classifier is handed it: what it holds now and what its entry stores, null for a core plugin, which
-// has no entry and is never classed
+// has no entry and is never classed. An install of several plugins hands each of the others in with what its staged
+// manifest asks for, one new to hetu with no entry like a core plugin
 export type ClassRow = { readonly id: string, readonly granted: readonly Capability[], readonly stored: StoredClass | null }
 
 // What the classifier is handed at every class change: the cause, the change to one plugin with what it would hold,

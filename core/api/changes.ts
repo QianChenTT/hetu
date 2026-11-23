@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { folderCapability, pairCapability, screenText, seenText } from './capabilities.ts'
-import { label } from './envelope.ts'
+import { label, token } from './envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
 import { isSecurityControl, pluginId, watchingModuleIds } from './ids.ts'
 import { frozen } from './plain.ts'
@@ -20,17 +20,28 @@ const pluginKinds = [
 ] as const
 const grantKinds = ['grant.widen', 'grant.narrow', 'item.on', 'item.off'] as const
 const perPluginSwitches = ['devMode', 'exec.anyCommand'] as const
+// The most plugins one install takes
+export const MAX_STAGED_PLUGINS = 64
 const switches = ['skipVerification', 'confirmOff'] as const
 
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'identity.revoke',
+  ...pluginKinds, 'plugin.install', ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'identity.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
   // plugin.off covers core modules, install and folder plugins alike
   z.strictObject({ kind: z.literal(pluginKinds), plugin: pluginId }),
+  // The Install button's Confirm: the plugins ticked of a staging the core holds, each with the digest of its manifest
+  // as the staging answered it, so the Confirm names what the human was shown. Applying it installs them into the plugin
+  // folder and approves each with the hash of what it wrote, all or none
+  z.strictObject({
+    kind: z.literal('plugin.install'),
+    staged: token,
+    plugins: z.array(z.strictObject({ id: pluginId, digest: sha256Hex })).min(1).max(MAX_STAGED_PLUGINS)
+      .refine(plugins => new Set(plugins.map(plugin => plugin.id)).size === plugins.length, 'an id twice'),
+  }),
   // Only folder plugins have grants to change, a core plugin's grants are its manifest
   z.strictObject({ kind: z.literal(grantKinds), plugin: pluginId, capability: folderCapability }),
   z.strictObject({ kind: z.literal('luoshu.pick'), folder }),
@@ -142,6 +153,7 @@ export function changeEffect(change: Change): ChangeEffect {
   switch (change.kind) {
     case 'plugin.approve':
     case 'plugin.update':
+    case 'plugin.install':
     case 'grant.widen':
     case 'item.on':
     case 'luoshu.pick':

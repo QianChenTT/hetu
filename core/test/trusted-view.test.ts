@@ -155,7 +155,7 @@ describe('what the trusted window draws', () => {
   })
 
   it('says the macOS install is not protected from programs running as the human', () => {
-    expect(screen(calm()).install).toBe('On macOS, programs running as you can change hetu’s install')
+    expect(screen(calm()).installNote).toBe('On macOS, programs running as you can change hetu’s install')
   })
 
   it('names the notes folder, or says none is picked', () => {
