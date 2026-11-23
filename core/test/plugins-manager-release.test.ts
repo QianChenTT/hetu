@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { fetchProblems, fetchProblemWords, type Fetch } from '../backend/plugins-manager/github.ts'
+import { fetchProblems, fetchProblemWords, type Fetch } from '../backend/lib/github.ts'
 import { downloadZip, githubLink, releaseZips, zipLimits, type ReleaseZip } from '../backend/plugins-manager/release.ts'
 
 type Call = { url: string, init: RequestInit }
