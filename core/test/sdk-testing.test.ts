@@ -906,6 +906,57 @@ describe('the fake core playing another plugin', () => {
     })
   })
 
+  // The other side: the plugin under test holds the role and the fake core plays the door that calls it
+  describe('the door played for the role holder under test', () => {
+    const holder = {
+      id: 'mcp', name: 'MCP', version: '1.0.0', api: `^${API_VERSION}`, entries: { worker: 'dist/worker.js' }, requires: ['luoshu'],
+      capabilities: [{ type: 'door.handle' }, { type: 'luoshu.read', paths: ['**'] }],
+    }
+    // Answers each door.handle with its args, the onBehalf it came with and a read of notes/a.md made under it
+    const serving = definePlugin({
+      start: ctx => ctx.provide('door.handle', async (call, args) => {
+        const read = await call.ctx.luoshu.read({ path: 'notes/a.md' }).then(answer => answer.text, (err: { code: string }) => err.code)
+        return { args, onBehalf: call.onBehalf ?? null, read }
+      }),
+    })
+    async function door() {
+      const made = fakeCore({ manifest: holder, notes: { 'notes/a.md': 'a' } })
+      cores.push(made)
+      expect(await made.start(serving)).toEqual({ state: 'ready' })
+      return made.door()
+    }
+
+    const request = (body: string) => ({ body, headers: { 'mcp-session-id': 's' } })
+
+    it('calls the holder with the args and the label, the label\'s pair holding nothing until pairGrants names it', async () => {
+      const through = await door()
+      expect(await through.handle(request('x'), 'claude-code#1')).toEqual({
+        ok: true, result: { args: request('x'), onBehalf: 'claude-code#1', read: 'not-granted' },
+      })
+      expect(await through.handle(request('y'), 'claude-code#2', [{ type: 'luoshu.read', paths: ['notes/**'] }])).toEqual({
+        ok: true, result: { args: request('y'), onBehalf: 'claude-code#2', read: 'a' },
+      })
+      // The pair is keyed by the client, the label up to its first #
+      expect(await through.handle(request('z'), 'claude-code#3')).toMatchObject({ ok: true, result: { read: 'a' } })
+    })
+
+    it('is refused invalid by the router with no label or with args outside the role\'s, as the door always names one', async () => {
+      const through = await door()
+      expect(await through.handle(request('x'))).toEqual({ ok: false, refusal: { code: 'invalid', action: 'door.handle' } })
+      expect(await through.handle({ body: 'x' }, 'claude-code#1')).toEqual({ ok: false, refusal: { code: 'invalid', action: 'door.handle' } })
+    })
+
+    it('plays the door once, only for a plugin granted door.handle, and refuses pairGrants with no label', async () => {
+      const through = await door()
+      expect(() => through.handle(request('x'), undefined, [])).toThrow(/label/)
+      const made = cores.at(-1)!
+      expect(() => made.door()).toThrow(/already/)
+      const plain = fakeCore({ manifest: manifest() })
+      cores.push(plain)
+      expect(() => plain.door()).toThrow(/door.handle/)
+    })
+  })
+
   it('places any other host plugin in main, where the floor refuses both', async () => {
     const net = { id: 'net', name: 'Net', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' } }
     const { made, ctx } = await started(net)
