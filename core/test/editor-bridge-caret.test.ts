@@ -78,7 +78,7 @@ async function bound(text = '**important**') {
   const rest = text.length - 13
   const changes = rest === 0 ? [11, [2, '**']] : [11, [2, '**'], rest]
   const stepOut = (version: number, selection = { anchor: 13, head: 13 }) => call('editor.edit', { instance: 'n1', version, changes, selection })
-  return { note, call, press, stepOut, plugin, wait }
+  return { note, call, press, stepOut, plugin, wait, drawer }
 }
 
 describe("an edit's cursor", () => {
@@ -133,6 +133,17 @@ describe("an edit's cursor", () => {
     const { note, press, stepOut } = await bound()
     await press()
     await press('Mod-k')
+    expect(await stepOut(0)).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(note.applied).toEqual([])
+  })
+
+  it('is refused after a Ctrl or Cmd click on a link, a tie that tells no one included', async () => {
+    const { note, press, stepOut, drawer } = await bound()
+    await press()
+    drawer.linkClicked('n1', { owner: 'alpha', id: 'a' })
+    expect(await stepOut(0)).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    await press()
+    drawer.linkClicked('n1', 'tied')
     expect(await stepOut(0)).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
     expect(note.applied).toEqual([])
   })

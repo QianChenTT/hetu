@@ -447,7 +447,7 @@ body {
 .cm-hetu-strike { text-decoration: line-through; }
 .cm-hetu-highlight { background: #fff3a3; }
 .cm-hetu-code { font-family: ui-monospace, monospace; background: #f2f2f2; border-radius: 3px; }
-.cm-hetu-link { color: #1a5fb4; text-decoration: underline; }
+.cm-hetu-link { color: var(--hetu-color-editor-link, #1a5fb4); text-decoration: underline; }
 .cm-hetu-muted { color: #888888; }
 .cm-hetu-error { text-decoration: underline wavy #c01c28; }
 .cm-hetu-warning { text-decoration: underline wavy #c88800; }
