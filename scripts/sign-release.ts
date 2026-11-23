@@ -96,11 +96,11 @@ async function checkUpdateFile(bytes: Buffer, setup: string, version: string): P
   } catch {
     throw new Error(`${UPDATE_FILE_NAME} isn't JSON`)
   }
-  const released = typeof written.released === 'string' ? new Date(written.released) : null
-  if (released === null || Number.isNaN(released.getTime()) || released.toISOString() !== written.released) {
-    throw new Error(`${UPDATE_FILE_NAME}'s released isn't a time in UTC as toISOString writes it`)
+  const built = typeof written.built === 'string' ? new Date(written.built) : null
+  if (built === null || Number.isNaN(built.getTime()) || built.toISOString() !== written.built) {
+    throw new Error(`${UPDATE_FILE_NAME}'s built isn't a time in UTC as toISOString writes it`)
   }
-  const expected = await updateFileFor(setup, version, released)
+  const expected = await updateFileFor(setup, version, built)
   for (const field of ['version', 'file', 'size', 'sha256'] as const) {
     if (written[field] !== expected[field]) throw new Error(`${UPDATE_FILE_NAME}'s ${field} is ${String(written[field])}, the setup downloaded has ${expected[field]}`)
   }
