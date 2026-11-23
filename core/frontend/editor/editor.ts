@@ -209,7 +209,7 @@ export class EditorViews implements Editors {
             },
             // Alt+click shows the element under the pointer. The click is taken whole, so the cursor stays at the place
             // pointed at, not where the shown markers push the text to. A Ctrl+click, Cmd+click on macOS, on a link mark
-            // is taken whole too, so CodeMirror adds no cursor, and told to the drawer
+            // goes to the drawer and is taken whole too, so CodeMirror adds no cursor
             mousedown: (event, view) => {
               if (event.button !== 0) return false
               if (!event.altKey && (this.mac ? event.metaKey : event.ctrlKey)) return this.linkClick(id, view, event)
