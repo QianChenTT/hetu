@@ -109,6 +109,9 @@ describe('drawing marks', () => {
     expect(drawn).toEqual([[3, 3, true], [5, 7, false]])
   })
 
+  // No mark the schema takes reaches CodeMirror's refusal, so these stand in for a gap past it. Each passes the drawer's
+  // own checks and only CodeMirror's range refuses it, with a RangeError: an empty style and hidden text ending before
+  // it starts
   it('leaves out a mark CodeMirror refuses alone and draws the rest', () => {
     const given = [
       { kind: 'mark', from: 4, to: 4, style: 'em' },
@@ -119,5 +122,11 @@ describe('drawing marks', () => {
     const { marks, hidden } = drawMarks(given, doc)
     expect(ranges(marks).map(r => [r.from, r.to])).toEqual([[0, 5]])
     expect(ranges(hidden).map(r => [r.from, r.to])).toEqual([[11, 12]])
+  })
+
+  // Only CodeMirror's range is guarded, so an error in the drawer's own code shows. Hidden text starting past the end of
+  // doc reaches doc.lineAt, which throws before any range is made
+  it("throws an error from the drawer's own code before CodeMirror's range", () => {
+    expect(() => drawMarks([{ kind: 'hide', from: 30, to: 5 }] as Mark[], doc)).toThrow(/Invalid position 30/)
   })
 })

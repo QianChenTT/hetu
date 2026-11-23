@@ -93,7 +93,7 @@ const calloutMarks: Mark[] = [
   { kind: 'widget', from: 18, to: 18, text: '*' },
   { kind: 'widget', from: 21, to: 21, text: '.' },
 ]
-const points = (state: EditorState) => {
+const drawnPoints = (state: EditorState) => {
   const out: number[] = []
   sets(state)[0].between(0, state.doc.length, (from, to) => {
     if (from === to) out.push(from)
@@ -126,14 +126,49 @@ describe('the caret beside a widget at a point', () => {
   it('keeps a widget at a point before text typed at its place, where its caret is drawn', () => {
     const state = note(callout, calloutMarks, 18).update({ changes: { from: 18, insert: 'x' }, selection: { anchor: 19 } }).state
     expect(state.doc.toString()).toBe('> [!note] Title\nabx cd')
-    expect(points(state)).toEqual([10, 18, 22])
+    expect(drawnPoints(state)).toEqual([10, 18, 22])
   })
 
   it('takes the characters beside a widget at a point with Backspace and Delete and leaves the widget', () => {
     const back = press(note(callout, calloutMarks, 18), backspace)
     expect(back.doc.toString()).toBe('> [!note] Title\na cd')
-    expect(points(back)).toEqual([10, 17, 20])
+    expect(drawnPoints(back)).toEqual([10, 17, 20])
     expect(press(note(callout, calloutMarks, 18), del).doc.toString()).toBe('> [!note] Title\nabcd')
+  })
+
+  it("takes the line break before hidden text and a widget at a point opening a line and leaves both, at the note's start nothing", () => {
+    const text = 'ab\n> [!note] Title'
+    const marks: Mark[] = [{ kind: 'hide', from: 3, to: 13, group: 'c' }, { kind: 'widget', from: 13, to: 13, text: 'i', group: 'c' }]
+    const back = press(note(text, marks, 13), backspace)
+    expect(back.doc.toString()).toBe('ab> [!note] Title')
+    expect(head(back)).toBe(2)
+    expect(drawnPoints(back)).toEqual([12])
+    const first = press(note(callout, calloutMarks, 10), backspace)
+    expect(first.doc.toString()).toBe(callout)
+    expect(drawnPoints(first)).toEqual([10, 18, 21])
+  })
+
+  it("leaves out a widget at a point inside its own plugin's hidden text and draws one at its edges", () => {
+    const text = '0123456789 x'
+    const inside: Mark = { kind: 'widget', from: 5, to: 5, text: 'w' }
+    const marks: Mark[] = [
+      { kind: 'hide', from: 0, to: 10 },
+      inside,
+      { kind: 'widget', from: 0, to: 0, text: 'a' },
+      { kind: 'widget', from: 10, to: 10, text: 'b' },
+    ]
+    expect(drawnPoints(note(text, marks))).toEqual([0, 10])
+    for (let at = 0; at <= 10; at++) expect(head(settled(note(text, marks, at)))).toBe(10)
+    // Hidden ranges that only touch leave a point between them drawn, overlapping ones hold it
+    expect(drawnPoints(note(text, [{ kind: 'hide', from: 0, to: 5 }, { kind: 'hide', from: 5, to: 10 }, inside]))).toEqual([5])
+    expect(drawnPoints(note(text, [{ kind: 'hide', from: 0, to: 6 }, { kind: 'hide', from: 4, to: 10 }, inside]))).toEqual([])
+  })
+
+  it("draws a widget at a point inside another plugin's hidden text, which the plugin can't see", () => {
+    const state = note('0123456789 x', [{ kind: 'hide', from: 0, to: 10 }]).update({
+      effects: setMarks.of({ owner: 'other', set: 's', marks: [{ kind: 'widget', from: 5, to: 5, text: 'w' }] }),
+    }).state
+    expect(drawnPoints(state)).toEqual([5])
   })
 })
 
