@@ -25,7 +25,7 @@ export type UpdateFile = { version: string, file: string, size: number, sha256: 
 // What the last check came to. current: the latest release is the running version. found: a higher signed version,
 // with the release page and whether this machine can install it (Windows with the installer in the release) or only
 // links to the page
-export type Last =
+export type LastCheck =
   | { kind: 'none' }
   | { kind: 'checking' }
   | { kind: 'current', version: string }
@@ -33,9 +33,9 @@ export type Last =
   | { kind: 'found', version: string, released: string, page: string, installable: boolean }
   | { kind: 'refused', reason: RefusedReason, version: string | null }
 
-// checks: whether this build checks at all, a locked build only. on: the switch for the checks at start and every 7
-// days. checked: when the last check ended, ms since the epoch, null before the first
-export type UpdateState = { checks: boolean, on: boolean, checked: number | null, last: Last }
+// canCheck: whether this build checks at all, a locked build with an x.y.z version and the key loaded. on: the switch
+// for the checks at start and every 7 days. checked: when the last check ended, ms since the epoch, null before the first
+export type UpdateState = { canCheck: boolean, on: boolean, checked: number | null, last: LastCheck }
 
 export type Updater = {
   state(): UpdateState

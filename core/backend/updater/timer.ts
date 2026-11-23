@@ -11,7 +11,7 @@ const nodeLater: Later = (run, ms) => {
 }
 
 export type CheckTimerOptions = {
-  // One check, which settles once it ended and never rejects
+  // One check, which settles once it ended. One that rejects counts as ended
   check: () => Promise<unknown>
   // Only a locked build checks
   locked: boolean
@@ -52,7 +52,7 @@ export class CheckTimer {
   private run(): void {
     this.cancel = null
     const round = this.round
-    void this.options.check().then(() => {
+    void this.options.check().catch(() => undefined).then(() => {
       if (round === this.round && this.due) this.cancel = this.later(() => this.run(), this.options.everyMs ?? CHECK_EVERY_MS)
     })
   }

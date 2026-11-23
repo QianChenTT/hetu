@@ -1,7 +1,7 @@
 import type { KeyObject } from 'node:crypto'
 import type { Fetch } from '../lib/github.ts'
 import { checkLatest, releasePage, updateKey, versionParts, type Checked } from './check.ts'
-import type { Last, Updater, UpdaterRecording, UpdateState } from './header.ts'
+import type { LastCheck, Updater, UpdaterRecording, UpdateState } from './header.ts'
 import { CheckTimer, type Later } from './timer.ts'
 
 export type UpdaterOptions = {
@@ -19,22 +19,34 @@ export type UpdaterOptions = {
   // The state changed, for the trusted window to read it again
   changed?: () => void
   key?: KeyObject
+  // The key as PEM in place of the one inside hetu, for a test of a key that doesn't load
+  pem?: string
   fetch?: Fetch
   later?: Later
   everyMs?: number
   now?: () => number
 }
 
+// The key a check verifies with, null with a line when it doesn't load, so hetu starts and nothing checks
+function loaded(options: Pick<UpdaterOptions, 'key' | 'pem'>, log: (line: string) => void): KeyObject | null {
+  try {
+    return options.key ?? updateKey(options.pem)
+  } catch {
+    log('update: the key inside hetu does not load, so nothing checks')
+    return null
+  }
+}
+
 // The state of the last check, held for the trusted window, the checks the timer runs and a check on demand. A failed
 // check is quiet, a line in the log and nothing more. A refused one is a core record, update.refused with its reason
 export function createUpdater(options: UpdaterOptions): Updater {
-  const running = versionParts(options.running)
-  const checks = options.locked && running !== null
-  const key = options.key ?? updateKey()
   const log = options.log ?? (line => console.error(line))
+  const running = versionParts(options.running)
+  const key = options.locked && running !== null ? loaded(options, log) : null
+  const canCheck = key !== null
   const now = options.now ?? Date.now
-  let state: UpdateState = { checks, on: options.on ?? true, checked: null, last: { kind: 'none' } }
-  let under: Promise<UpdateState> | null = null
+  let state: UpdateState = { canCheck, on: options.on ?? true, checked: null, last: { kind: 'none' } }
+  let inFlight: Promise<UpdateState> | null = null
   let closed = false
   const stop = new AbortController()
 
@@ -47,7 +59,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
     }
   }
 
-  const lastOf = (checked: Checked): Last => {
+  const lastOf = (checked: Checked): LastCheck => {
     switch (checked.outcome) {
       case 'found': {
         const { version, released } = checked.update
@@ -62,34 +74,35 @@ export function createUpdater(options: UpdaterOptions): Updater {
     }
   }
 
-  const once = async (): Promise<UpdateState> => {
+  const runCheck = async (): Promise<UpdateState> => {
     set({ last: { kind: 'checking' } })
     let checked: Checked
     try {
-      checked = await checkLatest({ running: running!, key, signal: stop.signal, ...(options.fetch !== undefined ? { fetch: options.fetch } : {}) })
+      checked = await checkLatest({ running: running!, key: key!, signal: stop.signal, ...(options.fetch !== undefined ? { fetch: options.fetch } : {}) })
     } catch {
       // A throw from a check is a fault of hetu's, kept as quiet as the network's. Its text stays out of the log
       checked = { outcome: 'failed', problem: 'fault' }
     }
-    if (checked.outcome === 'failed') log(`update: no answer to act on (${checked.problem})`)
-    if (checked.outcome === 'refused') {
-      options.recording.coreRecord('update.refused', { reason: checked.reason, version: checked.version })
+    try {
+      if (checked.outcome === 'failed') log(`update: no answer to act on (${checked.problem})`)
+      if (checked.outcome === 'refused') options.recording.coreRecord('update.refused', { reason: checked.reason, version: checked.version })
+    } finally {
+      set({ checked: now(), last: lastOf(checked) })
     }
-    set({ checked: now(), last: lastOf(checked) })
     return state
   }
 
   const check = (): Promise<UpdateState> => {
-    if (!checks || closed) return Promise.resolve(state)
-    under ??= once().finally(() => {
-      under = null
+    if (!canCheck || closed) return Promise.resolve(state)
+    inFlight ??= runCheck().finally(() => {
+      inFlight = null
     })
-    return under
+    return inFlight
   }
 
   const timer = new CheckTimer({
     check,
-    locked: checks,
+    locked: canCheck,
     on: state.on,
     ...(options.later !== undefined ? { later: options.later } : {}),
     ...(options.everyMs !== undefined ? { everyMs: options.everyMs } : {}),
