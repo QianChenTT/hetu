@@ -17,7 +17,7 @@ const INSTALLER = 'hetu-setup-0.6.1-x64.exe'
 const BYTES = Buffer.from('MZ a stand-in for the installer, never started by a test')
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 const signedFile = (over: Partial<UpdateFile> = {}): UpdateFile => ({
-  version: '0.6.1', file: INSTALLER, size: BYTES.length, sha256: sha256(BYTES), released: '2026-11-23T20:00:00Z', ...over,
+  version: '0.6.1', file: INSTALLER, size: BYTES.length, sha256: sha256(BYTES), built: '2026-11-23T20:00:00Z', ...over,
 })
 
 let dir: string
