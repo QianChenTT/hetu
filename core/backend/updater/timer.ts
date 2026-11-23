@@ -52,6 +52,7 @@ export class CheckTimer {
   private run(): void {
     this.cancel = null
     const round = this.round
+    // A check that rejects is a check ended, so the next one is still set and nothing else is lost
     void this.options.check().catch(() => undefined).then(() => {
       if (round === this.round && this.due) this.cancel = this.later(() => this.run(), this.options.everyMs ?? CHECK_EVERY_MS)
     })
