@@ -60,6 +60,9 @@ export class Layers {
   private readonly spent = new Map<string, { start: number, writes: number }>()
   private readonly waiting = new Set<string>()
   private readonly plain: HTMLElement
+  // The plain arrangement's placeholders and the views they were made for
+  private plainHeld: { node: UiNode, element: HTMLElement }[] = []
+  private plainKey = ''
   private queued = false
 
   constructor(parts: LayersParts, deps: { ui: UiPort, editors: EditorsLike, frames: FramesLike | null, titles: TitleSource, hooks: Hooks }) {
@@ -161,9 +164,7 @@ export class Layers {
       const at = element.getBoundingClientRect()
       return { left: at.left - stageBox.left, top: at.top - stageBox.top, width: at.width, height: at.height }
     }
-    const placeholders = skeleton === null
-      ? [{ node: { kind: 'editor', id: 'plain', instance: 'current' } as UiNode, element: this.plain }]
-      : [...skeleton.placeholders.values()]
+    const placeholders = skeleton === null ? this.ensurePlain() : [...skeleton.placeholders.values()]
 
     // Views over their slots in the lifted layer, frames among them. Items share a box of the drawer's over theirs
     const shown = new Map<string, Rect>()
@@ -259,6 +260,43 @@ export class Layers {
       if (node.kind === 'slot' || node.kind === 'editor') slots[node.id] = sizeOf(box(element)) as { width: number, height: number }
     }
     this.hooks.state({ width: Math.round(stageBox.width), height: Math.round(stageBox.height), slots })
+  }
+
+  // With no layout drawing, the drawer's own plain arrangement: every view in one column, each under its title, the
+  // items under them and the editor beside them. A view, a file list or a quick open, works with no layout plugin and
+  // after a layout fails. Made again only when the views change
+  private ensurePlain(): { node: UiNode, element: HTMLElement }[] {
+    const all = this.ui.views.all()
+    const views = all.filter(held => held.spec.kind !== 'item').sort((a, b) => this.rankOf(a.owner, a.view) - this.rankOf(b.owner, b.view))
+    const items = all.some(held => held.spec.kind === 'item')
+    const key = JSON.stringify([views.map(held => held.instance), items])
+    if (key === this.plainKey) return this.plainHeld
+    this.plainKey = key
+    const made: { node: UiNode, element: HTMLElement }[] = []
+    // A placeholder's element, kept with its node among the ones made
+    const placeholder = (className: string, node: UiNode) => {
+      const element = document.createElement('div')
+      element.className = className
+      made.push({ node, element })
+      return element
+    }
+    const children: HTMLElement[] = []
+    if (views.length > 0 || items) {
+      const column = document.createElement('div')
+      column.className = 'hetu-plain-views'
+      for (const held of views) {
+        column.append(
+          placeholder('hetu-plain-title', { kind: 'title', id: `plain-t-${held.instance}`, of: held.instance } as UiNode),
+          placeholder('hetu-plain-slot', { kind: 'slot', id: `plain-s-${held.instance}`, instance: held.instance } as UiNode),
+        )
+      }
+      if (items) column.append(placeholder('hetu-plain-items', { kind: 'slot', id: 'plain-items', items: true } as UiNode))
+      children.push(column)
+    }
+    children.push(placeholder('hetu-plain-editor', { kind: 'editor', id: 'plain', instance: 'current' } as UiNode))
+    this.plain.replaceChildren(...children)
+    this.plainHeld = made
+    return made
   }
 
   private rankOf(owner: string, view: string): number {

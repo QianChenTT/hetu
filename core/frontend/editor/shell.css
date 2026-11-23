@@ -321,8 +321,40 @@ body {
   cursor: row-resize;
 }
 
+/* The drawer's own arrangement with no layout drawing: the views in one column beside the editor */
 .hetu-plain {
   position: relative;
+  display: flex;
+}
+
+.hetu-plain-views {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--hetu-color-border, #dddddd);
+}
+
+.hetu-plain-title {
+  height: 28px;
+  min-height: 28px;
+  border-bottom: 1px solid var(--hetu-color-border, #dddddd);
+}
+
+.hetu-plain-slot {
+  flex: 1 0 160px;
+}
+
+.hetu-plain-items {
+  height: 28px;
+  min-height: 28px;
+  border-top: 1px solid var(--hetu-color-border, #dddddd);
+}
+
+.hetu-plain-editor {
+  flex: 1;
+  min-width: 0;
 }
 
 #drag-ghost {
