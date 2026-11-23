@@ -211,6 +211,33 @@ describe('the editor\'s own styles', () => {
     }))
     expect(indents).toEqual(['a first line: 6px inside 0px none', 'a quoted line: 12px inside 3px solid', 'a last line: 6px inside 0px none'])
   })
+
+  it("draws a plugin's widgets at a point at a line's start, mid-line and the note's end with the rest of its set", async () => {
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
+    const { app, editor } = await started({ 'a.md': 'a first line\na quoted line\na last line' }, { pointer: { granted } })
+    await open(editor, 'a.md')
+    const host = await workersPage(app, 'pointer')
+    await until(() => host.workers().length === 1)
+    const plugin = host.workers()[0]!
+    type Ctx = { editor: { instances(): Promise<{ instance: string, version: number }[]>, decorate(instance: string, version: number, set: string, marks: unknown[]): Promise<void> } }
+    await until(async () => (await plugin.evaluate(() => (globalThis as unknown as { ctx: Ctx }).ctx.editor.instances())).length === 1)
+    const answer = await plugin.evaluate(async () => {
+      const { ctx } = globalThis as unknown as { ctx: Ctx }
+      const [open] = await ctx.editor.instances()
+      return ctx.editor.decorate(open!.instance, open!.version, 'points', [
+        { kind: 'widget', from: 13, to: 13, text: '>' },
+        { kind: 'widget', from: 2, to: 2, text: '*' },
+        { kind: 'widget', from: 38, to: 38, text: '.' },
+        { kind: 'line', from: 13, style: 'quote' },
+        { kind: 'mark', from: 0, to: 1, style: 'em' },
+      ]).then(() => 'drawn', (err: { code?: string }) => `refused ${err.code}`)
+    })
+    expect(answer).toBe('drawn')
+    await until(async () => (await editor.locator('.editor:not([hidden]) .cm-hetu-widget').count()) === 3)
+    expect(await editor.locator('.editor:not([hidden]) .cm-line').allTextContents()).toEqual(['a *first line', '>a quoted line', 'a last line.'])
+    expect(await editor.locator('.editor:not([hidden]) .cm-hetu-em').count()).toBe(1)
+    expect(await editor.locator('.editor:not([hidden]) .cm-hetu-line-quote').count()).toBe(1)
+  })
 })
 
 // The shown editor's text, background, caret and outline as computed, each color's contrast against the background
