@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { folderManifest, installManifest, supportsApi } from '../api/manifest.ts'
 import { capabilityText } from '../api/trusted.ts'
 import {
   capabilities, capability, capabilityKey, capabilityTypes, type Capability, folderCapabilities, folderCapability,
@@ -18,7 +19,7 @@ const everyType = [
   { type: 'ui.layout' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
-  { type: 'ui.keys' },
+  { type: 'ui.keystream' },
   { type: 'ui.edit', paths: ['**'] },
   { type: 'ui.read', paths: ['**'] },
   { type: 'events.subscribe', topics: ['luoshu.changed', 'search.indexed'] },
@@ -36,10 +37,26 @@ const everyType = [
 describe('the fixed list', () => {
   it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2, and ui.edit', () => {
     expect(capabilityTypes).toEqual([
-      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
+      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream',
       'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
       'door.handle',
     ])
+  })
+
+  // ui.keys, the old name of the key stream, is a type version 5 removed: a ^4 manifest naming it is refused api and a
+  // ^5 one invalid, its grant read as any unknown type
+  it('refuses a ^4 manifest naming ui.keys with api and a ^5 one as invalid, ui.keys an unknown type', () => {
+    expect(supportsApi('^4', ['ui.keys'])).toBe(false)
+    expect(supportsApi('^4', ['ui.keystream'])).toBe(false)
+    expect(supportsApi('^4', ['ui.view'])).toBe(true)
+    expect(supportsApi('^5', ['ui.keys'])).toBe(true)
+    const named = { id: 'keys', name: 'Keys', version: '1.0.0', api: '^5', entries: { worker: 'worker.js' }, capabilities: [{ type: 'ui.keys' }] }
+    expect(folderManifest.safeParse(named).success).toBe(false)
+    expect(installManifest.safeParse(named).success).toBe(false)
+    expect(folderManifest.safeParse({ ...named, capabilities: [{ type: 'ui.keystream' }] }).success).toBe(true)
+    expect(capability.safeParse({ type: 'ui.keys' }).success).toBe(false)
+    expect(capabilities.safeParse([{ type: 'ui.keys' }]).success).toBe(false)
+    expect(capability.safeParse({ type: 'ui.keystream' }).success).toBe(true)
   })
 
   it('has a schema for every listed type and no other', () => {

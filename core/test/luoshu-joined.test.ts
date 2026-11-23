@@ -288,7 +288,7 @@ describe('an open note judged on where it is, never on the spelling it was opene
       post: () => 'unavailable',
       open: (at, reads) => opened.open(at, reads).then(() => {}, () => {}),
     }
-    const settings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+    const settings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
     const drawer = new Drawer(link, () => texts.values(), () => {}, { ui: { settings, hooks } })
     drawer.start()
     const ports = new Map<string, ReturnType<typeof bridgePort>>()

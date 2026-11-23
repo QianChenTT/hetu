@@ -1,5 +1,5 @@
 import { defaultLimits } from '../api/limits.ts'
-import type { BindFailure, DepState } from '../api/lifecycle.ts'
+import type { DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
@@ -18,8 +18,6 @@ export type PluginContext = Client & {
   readonly lastStop: string | null
   // The version an update replaced, until the new one reaches ready once
   readonly previousVersion: string | null
-  // hetu's data folder, for a core plugin's host half only, null for every other half
-  readonly dataDir: string | null
   // Whether one of its own requires or plugin.call targets is there: ready, or starting, which calls retry
   has(id: string): boolean
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
@@ -27,9 +25,6 @@ export type PluginContext = Client & {
   // Runs each time the core tells a change to the state of its requires and plugin.call targets, a key or a state,
   // starting to ready included. It is handed nothing and reads has again. Never for init's own map nor once stopping
   onDeps(fn: () => void | Promise<void>): void
-  // Tells the core this half's bind on its port failed, so the core ends it and the plugin reads failed with the
-  // reason. Only mcp-http-handler's host half in its utility process may, every other caller is refused not-granted
-  bindFailed(reason: BindFailure): Promise<void>
   // Serves <id>.<name>, an action the manifest declares under provides.actions, or a role's action such as door.handle,
   // which the router delivers while the plugin holds the role's item
   provide(name: string, handler: Handler): void
@@ -143,7 +138,7 @@ class Half {
   }
 
   private init(message: Record<string, unknown>): void {
-    const { id, incarnation, lastStop, previousVersion, dataDir } = message
+    const { id, incarnation, lastStop, previousVersion } = message
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     this.readDeps(message.deps)
     this.phase = 'starting'
@@ -158,14 +153,12 @@ class Half {
       incarnation,
       lastStop: typeof lastStop === 'string' ? lastStop : null,
       previousVersion: typeof previousVersion === 'string' ? previousVersion : null,
-      dataDir: typeof dataDir === 'string' && dataDir !== '' ? dataDir : null,
       has: dep => {
         const state = this.deps[dep] as DepState | undefined
         return state === 'ready' || state === 'starting'
       },
       onStop: fn => { this.stops.push(fn) },
       onDeps: fn => { this.depHooks.push(fn) },
-      bindFailed: async reason => { await request('core.bindFailed', { reason }) },
       provide: (name, handler) => serving.provide(name, handler),
       filterReadable: (call, paths) => serving.filterReadable(call, paths),
       events: {

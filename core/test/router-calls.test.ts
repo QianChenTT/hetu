@@ -850,7 +850,7 @@ describe('gate.reach', () => {
     const { way, pluginsManager } = made()
     pluginsManager.policyJobs.gate = 'off'
     expect((await way.ask('editor', 'gate.reach', { plugin: 'beta', path: 'x.md' })).result)
-      .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
+      .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream'] })
     for (const state of ['failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')

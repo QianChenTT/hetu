@@ -20,7 +20,7 @@ describe('the class of one grant', () => {
     ['storage', { type: 'storage' }, 0],
     ['events.subscribe', { type: 'events.subscribe', topics: ['luoshu.changed'] }, 0],
     ['plugin.call on its own', call, 0],
-    ['ui.keys, the key stream', { type: 'ui.keys' }, 1],
+    ['ui.keystream, the key stream', { type: 'ui.keystream' }, 1],
     ['luoshu.read', read, 1],
     ['luoshu.list', list, 1],
     ['a scoped luoshu.write', write, 2],
@@ -64,7 +64,7 @@ describe('a plugin\'s class', () => {
   it.each([
     ['luoshu.read', [read, fetchOne], []],
     ['luoshu.list', [list, fetchOne], []],
-    ['ui.keys', [{ type: 'ui.keys' }, fetchOne], []],
+    ['ui.keystream', [{ type: 'ui.keystream' }, fetchOne], []],
     ['ui.read', [{ type: 'ui.read', paths: ['**'] }, fetchOne], []],
     ['ui.read here and network reached', [{ type: 'ui.read', paths: ['**'] }, call], [fetchOne]],
     ['history read', [{ type: 'history', access: 'read', paths: ['**'] }, fetchOne], []],

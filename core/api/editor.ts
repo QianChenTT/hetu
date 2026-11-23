@@ -12,10 +12,10 @@ import { VERSION } from './version.ts'
 // the ui item named here. Instances and versions are the drawer's: an instance is one open note and its version counts the changes made
 // to it since it opened
 
-export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys', 'editor.viewports'] as const)
+export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keystream', 'editor.viewports'] as const)
 export type EditorVerb = typeof editorVerbs[number]
 
-export type VerbNeeds = { readonly read: boolean, readonly edit: boolean, readonly ui: 'ui.decoration' | 'ui.command' | 'ui.keys' | null }
+export type VerbNeeds = { readonly read: boolean, readonly edit: boolean, readonly ui: 'ui.decoration' | 'ui.command' | 'ui.keystream' | null }
 
 // instances lists only notes the plugin reads, so it needs no read of its own. bind and keys name no note: a command
 // says which instance it came from and a key event goes only to a plugin that reads the focused note. viewports names
@@ -26,7 +26,7 @@ export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
   'editor.decorate': { read: true, edit: false, ui: 'ui.decoration' },
   'editor.edit': { read: true, edit: true, ui: null },
   'editor.bind': { read: false, edit: false, ui: 'ui.command' },
-  'editor.keys': { read: false, edit: false, ui: 'ui.keys' },
+  'editor.keystream': { read: false, edit: false, ui: 'ui.keystream' },
   'editor.viewports': { read: false, edit: false, ui: null },
 })
 
@@ -108,7 +108,7 @@ export const bridgeCall = z.discriminatedUnion('verb', [
     // Replaces every binding the plugin held. A key the drawer takes for itself never reaches a binding
     args: z.strictObject({ bindings: z.array(z.strictObject({ key, command: localName })).max(MAX_BINDINGS) }),
   }),
-  z.strictObject({ ...head, verb: z.literal('editor.keys'), args: z.strictObject({ on: z.boolean() }) }),
+  z.strictObject({ ...head, verb: z.literal('editor.keystream'), args: z.strictObject({ on: z.boolean() }) }),
   // Asks for the range each open note's editor draws, or stops them
   z.strictObject({ ...head, verb: z.literal('editor.viewports'), args: z.strictObject({ on: z.boolean() }) }),
 ])
@@ -184,6 +184,6 @@ export type BridgeResults = {
   'editor.decorate': { version: number }
   'editor.edit': { version: number }
   'editor.bind': null
-  'editor.keys': null
+  'editor.keystream': null
   'editor.viewports': null
 }

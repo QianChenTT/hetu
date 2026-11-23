@@ -854,7 +854,7 @@ describe('the fake core playing another plugin', () => {
     await until(() => made.coreRecords.some(record => record.event === 'mcp-http-handler.refused'))
     expect(made.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
     // The core ends the half before any answer, as the plugins manager ends the process, so the call never settles
-    void ctx.bindFailed('port-taken').catch(() => {})
+    void ctx.call('core', 'bindFailed', { reason: 'port-taken' }).catch(() => {})
     await until(() => made.coreCalls.length === 1)
     expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } }])
     expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
@@ -910,7 +910,7 @@ describe('the fake core playing another plugin', () => {
     const net = { id: 'net', name: 'Net', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' } }
     const { made, ctx } = await started(net)
     await expect(ctx.call('core', 'refused', { reason: 'host', count: 4 })).rejects.toMatchObject({ code: 'not-granted' })
-    await expect(ctx.bindFailed('port-taken')).rejects.toMatchObject({ code: 'not-granted' })
+    await expect(ctx.call('core', 'bindFailed', { reason: 'port-taken' })).rejects.toMatchObject({ code: 'not-granted' })
     expect(made.coreCalls).toEqual([])
     expect(made.status()).toEqual({ state: 'ready', reason: null })
   })

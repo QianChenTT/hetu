@@ -66,7 +66,7 @@ const sentences: Sentences = {
   'ui.layout': () => 'Lay out the whole editor window once you pick it as the layout',
   'ui.decoration': () => 'Mark up how the text of an open note looks',
   'ui.command': () => 'Add commands and keyboard shortcuts',
-  'ui.keys': () => 'See each key you press in an open note',
+  'ui.keystream': () => 'See each key you press in an open note',
   'events.subscribe': ({ topics }) => (topics.length === 0 ? 'Hear no events' : `Hear the events ${list(topics)}`),
   storage: () => 'Keep data of its own',
   // A command runs as a program of the human's, not in the plugin's sandbox

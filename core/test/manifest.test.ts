@@ -127,12 +127,15 @@ describe('a manifest', () => {
       expect(supportsApi('^4', ['lock.set'])).toBe(true)
     })
 
-    // door.handle came with the role's action. Nothing an older plugin called changed
-    it('keeps version 4 under version 5, which added door.handle, unless the manifest names door.handle', () => {
-      expect(apiChanges[5]).toEqual({ added: ['door.handle'], removed: [], reshaped: [], actionsChanged: false })
+    // door.handle came with the role's action and ui.keystream took the place of ui.keys. editor.keys served only
+    // ui.keys holders, so nothing a plugin naming neither called changed
+    it('keeps version 4 under version 5 unless the manifest names door.handle, ui.keystream or ui.keys', () => {
+      expect(apiChanges[5]).toEqual({ added: ['door.handle', 'ui.keystream'], removed: ['ui.keys'], reshaped: [], actionsChanged: false })
       expect(supportsApi('^4', ['luoshu.read', 'lock.set'])).toBe(true)
       expect(supportsApi('^4', ['door.handle'])).toBe(false)
-      expect(supportsApi('^5', ['door.handle'])).toBe(true)
+      expect(supportsApi('^4', ['ui.keystream'])).toBe(false)
+      expect(supportsApi('^4', ['ui.view', 'ui.keys'])).toBe(false)
+      expect(supportsApi('^5', ['door.handle', 'ui.keystream'])).toBe(true)
     })
   })
 

@@ -7,7 +7,7 @@ import type { CoreLink } from './link.ts'
 // with no Confirm, since neither gains any reach. Favorites are the drawer's, so they survive a change of layout
 
 // layout is the layout the human picked, null for none, which draws the plain layout. plain says the human picked it
-export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keys: Record<string, string> }
+export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keyOwners: Record<string, string> }
 
 const KEY = 'settings'
 export const MAX_FAVORITES = 64
@@ -21,10 +21,17 @@ const shape = z.strictObject({
     const [owner, view, ...rest] = value.split('/')
     return rest.length === 0 && pluginId.safeParse(owner).success && localName.safeParse(view).success
   }, 'owner/view')).max(MAX_FAVORITES),
-  keys: z.record(z.string().max(40), pluginId).refine(keys => Object.keys(keys).length <= MAX_KEY_OWNERS),
+  keyOwners: z.record(z.string().max(40), pluginId).refine(owners => Object.keys(owners).length <= MAX_KEY_OWNERS),
 })
 
-const defaults = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+// Settings stored before keyOwners had its name held it as keys, read under the new name so the rest is kept
+function renamed(stored: unknown): unknown {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored) || !Object.hasOwn(stored, 'keys') || Object.hasOwn(stored, 'keyOwners')) return stored
+  const { keys, ...rest } = stored as Record<string, unknown>
+  return { ...rest, keyOwners: keys }
+}
+
+const defaults = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
 
 export class Settings {
   private readonly link: CoreLink
@@ -44,8 +51,8 @@ export class Settings {
 
   async load(): Promise<void> {
     const got = await this.link.call('storage.get', { key: KEY })
-    const parsed = got.ok ? shape.safeParse(got.result) : null
-    this.held = parsed?.success === true ? { ...parsed.data, keys: { ...parsed.data.keys } } : defaults()
+    const parsed = got.ok ? shape.safeParse(renamed(got.result)) : null
+    this.held = parsed?.success === true ? { ...parsed.data, keyOwners: { ...parsed.data.keyOwners } } : defaults()
     this.loaded = true
     this.onChange?.()
     const first = this.early.find(one => one.connected())
@@ -80,10 +87,10 @@ export class Settings {
 
   // The plugin that owns a key two plugins bind, or null to leave it to neither
   async ownKey(key: string, plugin: string | null): Promise<void> {
-    const keys = { ...this.held.keys }
-    if (plugin === null) delete keys[key]
-    else keys[key] = plugin
-    await this.set({ ...this.held, keys })
+    const keyOwners = { ...this.held.keyOwners }
+    if (plugin === null) delete keyOwners[key]
+    else keyOwners[key] = plugin
+    await this.set({ ...this.held, keyOwners })
   }
 
   // Kept for the run even when storage refuses, so the human's pick holds until hetu quits

@@ -152,10 +152,10 @@ describe('a plugin started in a utility process', () => {
 
   it('reads its context as a host half with no data folder', async () => {
     const port = new FakePortMain()
-    let dataDir: string | null | undefined
-    runInUtility(definePlugin({ start: ctx => { dataDir = ctx.dataDir } }), port, limits)
+    let told: boolean | undefined
+    runInUtility(definePlugin({ start: ctx => { told = 'dataDir' in ctx } }), port, limits)
     port.gets(init)
     await vi.waitFor(() => expect(port.posted).toContain('{"v":1,"kind":"ready"}'))
-    expect(dataDir).toBe(null)
+    expect(told).toBe(false)
   })
 })

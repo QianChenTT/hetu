@@ -127,14 +127,22 @@ const switchesFields = {
   removed: dropped,
 }
 const switchesFile = z.strictObject({ format, ...switchesFields })
-const pluginFile = z.strictObject({ format, ...plugin.shape })
+// ui.keystream was ui.keys until the rename. An entry written then reads the item under the new name in each of its
+// lists, so what the human granted, switched off or confirmed holds as it was. The entry's next write drops the old name
+const oldKeys = (item: unknown) => typeof item === 'object' && item !== null && (item as { type?: unknown }).type === 'ui.keys'
+const keysRenamed = (items: unknown) => (Array.isArray(items) ? items.map(item => (oldKeys(item) ? { ...item, type: 'ui.keystream' } : item)) : items)
+const storedCapabilities = z.preprocess(keysRenamed, folderCapabilities)
+const pluginFields = {
+  ...plugin.shape, granted: storedCapabilities, off: storedCapabilities.optional(), firstUse: storedCapabilities.optional(), confirmed: storedCapabilities.optional(),
+}
+const pluginFile = z.strictObject({ format, ...pluginFields })
 
 // Format 2 held items and revoked labels by label on one plugin's entry (agents, revoked) and revoked labels in the
 // switches while that entry was gone (revokedAgents). A pair's items now last for one run, so the reader drops them
 // and reads the rest as this format. Read only at boot and written back in this format once
 const switchesOlder = z.strictObject({ format: z.literal(OLDER), ...switchesFields, revokedAgents: dropped })
   .transform(({ revokedAgents, ...rest }) => ({ ...rest, format: FORMAT }))
-const pluginOlder = z.strictObject({ format: z.literal(OLDER), ...plugin.shape, agents: dropped, revoked: dropped })
+const pluginOlder = z.strictObject({ format: z.literal(OLDER), ...pluginFields, agents: dropped, revoked: dropped })
   .transform(({ agents, revoked, ...rest }) => ({ ...rest, format: FORMAT }))
 
 export type Switches = z.infer<typeof switches>

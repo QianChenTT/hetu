@@ -50,7 +50,7 @@ function classOf(granted: Capability): number {
     case 'events.subscribe':
     case 'plugin.call':
       return 0
-    case 'ui.keys':
+    case 'ui.keystream':
     case 'ui.read':
     case 'luoshu.read':
     case 'luoshu.list':
@@ -80,7 +80,7 @@ function classOf(granted: Capability): number {
 
 // What tells a plugin a note's content: reading it, through the luoshu or through the editor, listing it, the key
 // stream and history read, and a write, whose version check answers whether a guessed text is the note's
-export const reads = (granted: Capability) => granted.type === 'luoshu.read' || granted.type === 'luoshu.list' || granted.type === 'ui.keys'
+export const reads = (granted: Capability) => granted.type === 'luoshu.read' || granted.type === 'luoshu.list' || granted.type === 'ui.keystream'
   || granted.type === 'ui.read'
   || granted.type === 'luoshu.write' || (granted.type === 'history' && granted.access === 'read')
 export const network = (granted: Capability) => granted.type === 'net.fetch'

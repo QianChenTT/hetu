@@ -70,7 +70,7 @@ const everyCapability = [
   { type: 'ui.decoration' },
   { type: 'ui.command' },
   { type: 'ui.layout' },
-  { type: 'ui.keys' },
+  { type: 'ui.keystream' },
   { type: 'events.subscribe', topics: ['note.written'] },
   { type: 'storage' },
   { type: 'history', access: 'read', paths: ['**'] },
@@ -1044,6 +1044,37 @@ describe('the retired tombstones', () => {
 
   it('writes no removed', async () => {
     await expect(store.writeSwitches({ ...switchesIn, removed: ['layout'] })).rejects.toThrow()
+  })
+})
+
+// ui.keystream was ui.keys until the rename: an entry written then reads with the same items under the new name, the
+// human's switches and confirmations on them included, so the grant is neither lost nor widened
+describe('the key stream under its old name', () => {
+  const old = { type: 'ui.keys' }
+  const fetch = { type: 'net.fetch', hosts: ['example.com'] }
+
+  it('reads ui.keys in each list of an entry as ui.keystream, nothing suspect, then writes the entry back under the new name', async () => {
+    await plant(pluginPath('alpha'), JSON.stringify({ format: 3, ...pluginIn({ granted: [old, fetch], off: [old], firstUse: [old, fetch], confirmed: [old] }) }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(result(loaded, 'plugin-entry', 'alpha')).toBe('ok')
+    const keystream = { type: 'ui.keystream' }
+    expect(loaded.state.plugins.alpha).toEqual(pluginIn({ granted: [keystream, fetch], off: [keystream], firstUse: [keystream, fetch], confirmed: [keystream] }))
+    await store.writePlugin('alpha', loaded.state.plugins.alpha)
+    expect(await readFile(pluginPath('alpha'), 'utf8')).not.toContain('ui.keys"')
+    expect((await store.load()).state.plugins.alpha).toEqual(loaded.state.plugins.alpha)
+  })
+
+  it('leaves an item with the old name and a field it never had invalid', async () => {
+    await plant(pluginPath('alpha'), JSON.stringify({ format: 3, ...pluginIn({ granted: [{ type: 'ui.keys', paths: ['**'] }] }) }))
+    const loaded = await store.load()
+    expect(result(loaded, 'plugin-entry', 'alpha')).toBe('invalid')
+    expect(loaded.state.plugins.alpha).toBeUndefined()
+  })
+
+  it('writes no item under the old name', async () => {
+    await expect(store.writePlugin('alpha', pluginIn({ granted: [old] }))).rejects.toThrow()
+    await expect(store.writePlugin('alpha', pluginIn({ off: [old] }))).rejects.toThrow()
   })
 })
 

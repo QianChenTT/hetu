@@ -40,9 +40,10 @@ function scopes<T extends z.ZodType>(item: T) {
 // of either kind, and ui.layout, the right to be picked as the layout, in place of ui.panel and ui.statusBar. ui.edit
 // is the right to change an open note through the editor, which the human then saves, and ui.read its twin, the right
 // to read through the editor a note the human opened. Version 4 added lock.set, the right to lock notes. Version 5
-// added door.handle, the role of serving what comes through the door, which one plugin at a time holds
+// added door.handle, the role of serving what comes through the door, which one plugin at a time holds, and
+// ui.keystream, the right to see each key pressed in an open note, which removed ui.keys, its old name
 export const capabilityTypes = frozen([
-  'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
+  'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream',
   'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
   'door.handle',
 ] as const)
@@ -65,7 +66,7 @@ export const capability = z.discriminatedUnion('type', [
   // reaches the luoshu on either
   z.strictObject({ type: z.literal(['ui.edit', 'ui.read']), paths: scopes(scope) }),
   z.strictObject({ type: z.literal('net.fetch'), hosts: scopes(text) }),
-  z.strictObject({ type: z.literal(['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys']) }),
+  z.strictObject({ type: z.literal(['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream']) }),
   z.strictObject({ type: z.literal('events.subscribe'), topics: scopes(qualifiedName) }),
   z.strictObject({ type: z.literal('storage') }),
   // Paths too, so history reaches no note the plugin can't name

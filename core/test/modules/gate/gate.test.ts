@@ -307,7 +307,7 @@ describe('reading on another\'s behalf', () => {
 
   it('gives the ui types a plugin holds switched on as its verbs in the editor, and none in the trusted window', () => {
     const gate = gateOn({
-      alpha: [item({ type: 'ui.view' }), item({ type: 'ui.command' }, { off: true }), item({ type: 'ui.keys' }, { firstUse: true }), item(notes)],
+      alpha: [item({ type: 'ui.view' }), item({ type: 'ui.command' }, { off: true }), item({ type: 'ui.keystream' }, { firstUse: true }), item(notes)],
     })
     expect(gate.verbs('alpha', 'editor')).toEqual(['ui.view'])
     expect(gate.verbs('alpha', 'trusted')).toEqual([])

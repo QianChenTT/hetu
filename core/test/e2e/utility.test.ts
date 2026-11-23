@@ -16,7 +16,7 @@ afterEach(cleanup)
 const commands = `{
   hello: async ctx => ({
     self: await ctx.call('core', 'self', {}),
-    dataDir: ctx.dataDir,
+    dataDir: 'dataDir' in ctx,
     envNames: Object.keys(process.env).sort(),
     envText: Object.values(process.env).join('\\n'),
     cwd: process.cwd(),
@@ -57,7 +57,7 @@ const commands = `{
 // validation policy, and CoreFoundation sets the user's text encoding from the uid when it is unset
 const notFromMain = process.platform === 'darwin' ? ['MACH_PORT_RENDEZVOUS_PEER_VALDATION', '__CF_USER_TEXT_ENCODING'] : []
 
-type Facts = { self: unknown, dataDir: string | null, envNames: string[], envText: string, cwd: string, cwdEntries: number, pid: number }
+type Facts = { self: unknown, dataDir: boolean, envNames: string[], envText: string, cwd: string, cwdEntries: number, pid: number }
 
 // A data folder with the holder approved, and the door's heartbeat and rate lowered so a hang shows within a test. more
 // holds more of the door's limits and switches more of the switches
@@ -102,7 +102,7 @@ describe('a utility half', () => {
     expect(await logged(dataDir, 'plugin.started', { plugin: 'mcp-http-handler' })).toBe(true)
     const facts = await hello(worker)
     expect(facts.self).toEqual({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 })
-    expect(facts.dataDir).toBe(null)
+    expect(facts.dataDir).toBe(false)
     expect(facts.envNames).toEqual([...Object.keys(baseEnv()), ...notFromMain].sort())
     expect(facts.envText).not.toContain(dataDir)
     expect(facts.cwdEntries).toBe(0)

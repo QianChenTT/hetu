@@ -22,7 +22,7 @@ describe('the window\'s settings', () => {
   it('starts with no layout or theme picked, no favorites and no key owners', async () => {
     const { settings } = made()
     await settings.load()
-    expect(settings.value).toEqual({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+    expect(settings.value).toEqual({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
   })
 
   it("takes the drawer's plain layout as a pick of its own, apart from hetu's layout", async () => {
@@ -47,7 +47,7 @@ describe('the window\'s settings', () => {
   })
 
   it('leaves the layout the human picked and the plain layout picked as they are', async () => {
-    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keys: {} })
+    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keyOwners: {} })
     await picked.settings.load()
     await picked.settings.pickIfNone('tiles')
     expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
@@ -59,7 +59,7 @@ describe('the window\'s settings', () => {
   })
 
   it('holds a layout that came before the settings loaded until they show whether one is picked', async () => {
-    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keys: {} })
+    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keyOwners: {} })
     await picked.settings.pickIfNone('tiles')
     await picked.settings.load()
     expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
@@ -99,22 +99,34 @@ describe('the window\'s settings', () => {
     await settings.favorite('kanban/board', true)
     await settings.favorite('tree/files', false)
     await settings.ownKey('Mod-k', 'kanban')
-    expect(space.get('settings')).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keys: { 'Mod-k': 'kanban' } })
+    expect(space.get('settings')).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
     await settings.ownKey('Mod-k', null)
-    expect(settings.value.keys).toEqual({})
+    expect(settings.value.keyOwners).toEqual({})
     // A page loaded again reads what the last one kept. The fake bridge has one listener, so the old link is done
     const link = new CoreLink(core.bridge)
     link.start()
     const again = new Settings(link)
     await again.load()
-    expect(again.value).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keys: {} })
+    expect(again.value).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keyOwners: {} })
+  })
+
+  it('reads settings stored with key owners under keys as keyOwners, the layout, theme and favorites kept', async () => {
+    const { settings } = made({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keys: { 'Mod-k': 'kanban' } })
+    await settings.load()
+    expect(settings.value).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
+  })
+
+  it('reads a value holding both keys and keyOwners as the defaults, the old name taken only alone', async () => {
+    const { settings } = made({ layout: 'layout', plain: false, theme: null, favorites: [], keys: {}, keyOwners: {} })
+    await settings.load()
+    expect(settings.value).toEqual({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
   })
 
   it('reads a stored value of the wrong shape as the defaults', async () => {
-    for (const stored of [{ layout: 7 }, 'x', { layout: null, theme: null, favorites: ['a b'], keys: {} }, { layout: 'Bad Id', theme: null, favorites: [], keys: {} }]) {
+    for (const stored of [{ layout: 7 }, 'x', { layout: null, theme: null, favorites: ['a b'], keyOwners: {} }, { layout: 'Bad Id', theme: null, favorites: [], keyOwners: {} }]) {
       const { settings } = made(stored)
       await settings.load()
-      expect(settings.value, JSON.stringify(stored)).toEqual({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+      expect(settings.value, JSON.stringify(stored)).toEqual({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
     }
   })
 

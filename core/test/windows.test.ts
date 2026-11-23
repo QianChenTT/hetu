@@ -50,7 +50,7 @@ describe('window grants', () => {
       { type: 'ui.layout' },
       { type: 'ui.decoration' },
       { type: 'ui.command' },
-      { type: 'ui.keys' },
+      { type: 'ui.keystream' },
       { type: 'storage' },
     ])
   })

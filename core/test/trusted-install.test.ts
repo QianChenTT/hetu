@@ -25,7 +25,7 @@ const one: Record<Capability['type'], Capability> = {
   'ui.layout': { type: 'ui.layout' },
   'ui.decoration': { type: 'ui.decoration' },
   'ui.command': { type: 'ui.command' },
-  'ui.keys': { type: 'ui.keys' },
+  'ui.keystream': { type: 'ui.keystream' },
   'ui.edit': { type: 'ui.edit', paths: ['**'] },
   'ui.read': { type: 'ui.read', paths: ['**'] },
   'events.subscribe': { type: 'events.subscribe', topics: ['notes.saved'] },
