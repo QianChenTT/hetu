@@ -147,6 +147,10 @@ function start(bridge: Bridge): void {
     dragStart: (_node, payload, event) => payloadDrag(owner, payload, event),
     divider: (node, index, event, split) => dividerDrag(owner, surface, node, index, event, split),
     iconUrl: src => `hetu://views/icon/${owner}/${src}`,
+    imageUrl: async path => {
+      const got = await link.call('editor.image', { plugin: owner, path })
+      return got.ok ? (got.result as { url: string }).url : null
+    },
     scrolled: () => listScrolled(owner, surface),
   })
   const theFrames = new Frames(link, element('editors'), (owner, instance, data) => ui.frameMessage(owner, instance, data), instance => {

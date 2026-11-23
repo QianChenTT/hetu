@@ -17,6 +17,8 @@ export type DrawHooks = {
   divider(node: string, index: number, event: PointerEvent, split: HTMLElement): void
   // Where an icon of the owner's own files loads from
   iconUrl(src: string): string
+  // A URL main minted for one load of a note's image for the owner, null when it minted none
+  imageUrl(path: string): Promise<string | null>
   // A list scrolled, so its rows on screen changed
   scrolled(): void
 }
@@ -147,6 +149,13 @@ export class TreeView {
         image.alt = node.alt ?? ''
         break
       }
+      case 'image': {
+        const image = element as HTMLImageElement
+        image.alt = node.alt ?? ''
+        // Each URL loads once, so one is asked for a new element or another path only
+        if (was?.kind !== 'image' || was.path !== node.path) this.image(held, node.path)
+        break
+      }
       case 'button':
         if (was?.kind !== 'button' || was.text !== node.text) {
           element.textContent = node.text
@@ -221,6 +230,16 @@ export class TreeView {
     return made
   }
 
+  // The image shows once its URL comes, while the element still draws that path
+  private image(held: Held, path: string): void {
+    const image = held.element as HTMLImageElement
+    image.removeAttribute('src')
+    this.writes++
+    void this.hooks.imageUrl(path).then(url => {
+      if (url !== null && this.held.get(held.node.id) === held && held.node.kind === 'image' && held.node.path === path) image.src = url
+    }, () => {})
+  }
+
   private list(held: Held, node: Extract<UiNode, { kind: 'list' }>, seen: Set<string>): void {
     const element = held.element
     const inner = element.firstElementChild as HTMLElement
@@ -276,6 +295,7 @@ export class TreeView {
         element = document.createElement('span')
         break
       case 'icon':
+      case 'image':
         element = document.createElement('img')
         ;(element as HTMLImageElement).draggable = false
         break
