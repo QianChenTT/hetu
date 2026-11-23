@@ -21,6 +21,7 @@ export const allowed: readonly Place[] = [
   { place: 'backend/boot/state.ts', word: 'revokedAgents', why: 'a field of a format 2 switches file, which the reader for format 2 names to drop' },
   { place: 'backend/boot/README.md', word: 'agents', why: 'names the format 2 field the reader drops' },
   { place: 'backend/boot/README.md', word: 'revokedAgents', why: 'names the format 2 field the reader drops' },
+  { place: 'backend/plugins-manager/github.ts', word: 'agent', why: 'the user-agent header, which GitHub\'s API asks every request to send' },
 ]
 
 // Shipped code in core/, every text file of it: not its tests, build tooling or the SDK's testing and build helpers
