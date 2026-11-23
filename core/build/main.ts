@@ -27,6 +27,10 @@ function external(metafile: Metafile | undefined): string[] {
   return [...new Set(found)].sort()
 }
 
+// A require for main's ES module bundle: yauzl is CommonJS and requires Node's built-ins, which esbuild's shim in an ES
+// module reaches only through a require declared at the top
+export const MAIN_BANNER = 'import { createRequire as hetuRequire } from \'node:module\'\nconst require = hetuRequire(import.meta.url)'
+
 export type Built = {
   imports: string[]
   utilityImports: string[]
@@ -54,6 +58,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     target: NODE,
     external: ['electron'],
     define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
+    banner: { js: MAIN_BANNER },
   })
   // Each core module bundled into main.js reaches only the Node built-ins on its own list, as each did when it was built as its own plugin
   const reached = await checkModuleImports(main.metafile!)
