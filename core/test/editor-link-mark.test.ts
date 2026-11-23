@@ -1,6 +1,6 @@
 import { EditorState, Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { linkAt, type Mark, mark, MARKS_PER_SECOND, MAX_MARKS, parseBridgeCall } from '../api/editor.ts'
+import { type LinkHit, linkAt, type Mark, mark, MARKS_PER_SECOND, MAX_MARKS, parseBridgeCall } from '../api/editor.ts'
 import { MAX_NAME_LENGTH } from '../api/ids.ts'
 import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
 import { pluginMarks, setMarks } from '../frontend/editor/editor.ts'
@@ -117,7 +117,8 @@ function started(reach: Record<string, Reach>) {
   const coreLink = new CoreLink(core.bridge)
   coreLink.start()
   let now = 0
-  const drawer = new Drawer(coreLink, () => [instance], () => {}, { clock: () => now })
+  let open = [instance]
+  const drawer = new Drawer(coreLink, () => open, () => {}, { clock: () => now })
   drawer.start()
   const plugin = (name: string) => {
     const sent: Record<string, unknown>[] = []
@@ -132,7 +133,7 @@ function started(reach: Record<string, Reach>) {
     }
     return { call, links: () => sent.filter(message => message.topic === 'editor.link') }
   }
-  const click = async (hit: { owner: string, id: string } | null) => {
+  const click = async (hit: LinkHit | 'tied') => {
     drawer.linkClicked('n1', hit)
     for (let i = 0; i < 3; i++) await settle()
   }
@@ -140,7 +141,12 @@ function started(reach: Record<string, Reach>) {
     core.event('core.security')
     for (let i = 0; i < 6; i++) await settle()
   }
-  return { drawer, sets, plugin, click, narrowed, wait: (ms: number) => void (now += ms) }
+  // The note closes in the editor, as the page tells the drawer
+  const close = () => {
+    open = []
+    drawer.closed('n1')
+  }
+  return { drawer, sets, plugin, click, close, narrowed, wait: (ms: number) => void (now += ms) }
 }
 
 const marker: Reach = { read: true, verbs: ['ui.decoration'] }
@@ -156,10 +162,14 @@ describe('a Ctrl or Cmd click on a link mark', () => {
   })
 
   it('tells no one on a tie and no one for a note that closed', async () => {
-    const { plugin, click, drawer } = started({ alpha: marker })
-    const alpha = plugin('alpha')
-    await click(null)
-    drawer.closed('n1')
+    const { plugin, click, close } = started({ alpha: marker, beta: marker })
+    const [alpha, beta] = [plugin('alpha'), plugin('beta')]
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [link(4, 7, 'a')] })).toMatchObject({ ok: true })
+    expect(await beta.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [link(4, 7, 'b')] })).toMatchObject({ ok: true })
+    await click('tied')
+    expect([...alpha.links(), ...beta.links()]).toEqual([])
+    close()
+    await click({ owner: 'alpha', id: 'a' })
     expect(alpha.links()).toEqual([])
   })
 

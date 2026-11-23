@@ -143,7 +143,7 @@ describe("an edit's cursor", () => {
     drawer.linkClicked('n1', { owner: 'alpha', id: 'a' })
     expect(await stepOut(0)).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
     await press()
-    drawer.linkClicked('n1', null)
+    drawer.linkClicked('n1', 'tied')
     expect(await stepOut(0)).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
     expect(note.applied).toEqual([])
   })
