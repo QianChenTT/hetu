@@ -5,6 +5,7 @@ import { doorNode } from '../api/ids.ts'
 import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import { buildHost } from '../sdk/build/esbuild.ts'
 import { checkModuleImports } from './module-imports.ts'
+import { type Bundled, bundledPackages, NOTICES_FILE, noticesText } from './notices.ts'
 
 // What an older build wrote beside main.js and this one doesn't: the install list and the core plugins' folders
 const RETIRED = ['hetu-install.json', 'plugins']
@@ -67,6 +68,9 @@ export function mainOptions(outfile: string, kind: BuildKind = {}): BuildOptions
 export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
   await mkdir(outDir, { recursive: true })
   const main = await build(mainOptions(path.join(outDir, 'main.js'), kind))
+  // Each bundle's inputs with the folder esbuild read their paths from, for the notices file. The door imports only Node's
+  // built-ins, which checkHostImports holds it to
+  const bundles: Bundled[] = [{ metafile: main.metafile!, from: core }]
   // Each core module bundled into main.js reaches only the Node built-ins on its own list, as each did when it was built as its own plugin
   const reached = await checkModuleImports(main.metafile!)
   if (reached.length > 0) throw new Error(`a core module reaches past its list:\n${reached.join('\n')}`)
@@ -80,6 +84,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     format: 'esm',
     target: NODE,
   })
+  bundles.push({ metafile: utility.metafile!, from: process.cwd() })
   // The door, beside main.js and inside app.asar with it, importing only the Node built-ins core/api names for it. The
   // plugins manager reads it once and starts it in a utility process of its own through the bootstrap
   const door = await buildHost(core, 'backend/door/host.ts', doorNode)
@@ -111,6 +116,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
       define: { PRELUDE: JSON.stringify(prelude) },
     })
     pageImports.push(...external(bundled.metafile))
+    bundles.push({ metafile: bundled.metafile!, from: process.cwd() })
   }
 
   // The worker host page's preload and the window shell's, each beside main.js
@@ -126,7 +132,9 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
       external: ['electron'],
     })
     preloadImports.push(...external(preload.metafile))
+    bundles.push({ metafile: preload.metafile!, from: process.cwd() })
   }
+  await writeFile(path.join(outDir, NOTICES_FILE), noticesText(await bundledPackages(bundles)))
 
   return { imports: external(main.metafile), utilityImports: external(utility.metafile), pageImports, preloadImports: [...new Set(preloadImports)].sort(), prelude }
 }
