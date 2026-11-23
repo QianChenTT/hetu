@@ -1,15 +1,11 @@
 import { createHash } from 'node:crypto'
-import { z } from 'zod'
+import { FetchRefused, getFromGitHub, onGitHub, readRelease, releaseLimits, type Fetch, type FetchLimits, type FetchProblem, type Wanted } from '../lib/github.ts'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
-import { FetchRefused, getFromGitHub, onGitHub, type Fetch, type FetchLimits, type FetchProblem, type Wanted } from './github.ts'
 
 // A GitHub release's zips: a pasted repo or release link resolved through GitHub's API to the release's .zip assets,
 // and the bytes of the one the human picks. Nothing here unpacks or installs
 
 const MiB = 1024 * 1024
-
-// A release's answer from the API, every asset with its uploader included. GitHub holds at most 1,000 assets a release
-export const releaseLimits: FetchLimits = Object.freeze({ bytes: 8 * MiB, ms: 20_000 })
 
 // 64 MiB is the most unpack.ts writes from one zip (unpackLimits.bytes there). A zip is its entries' data, stored or
 // deflated, never more than written, plus a local header and a central record for each of its 2,000 entries at most,
@@ -65,19 +61,6 @@ export type ReleaseZip = { name: string, size: number, url: string, digest: stri
 
 export type Release = { problem: null, tag: string, zips: ReleaseZip[] } | { problem: FetchProblem }
 
-const releaseAnswer = z.object({
-  tag_name: z.string(),
-  assets: z.array(z.object({
-    name: z.string(),
-    size: z.number().int().nonnegative(),
-    // uploaded once whole. An upload under way is starter
-    state: z.string(),
-    browser_download_url: z.string(),
-    // sha256:<hex>, computed by GitHub at upload, null for an asset uploaded before GitHub kept one
-    digest: z.string().nullable().optional(),
-  })),
-})
-
 const SHA256 = /^sha256:([0-9a-f]{64})$/i
 
 // The sha256 a digest names as lower case hex, or null when GitHub gave none or one of another kind. A sha256 that
@@ -89,22 +72,7 @@ function sha256Of(digest: string | null | undefined): string | null {
   return hex.toLowerCase()
 }
 
-const API = 'https://api.github.com'
-// The answer GitHub's docs ask a client to accept and the API version whose release shape is read here
-const RELEASE_WANTED: Wanted = Object.freeze({ accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' })
 const ZIP_WANTED: Wanted = Object.freeze({ accept: 'application/octet-stream' })
-
-function parsedRelease(bytes: Buffer): z.infer<typeof releaseAnswer> {
-  let body: unknown
-  try {
-    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-  } catch {
-    throw new FetchRefused('bad-answer')
-  }
-  const checked = releaseAnswer.safeParse(body)
-  if (!checked.success) throw new FetchRefused('bad-answer')
-  return checked.data
-}
 
 // What the work answers, or the problem of the refusal it threw
 async function problemOnRefusal<T>(work: () => Promise<T>): Promise<T | { problem: FetchProblem }> {
@@ -120,14 +88,8 @@ async function problemOnRefusal<T>(work: () => Promise<T>): Promise<T | { proble
 export async function releaseZips(pasted: string, options: FetchOptions = {}): Promise<Release> {
   const link = githubLink(pasted)
   if (link === null) return { problem: 'not-github' }
-  const which = link.tag === null ? 'latest' : `tags/${encodeURIComponent(link.tag)}`
-  const url = `${API}/repos/${link.owner}/${link.repo}/releases/${which}`
   return problemOnRefusal(async () => {
-    const bytes = await getFromGitHub(url, RELEASE_WANTED, limitsOf(releaseLimits, options.limits), options).catch((err: unknown) => {
-      // The API's 404 is a repo or a release it doesn't have
-      throw err instanceof FetchRefused && err.problem === 'not-found' ? new FetchRefused('no-release') : err
-    })
-    const release = parsedRelease(bytes)
+    const release = await readRelease(link.owner, link.repo, link.tag, limitsOf(releaseLimits, options.limits), options)
     const zips = release.assets
       .filter(asset => asset.state === 'uploaded' && asset.name.toLowerCase().endsWith('.zip'))
       .map(asset => ({ name: asset.name, size: asset.size, url: asset.browser_download_url, digest: sha256Of(asset.digest) }))
