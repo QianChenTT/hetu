@@ -1,7 +1,7 @@
 import type { CoreViewsPlugin } from '../../api/actions.ts'
 import type { Payload } from '../../api/ui.ts'
 import { Drawer, type PortLike } from './bridge.ts'
-import { accepts, DragGesture, fraction, splitSizes, zoneAt } from './drag.ts'
+import { accepts, type Rect, DragGesture, fraction, splitSizes, zoneAt } from './drag.ts'
 import { type DrawHooks, fillerOf, taggedOf } from './draw.ts'
 import { EditorViews } from './editor.ts'
 import { CORE_KEY_NAMES, type CoreKey, coreKeyOf } from '../../api/keys.ts'
@@ -143,6 +143,7 @@ function start(bridge: Bridge): void {
   const stage = element('stage')
   const ghost = element('drag-ghost')
   const mark = element('drop-mark')
+  const zoneOutlines = element('drop-zones')
   const drawHooks = (owner: string, surface: string): DrawHooks => ({
     event: (node, type, value) => ui.nodeEvent(owner, surface, node, type, value),
     dragStart: (_node, payload, event) => payloadDrag(owner, payload, event),
@@ -223,15 +224,24 @@ function start(bridge: Bridge): void {
     if (held === null || ui.layout() === null) return
     const text = `${ui.views.name(held.owner)} · ${held.spec.title}`
     let zones = theLayers.zones()
+    let outlined = ''
     track(start, (event, dragging) => {
       if (!dragging) return
       moveGhost(event, text)
       const at = onStage(event)
-      if (zones.length === 0) zones = theLayers.zones()
+      // Read again on each move, so a layout drawn again mid-drag is outlined and hit where it is now
+      zones = theLayers.zones()
+      const drawn = JSON.stringify(zones.map(zone => [zone.zone, zone.rect]))
+      if (drawn !== outlined) {
+        outlined = drawn
+        outlineZones(zones)
+      }
       showAt(mark, zoneAt(zones, at.x, at.y)?.rect ?? null)
     }, (event, how) => {
       ghost.hidden = true
       mark.hidden = true
+      zoneOutlines.hidden = true
+      zoneOutlines.replaceChildren()
       if (how !== 'drop') return
       const at = onStage(event)
       const zone = zoneAt(zones, at.x, at.y)
@@ -239,6 +249,24 @@ function start(bridge: Bridge): void {
       const where = fraction(zone.rect, at.x, at.y)
       ui.viewDropped(instance, zone.zone, where.x, where.y)
     })
+  }
+
+  // Every zone outlined and named, so the human sees where a view can go. A name sits outside a zone too thin to hold it:
+  // above a short one, to the left of one at the stage's right edge
+  function outlineZones(zones: readonly { zone: string, rect: Rect }[]): void {
+    const width = stage.clientWidth
+    zoneOutlines.replaceChildren(...zones.map(zone => {
+      const box = document.createElement('div')
+      box.className = 'drop-zone'
+      if (zone.rect.height < 24) box.classList.add('short')
+      if (zone.rect.left + 96 > width) box.classList.add('at-right')
+      const name = document.createElement('span')
+      name.textContent = zone.zone
+      box.append(name)
+      showAt(box, zone.rect)
+      return box
+    }))
+    zoneOutlines.hidden = zones.length === 0
   }
 
   // What a payload would land on under the pointer: an editor for a note's path, or a node that accepts it
@@ -363,7 +391,8 @@ function start(bridge: Bridge): void {
         const key = `${plugin.plugin}/${view}`
         const first = ui.views.all().find(held => held.owner === plugin.plugin && held.view === view && held.first) ?? null
         return {
-          key, name: `${plugin.name} (${plugin.plugin})`, title: spec.title, running: first !== null && !first.down, favorite: settings.value.favorites.includes(key),
+          key, name: `${plugin.name} (${plugin.plugin})`, title: spec.title, item: spec.kind === 'item',
+          running: first !== null && !first.down, favorite: settings.value.favorites.includes(key),
           instance: first?.instance ?? null, shown: first !== null && shown.has(first.instance),
         }
       })),
