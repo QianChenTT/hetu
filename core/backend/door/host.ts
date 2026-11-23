@@ -1,5 +1,5 @@
 import { userInfo } from 'node:os'
-import { pipeName } from 'hetu-core/api/pipe.ts'
+import { pipeName } from '../../api/pipe.ts'
 import { PORT, refuseEveryToken } from './checks.ts'
 import { httpPlugin } from './keeper.ts'
 

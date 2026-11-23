@@ -7,7 +7,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { Part } from '../api/ids.ts'
-import { INSTALL_LIST } from '../api/install.ts'
+import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import type { ClassTable, GrantRiskClassifier } from '../api/classes.ts'
 import type { ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
@@ -56,6 +56,8 @@ export class FakeLink implements RouterDoor, PluginsRecording {
   readonly sent: { caller: Caller, message: Message }[] = []
   readonly ended: { caller: Caller, code: string }[] = []
   readonly registered: Caller[] = []
+  // The callers registered as the port of a utility process the core started
+  readonly utilities: Caller[] = []
   // What the plugins manager asked of the router, in order: stopping, each record and each lifecycle message by plugin
   readonly timeline: string[] = []
   // How each record lands. A test holds one back by answering a promise it settles itself
@@ -67,9 +69,10 @@ export class FakeLink implements RouterDoor, PluginsRecording {
   limits: Partial<Record<LimitName, number>> = {}
   private readonly ports = new Map<string, Port>()
 
-  register(port: Port, caller: Caller): void {
-    this.router!.register(port, caller)
+  register(port: Port, caller: Caller, via: 'port' | 'utility' = 'port'): void {
+    this.router!.register(port, caller, via)
     this.registered.push(caller)
+    if (via === 'utility') this.utilities.push(caller)
     this.ports.set(keyOf(caller), port)
   }
 
@@ -445,19 +448,15 @@ export async function plant(file: string, body: string): Promise<void> {
   await writeFile(file, `${body}\n${createHash('sha256').update(`${body}\n`).digest('hex')}\n`)
 }
 
-export type Listing = { files: Files, version?: string, hash?: string }
+// The door's code as a test hands it, which the fake runtime never runs
+export const DOOR_CODE = '// mcp-http-handler door.js\n'
 
-// Writes an install folder: each plugin under plugins/<id> and the install list with each one's version and hash, as
-// the Electron build is to. hash replaces the real one, for a list that doesn't match its files
-export async function writeInstall(dir: string, plugins: Record<string, Listing>): Promise<void> {
-  const listed: Record<string, unknown> = {}
-  for (const [id, plugin] of Object.entries(plugins)) {
-    const root = path.join(dir, 'plugins', id)
-    await writeFolder(root, plugin.files)
-    const version = plugin.version ?? (JSON.parse(plugin.files['hetu-plugin.json']) as { version: string }).version
-    listed[id] = { path: `plugins/${id}`, version, hash: plugin.hash ?? await hashOf(root) }
-  }
-  await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify({ format: 1, plugins: listed }, null, 2)}\n`)
+// Writes the door's code into dir as the build writes it beside main.js, and gives the file
+export async function writeDoor(dir: string, code: string = DOOR_CODE): Promise<string> {
+  const file = path.join(dir, DOOR_FILE)
+  await mkdir(dir, { recursive: true })
+  await writeFile(file, code)
+  return file
 }
 
 // An approved entry for the folder at root, unsigned as an approval writes it. It runs once allowUnsigned names its
@@ -484,10 +483,6 @@ export async function writeApproved(store: StateStore, id: string, root: string,
 // The entry an older build wrote for a first-party copy it shipped, which carried this signer
 export const oldFirstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
   ({ version: '1.0.0', contentHash: hash, signer: 'hetu first-party', granted: [], class: null, enabled: true, ...extra })
-
-// The install the core needs to come up: nothing, the gate and the other core modules ship inside the core as the log
-// does
-export const coreInstall = (): Record<string, Listing> => ({})
 
 // The core modules' instances a test hands in place of the real ones, and the OS's bin for the luoshu
 export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'heartbeat' | 'securityView' | 'floodControl' | 'lock' | 'trash' | 'off'>>
@@ -539,7 +534,8 @@ export async function tempBase(): Promise<string> {
 // install held did, and every other core module is the real one unless modules hands a fake
 export async function harness(options: {
   base?: string
-  install?: Record<string, Listing> | null
+  // The door's code, written into the install folder and run as the door. Left out, no door runs
+  door?: string
   folder?: Record<string, Files>
   entries?: Record<string, Plugin | ((root: string) => Promise<Plugin>)>
   switches?: Partial<Switches>
@@ -556,7 +552,7 @@ export async function harness(options: {
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
   await mkdir(dataDir, { recursive: true })
-  if (options.install !== null) await writeInstall(installDir, options.install ?? coreInstall())
+  const doorFile = options.door === undefined ? null : await writeDoor(installDir, options.door)
   for (const [id, files] of Object.entries(options.folder ?? {})) await writeFolder(path.join(dataDir, 'plugins', id), files)
   const store = new StateStore(dataDir)
   const written: Plugin[] = []
@@ -587,6 +583,7 @@ export async function harness(options: {
   const pluginsManager = new PluginsManager({
     booted: { state: loaded.state, checks: loaded.checks, store, dataDir },
     installDir,
+    doorFile,
     link,
     // The link stands in for recording, so a test sees each record the plugins manager makes and decides how it lands
     recording: link,

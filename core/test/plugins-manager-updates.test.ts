@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { Landing } from '../backend/plugins-manager/header.ts'
 import {
-  cleanup, coreInstall, entryFor, filesFor, harness, hashOf, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
+  cleanup, entryFor, filesFor, harness, hashOf, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
@@ -187,7 +187,7 @@ describe('a staged update', () => {
     expect(made.pluginsManager.plugin('alpha')?.incarnation).toBe(1)
     expect(await readFile(path.join(made.dataDir, 'plugins', 'alpha', 'hetu-plugin.json'), 'utf8')).toContain('1.1.0')
 
-    const next = await harness({ base: made.base, install: undefined })
+    const next = await harness({ base: made.base })
     await next.pluginsManager.start()
     expect(reasonOf(next.pluginsManager, 'alpha')).toBe('tampered')
     expect(reasonOf(next.pluginsManager, 'beta')).toBe('dependency:alpha:refused')
@@ -226,7 +226,7 @@ describe('a staged update', () => {
     expect(await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))).toBe(hash)
     expect(made.runtime.started.filter(start => start.id === 'alpha').at(-1)?.code).toBe(next['worker.js'])
     expect(await readdir(path.join(made.dataDir, 'staging'))).toEqual([])
-    const again = await harness({ base: made.base, install: undefined })
+    const again = await harness({ base: made.base })
     await again.pluginsManager.start()
     expect(stateOf(again.pluginsManager, 'alpha')).toBe('ready')
   })

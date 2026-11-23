@@ -30,7 +30,7 @@ export function specifiers(source: string): { specifier: string, types: boolean 
   return [...new Map(found.map(each => [`${each.types} ${each.specifier}`, each])).values()]
 }
 
-// The parts, each a folder or a file under core/ (or the repo for plugins), the longest match first. Tooling is
+// The parts, each a folder or a file under core/ (or the repo for scripts), the longest match first. Tooling is
 // everything that builds, tests or checks hetu and never ships in it
 export const parts: readonly { part: string, under: string }[] = [
   { part: 'contract', under: 'core/api/' },
@@ -62,11 +62,9 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'lock', under: 'core/backend/lock/' },
   { part: 'recording', under: 'core/backend/recording/' },
   { part: 'security-view', under: 'core/backend/security-view/' },
+  { part: 'door', under: 'core/backend/door/' },
   { part: 'tooling', under: 'scripts/' },
 ]
-
-// A plugin's own code is its src folder. Its build script and tests are tooling
-const pluginSource = /^core-plugins\/[^/]+\/src\//
 
 // What each part may import besides itself. The contract imports nothing but zod. lib, the SDK and the pages
 // only the contract, the backend's lib the contract and lib. The router the contract, the libs and the doors of flood
@@ -75,8 +73,8 @@ const pluginSource = /^core-plugins\/[^/]+\/src\//
 // each through its door. The runtime the
 // router and boot through their doors (the runtime's types sit in its own door, so the plugins manager imports the runtime and not the other way). The
 // core modules: the holder reads the modules through their doors and each module the contract alone or with lib
-// (the build bounds their Node built-ins). The joins and tooling may import anything. Plugins import the
-// contract and the SDK, by their package names
+// (the build bounds their Node built-ins). The joins and tooling may import anything. The door, which runs in a
+// utility process as a plugin's host half, imports the contract and the SDK
 export const arrows: Readonly<Record<string, readonly string[]>> = {
   contract: [],
   lib: ['contract'],
@@ -101,7 +99,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   lock: ['contract', 'lib'],
   recording: ['contract', 'lib'],
   'security-view': ['contract'],
-  plugin: ['contract', 'sdk'],
+  door: ['contract', 'sdk'],
   join: ['*'],
   tooling: ['*'],
 }
@@ -124,7 +122,6 @@ export const exceptions: Readonly<Record<string, { may: readonly string[], dynam
 const posix = (file: string) => file.split(path.sep).join('/')
 
 export function partOf(file: string): string | null {
-  if (file.startsWith('core-plugins/')) return pluginSource.test(file) ? 'plugin' : 'tooling'
   return parts.find(({ under }) => file === under || file.startsWith(under))?.part ?? null
 }
 
@@ -138,12 +135,12 @@ function shipped(): string[] {
       else if (/\.(ts|js)$/.test(name) && !name.endsWith('.d.ts')) files.push(posix(path.relative(repo, full)))
     }
   }
-  for (const dir of ['core/api', 'core/lib', 'core/sdk', 'core/frontend', 'core/backend', 'core-plugins']) walk(path.join(repo, dir))
+  for (const dir of ['core/api', 'core/lib', 'core/sdk', 'core/frontend', 'core/backend']) walk(path.join(repo, dir))
   return files.filter(file => partOf(file) !== 'tooling').sort()
 }
 
-// What one file may not import: each problem as text. A relative specifier is resolved against the file. A plugin
-// imports hetu only by package name
+// What one file may not import: each problem as text. A relative specifier is resolved against the file, and a
+// specifier naming one of hetu's packages is read as the part it names
 export function problemsOf(file: string, source: string): string[] {
   const from = partOf(file)
   if (from === null) return [`${file} belongs to no part`]
@@ -307,7 +304,7 @@ describe('imports point one way', () => {
   })
   // The proof the later move of this walk to shipped-files.ts leans on
   it('walks the files shippedFiles lists', () => {
-    expect(shipped()).toEqual(shippedFiles({ kinds: ['ts', 'js'], plugins: 'src' }))
+    expect(shipped()).toEqual(shippedFiles({ kinds: ['ts', 'js'] }))
   })
 })
 
@@ -338,7 +335,7 @@ describe('the check itself', () => {
     ['core/backend/providers/luoshu/luoshu.ts', "import type { Exec } from '../exec/header.ts'", 'core/backend/providers/luoshu/luoshu.ts (luoshu) imports core/backend/providers/exec/header.ts (exec)'],
     ['core/backend/router/router.ts', "import { x } from '../../test/hold.ts'", 'core/backend/router/router.ts imports tooling core/test/hold.ts'],
     ['core/lib/disk.ts', "const fs = await import('node:fs')", 'core/lib/disk.ts: <dynamic import>'],
-    ['core-plugins/layout/src/worker.ts', "import { x } from 'hetu-core/lib/disk.ts'", 'core-plugins/layout/src/worker.ts (plugin) imports core/lib/disk.ts (lib)'],
+    ['core/backend/door/keeper.ts', "import { x } from 'hetu-core/lib/disk.ts'", 'core/backend/door/keeper.ts (door) imports core/lib/disk.ts (lib)'],
   ])('refuses %s importing past the arrows: %j', (file, source, problem) => {
     expect(problemsOf(file, source)).toEqual([problem])
   })
@@ -388,9 +385,9 @@ describe('the check itself', () => {
     expect(problemsOf('core/frontend/trusted/view.ts', "import { x } from 'hetu-core/lib/disk.ts'")).toEqual([
       'core/frontend/trusted/view.ts (page:trusted) imports core/lib/disk.ts (lib)',
     ])
-    expect(problemsOf('core-plugins/layout/src/worker.ts', "import { definePlugin } from '@hetu/sdk'")).toEqual([])
-    expect(problemsOf('core-plugins/layout/src/worker.ts', "import { buildPlugin } from '@hetu/sdk/esbuild'")).toEqual([
-      'core-plugins/layout/src/worker.ts imports tooling core/sdk/build/',
+    expect(problemsOf('core/backend/door/keeper.ts', "import { definePlugin } from '@hetu/sdk'")).toEqual([])
+    expect(problemsOf('core/backend/door/keeper.ts', "import { buildPlugin } from '@hetu/sdk/esbuild'")).toEqual([
+      'core/backend/door/keeper.ts imports tooling core/sdk/build/',
     ])
   })
 

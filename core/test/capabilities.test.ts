@@ -240,8 +240,8 @@ describe('install-only types', () => {
     expect(capabilityTypes.filter(isInstallOnly)).toEqual(['guard.hook'])
   })
 
-  it('refuses one for a plugin-folder plugin and takes it for a core plugin', () => {
-    expect(folderCapability.safeParse({ type: 'guard.hook' }).success).toBe(false)
+  it('refuses one for a plugin-folder plugin as a type only the core holds, and takes it in the core\'s own table', () => {
+    expect(folderCapability.safeParse({ type: 'guard.hook' }).error?.issues[0]?.message).toBe('a type only the core holds')
     expect(capability.safeParse({ type: 'guard.hook' }).success).toBe(true)
     expect(folderCapabilities.safeParse([{ type: 'ui.view' }, { type: 'guard.hook' }]).success).toBe(false)
     expect(capabilities.safeParse([{ type: 'ui.view' }, { type: 'guard.hook' }]).success).toBe(true)

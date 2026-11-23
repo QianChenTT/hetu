@@ -4,7 +4,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import { grantKeyOf, type Caller, type Refusal, type RefusalCode } from '../../api/envelope.ts'
 import { type LimitName, defaultLimits } from '../../api/limits.ts'
-import { LOCK_GUARD, utilityIds } from '../../api/ids.ts'
+import { doorId, LOCK_GUARD } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
 import type { Call, Guard, PluginState, PolicyJobState, Provider } from '../../api/policy-jobs.ts'
@@ -197,7 +197,7 @@ function sameCaller(one: Caller, two: Caller): boolean {
 function portTransportOf(router: Router, caller: Caller, ports: MessagePort[]): Transport {
   const { port1, port2 } = new MessageChannel()
   ports.push(port1, port2)
-  router.register(port1, caller)
+  router.register(port1, caller, 'utility')
   return {
     post: message => port2.postMessage(message),
     listen: next => { port2.on('message', next) },
@@ -473,7 +473,7 @@ export class FakeCore {
   private async launch(plugin: Plugin): Promise<FakeState> {
     const incarnation = ++this.incarnation
     const caller: Caller = { kind: 'plugin', id: this.manifest.id, half: this.half, incarnation }
-    const utility = this.half === 'host' && (utilityIds as readonly string[]).includes(this.manifest.id)
+    const utility = this.half === 'host' && this.manifest.id === doorId
     this.reason = null
     this.infos(this.manifest.id, {
       state: 'starting',
@@ -513,7 +513,7 @@ export class FakeCore {
     for (const id of [...(this.manifest.requires ?? []), ...targets]) deps[id] = stateOf(id)
     if (this.pluginsManager.infos.get(this.manifest.id)?.place === 'utility') {
       for (const [role, spec] of Object.entries(roleActions)) {
-        if (spec.from === 'utility') deps[role] = stateOf(this.pluginsManager.roles.get(role))
+        if (spec.from === 'door') deps[role] = stateOf(this.pluginsManager.roles.get(role))
       }
     }
     return deps

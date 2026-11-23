@@ -29,7 +29,7 @@
     </div>
   </header>
 
-  <p class="status"><strong>This is the design, not all of it runs today.</strong> The Electron app runs the core (boot, plugins-manager, router, runtime) with eleven core modules bundled into main: the gate, the grant risk classifier, flood control, the heartbeat, recording, the security view, storage, the luoshu, history, exec and the lock. mcp-http-handler runs its HTTP door and a local pipe for the hetu.exe --mcp-stdio shim in a utility process, both closed while no mcp plugin is there. The layout and hidden marks run as sandboxed first-party plugins, beside the drawer and the trusted window. OAuth, the MCP plugin, leases, net, git and artifacts are designed and not built and the map marks them planned. The older daemon runs apart from the core.</p>
+  <p class="status"><strong>This is the design, not all of it runs today.</strong> The Electron app runs the core (boot, plugins-manager, router, runtime) with eleven core modules bundled into main: the gate, the grant risk classifier, flood control, the heartbeat, recording, the security view, storage, the luoshu, history, exec and the lock. The door, core code built into door.js beside main.js, runs its HTTP door and a local pipe for the hetu.exe --mcp-stdio shim in a utility process of its own, both closed while no plugin holds door.handle. The layout and hidden marks run as sandboxed first-party plugins, beside the drawer and the trusted window. OAuth, the MCP plugin, leases, net, git and artifacts are designed and not built and the map marks them planned. The older daemon runs apart from the core.</p>
 
   <div class="scen-bar" role="toolbar" aria-label="Scenarios">
     <span class="eyebrow lbl">Scenarios</span>
@@ -41,7 +41,7 @@
   <div class="stage">
     <div>
       <div class="mapbox" id="mapbox">
-        <svg id="map" viewBox="0 0 1240 880" role="img" aria-label="Map of hetu's core: outside actors on the left. In the middle the mcp-http-handler plugin, the core with boot, plugins-manager, router and runtime, the core modules, the planned core plugins and OS processes, beside the hidden plugin renderers, the editor window and the trusted window. Disk, the app install and the security state on the right, with arrows for every flow between them">
+        <svg id="map" viewBox="0 0 1240 880" role="img" aria-label="Map of hetu's core: outside actors on the left. In the middle the door in its utility process, the core with boot, plugins-manager, router and runtime, the core modules, the planned core plugins and OS processes, beside the hidden plugin renderers, the editor window and the trusted window. Disk, the app install and the security state on the right, with arrows for every flow between them">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-def"/></marker>
             <marker id="arrOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-on"/></marker>

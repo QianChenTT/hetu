@@ -13,7 +13,7 @@ import { shippedFiles } from './shipped-files.ts'
 const repo = path.join(import.meta.dirname, '..', '..')
 // Every shipped ts and js file of core and each core plugin's src, since a core plugin runs from app.asar as hetu's
 // own code and a swallow there loses an error the same way
-const files = shippedFiles({ kinds: ['ts', 'js'], plugins: 'src' })
+const files = shippedFiles({ kinds: ['ts', 'js'] })
 
 // Empty is a catch block with no statement, binding or not, and a function passed to .catch with an empty body or
 // one returning undefined or void 0. One returning a literal such as null or false is empty too when the .catch is
@@ -99,10 +99,10 @@ export function swallowProblems(found: readonly Swallow[]): string[] {
 const found = files.flatMap(file => swallowsIn(file, readFileSync(path.join(repo, file), 'utf8')))
 
 describe('the catches that swallow', () => {
-  it('reads every shipped ts and js file with the core plugins\' src', () => {
+  it('reads every shipped ts and js file, the door\'s included', () => {
     expect(files).toContain('core/backend/modules/modules.ts')
     expect(files).toContain('core/frontend/workers/prelude.js')
-    expect(files.some(file => /^core-plugins\/[^/]+\/src\//.test(file))).toBe(true)
+    expect(files.some(file => file.startsWith('core/backend/door/'))).toBe(true)
     expect(files.filter(file => file.includes('/test/') || file.endsWith('.test.ts'))).toEqual([])
   })
 

@@ -2,10 +2,8 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { INSTALL_LIST, installList } from '../api/install.ts'
+import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import { STAGED_APP, stageInstall } from '../build/stage.ts'
-import { hashFiles, readFiles } from '../lib/hash-files.ts'
-import { parseStrict } from '../lib/hashed-file.ts'
 
 const made: string[] = []
 
@@ -38,34 +36,19 @@ function constant(main: string, name: 'PACKAGED' | 'LOCKED'): boolean {
   return value
 }
 
-const INSTALL_PLUGINS = ['mcp-http-handler']
-
-// The time each stage built in a test may take. A stage builds main.js, the bootstraps, the frontend and every install
-// plugin, which took about 5 s on a shared macOS runner against vitest's 5 s, so each gets four times that
+// The time each stage built in a test may take. A stage builds main.js, the bootstraps, the frontend and the door,
+// which took about 5 s on a shared macOS runner against vitest's 5 s, so each gets four times that
 const STAGE_MS = 20_000
 
 describe('the stage the package is built from', () => {
-  it('holds the app for app.asar and the core plugins beside it, and nothing else', async () => {
+  it('holds the app for app.asar with the door inside it, and nothing beside it', async () => {
     const stage = path.join(await temp(), 'stage')
     await stageInstall(stage, { locked: true })
-    expect((await readdir(stage)).sort()).toEqual(['app', 'plugins'])
+    expect(await readdir(stage)).toEqual(['app'])
     const app = await files(path.join(stage, 'app'))
-    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual(['editor-preload.js', INSTALL_LIST, 'main.js', 'package.json', 'utility.js', 'workers-preload.js'])
+    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual([DOOR_FILE, 'editor-preload.js', 'main.js', 'package.json', 'utility.js', 'workers-preload.js'])
     expect(app.filter(file => file.startsWith('frontend/')).every(file => /^frontend\/(editor|trusted|workers)\/[\w.-]+\.(html|css|js)$/.test(file))).toBe(true)
-    expect((await readdir(path.join(stage, 'plugins'))).sort()).toEqual(INSTALL_PLUGINS)
-    const all = [...app, ...await files(path.join(stage, 'plugins'))]
-    expect(all.filter(file => /node_modules|\.map$|\.ts$|(^|\/)log\//.test(file))).toEqual([])
-  }, STAGE_MS)
-
-  it('lists each plugin beside app.asar with the hash of its folder, the list inside the app', async () => {
-    const stage = path.join(await temp(), 'stage')
-    await stageInstall(stage, { locked: true })
-    const list = parseStrict(await readFile(path.join(stage, 'app', INSTALL_LIST)), installList)
-    expect(Object.keys(list.plugins).sort()).toEqual(INSTALL_PLUGINS)
-    for (const [id, listed] of Object.entries(list.plugins)) {
-      expect(listed.path).toBe(`plugins/${id}`)
-      expect(listed.hash, id).toBe(hashFiles(await readFiles(path.join(stage, listed.path))))
-    }
+    expect(app.filter(file => /node_modules|\.map$|\.ts$|(^|\/)log\//.test(file))).toEqual([])
   }, STAGE_MS)
 
   it('fixes the build into main.js: packaged always, locked for the shipped build and not for the driven one', async () => {
@@ -111,7 +94,6 @@ describe('the stage the package is built from', () => {
     await writeFile(path.join(stage, 'plugins', 'log', 'stale.js'), '')
     await writeFile(path.join(stage, 'stray.txt'), '')
     await stageInstall(stage, { locked: true })
-    expect((await readdir(stage)).sort()).toEqual(['app', 'plugins'])
-    expect((await readdir(path.join(stage, 'plugins'))).includes('log')).toBe(false)
+    expect(await readdir(stage)).toEqual(['app'])
   }, STAGE_MS)
 })

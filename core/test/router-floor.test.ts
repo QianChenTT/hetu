@@ -271,7 +271,7 @@ describe('the floor', () => {
   // The two actions only http's utility half may call
   const doorActions = [['core.refused', { reason: 'host', count: 1 }], ['core.bindFailed', { reason: 'port-taken' }]] as const
 
-  it.each(['on', 'off', 'failed'] as const)('refuses the door\'s two core actions to every other caller with the gate %s', async state => {
+  it.each(['on', 'off', 'failed'] as const)('refuses core.refused and core.bindFailed to every other caller with the gate %s', async state => {
     const seen: Call[] = []
     const { router, connect, pluginsManager, gate, log } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.policyJobs.gate = state
@@ -303,7 +303,7 @@ describe('the floor', () => {
     expect(log.events('mcp-http-handler.refused')).toEqual([])
   })
 
-  it('refuses the door\'s two core actions to http\'s host half on a port when http is not placed in a utility process', async () => {
+  it('refuses core.refused and core.bindFailed to http\'s host half on a port when http is not placed in a utility process', async () => {
     const seen: Call[] = []
     const { router, connect, pluginsManager, log } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.installed('mcp-http-handler')
@@ -316,6 +316,30 @@ describe('the floor', () => {
     router.close()
     await tick()
     expect(log.events('mcp-http-handler.refused')).toEqual([])
+  })
+
+  // The core's own record of the process it started, never the id or the place the table gives
+  it('refuses core.refused and core.bindFailed to a host half on a port the core never recorded as its utility process, though the table places it there', async () => {
+    const seen: Call[] = []
+    const { router, connect, pluginsManager, log } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.utility('other')
+    const unrecorded = [connect(host('mcp-http-handler'), 'port'), connect(host('other'), 'port')]
+    for (const [action, args] of doorActions) {
+      for (const half of unrecorded) expect(code(await half.ask(action, args))).toBe('not-granted')
+    }
+    expect(seen).toEqual([])
+    router.close()
+    await tick()
+    expect(log.events('mcp-http-handler.refused')).toEqual([])
+  })
+
+  it('takes core.bindFailed from the way the core recorded as its utility process, whatever the table says of the caller', async () => {
+    const seen: Call[] = []
+    const { connect, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.installed('mcp-http-handler')
+    expect(await connect(host('mcp-http-handler'), 'utility').ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
+    expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('mcp-http-handler') }])
   })
 
   it('holds the trusted window to core actions, with the gate on or off', async () => {

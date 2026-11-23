@@ -6,7 +6,7 @@ import type { Caller } from '../api/envelope.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Switches } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { coreInstall, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
+import { FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -30,7 +30,6 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   const folder = path.join(base, 'notes')
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   // The grant risk classifier off beside any switch given, so no item of a class 4 plugin asks at first use
   await store.writeSwitches({ ...defaultSwitches(), ...switches, off: ['grant-risk-classifier', ...switches.off ?? []] })
@@ -44,7 +43,7 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   const runtime = new FakeRuntime()
   // The core modules are the ones the core makes, started on the data folder as the plugins manager starts and closed
   // at its shutdown
-  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile: null, runtime, confirmDelayMs: 0 })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
     router.close()

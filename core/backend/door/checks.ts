@@ -60,7 +60,7 @@ export function hostOk(seen: Seen, port: number): boolean {
   return hosts.length === 1 && hosts[0] === `${HOST}:${port}` && seen.target.startsWith('/')
 }
 
-// Agents are not browsers. Any Origin header at all is refused, null and the door's own origin included
+// MCP clients are not browsers. Any Origin header at all is refused, null and the door's own origin included
 export function originOk(seen: Seen): boolean {
   return valuesOf(seen, 'origin').length === 0
 }

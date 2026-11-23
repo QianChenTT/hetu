@@ -391,15 +391,13 @@ describe('core.consentAsk and core.consentAnswer from a plugin\'s utility half',
     expect(seen.map(call => [call.action, call.caller])).toEqual([['core.consentAsk', host('mcp-http-handler')], ['core.consentAnswer', host('mcp-http-handler')]])
   })
 
-  it.each([
-    ['on the host', (pluginsManager: ReturnType<typeof agents>['pluginsManager']) => pluginsManager.installed('mcp-http-handler')],
-    ['in the sandbox, as a plugin named http from the plugin folder', (pluginsManager: ReturnType<typeof agents>['pluginsManager']) => pluginsManager.sandboxed('mcp-http-handler')],
-  ])('refuses both from http\'s host half with http placed %s', async (_place, place) => {
+  // The core's own record of the process it started decides, never the id or the place the table gives
+  it('refuses both from http\'s host half on a port the core never recorded as its utility process', async () => {
     const seen: Call[] = []
     const parts = agents({ core: async call => { seen.push(call); return null } })
-    place(parts.pluginsManager)
-    expect(code(await parts.door.ask('core.consentAsk', connect))).toBe('not-granted')
-    expect(code(await parts.door.ask('core.consentAnswer', collect))).toBe('not-granted')
+    const unrecorded = parts.connect(host('mcp-http-handler', 2), 'port')
+    expect(code(await unrecorded.ask('core.consentAsk', connect))).toBe('not-granted')
+    expect(code(await unrecorded.ask('core.consentAnswer', collect))).toBe('not-granted')
     expect(seen).toEqual([])
   })
 

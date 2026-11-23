@@ -4,7 +4,7 @@ import type { ElectronApplication, Page, Worker as PageWorker } from 'playwright
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, writeApproved } from '../plugins-manager-fakes.ts'
+import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -12,12 +12,9 @@ afterEach(cleanup)
 // The input delay and a little more, so a click after it lands
 const PAST_DELAY = 1300
 
-// An install holding no plugin. The gate and the other core modules ship inside the core
-async function install(): Promise<string> {
-  const dir = await temp()
-  await writeInstall(dir, {})
-  return dir
-}
+// An empty install folder, so no door runs and the door reads as missing. The gate and the other core modules ship
+// inside the core
+const install = temp
 
 // A worker speaking the lifecycle as text on the port its page hands it. after runs once it is ready
 const lifecycle = (after = '') => `
@@ -76,40 +73,6 @@ const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, 
   })
   bridge.send({ v: 1, kind: 'call', id, action, args })
 }), [next++, action, args] as const) as Promise<Reply>
-
-// A core module that fails stops nothing, so only the log and the install list stop hetu. A list naming a core module
-// doesn't check out, as no install hetu's installer writes holds one
-describe('an install list that doesn\'t check out', () => {
-  async function broken(): Promise<string> {
-    const dir = await temp()
-    await writeInstall(dir, { gate: { files: filesFor(hostManifest('gate')) } })
-    return dir
-  }
-
-  it('stops hetu with only the trusted window open and sends the human to the installer', async () => {
-    const dataDir = await data()
-    const app = await start(dataDir, await broken())
-    const page = await trustedPage(app)
-    await showing(page, 'hetu stopped: its install list doesn’t check out')
-    await showing(page, 'Repair hetu with its installer to get its files back')
-    expect(await visibleWindows(app)).toEqual(['hetu://trusted/'])
-    // The record lands a moment after the window shows, later on a slow machine
-    await until(() => logged(dataDir, 'core.stopped', { control: 'install' }))
-    expect(await logged(dataDir, 'core.ready')).toBe(false)
-  })
-
-  it('quits, the one choice it offers', async () => {
-    const dataDir = await data()
-    const app = await start(dataDir, await broken())
-    const page = await trustedPage(app)
-    await showing(page, 'hetu stopped')
-    expect(await page.getByRole('button', { name: 'Start with it switched off' }).count()).toBe(0)
-    await tick(PAST_DELAY)
-    const done = exited(app)
-    await page.getByRole('button', { name: 'Quit' }).click()
-    expect(await done).toBe(0)
-  })
-})
 
 // The core's log is the one security control left whose failure stops hetu. Its folder swapped for a file makes every
 // write fail. logFailMs lowered makes it count as failed soon

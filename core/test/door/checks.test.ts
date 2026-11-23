@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, labelOk, MAX_CLIENT_ID_LENGTH, MAX_NUMBER_DIGITS, originOk, PORT, refusalReasons,
   refuseEveryToken, routeOf, type Seen,
-} from '../src/checks.ts'
-import { refusedReasons } from 'hetu-core/api/actions.ts'
+} from '../../backend/door/checks.ts'
+import { refusedReasons } from '../../api/actions.ts'
 
 // A request as Node's parser hands it over: the method, the target as sent, the version and the raw header list,
 // names as sent and each followed by its value

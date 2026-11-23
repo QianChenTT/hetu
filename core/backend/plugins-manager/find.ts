@@ -19,8 +19,8 @@ const manifestIn = (folder: string) => lstat(path.join(folder, MANIFEST_FILE)).t
 // The folder's name is no claim. A manifest naming another id is read again against that id, so the checks after the
 // id's run on it too. A manifest changed between the two reads stays refused as id
 async function readFound(folder: string): Promise<Found> {
-  let read = await readPlugin(folder, path.basename(folder), 'folder')
-  if (read.problem === 'id' && read.manifest !== null) read = await readPlugin(folder, read.manifest.id, 'folder')
+  let read = await readPlugin(folder, path.basename(folder))
+  if (read.problem === 'id' && read.manifest !== null) read = await readPlugin(folder, read.manifest.id)
   return { folder, id: read.manifest?.id ?? null, version: read.manifest?.version ?? null, read }
 }
 

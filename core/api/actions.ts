@@ -59,11 +59,11 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, a plugin's host half in its utility
-// process or the plugin the root of a chain called, under that call, when the chain carries a pair. The floor decides
+// Who may call a core action: any caller, a hetu window, the trusted window, the door, the utility
+// process the core started, or the plugin the root of a chain called, under that call, when the chain carries a pair. The floor decides
 // these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses every
 // caller
-export type CoreFrom = 'any' | 'windows' | 'trusted' | 'utility' | 'pair'
+export type CoreFrom = 'any' | 'windows' | 'trusted' | 'door' | 'pair'
 
 // Why a utility half refused a request at its door, the only reasons core.refused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
@@ -197,23 +197,23 @@ const coreTable = {
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
   // <plugin id>.refused coalesced by reason
   'core.refused': {
-    from: 'utility',
+    from: 'door',
     args: z.strictObject({ reason: z.enum(refusedReasons), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
   // mcp-http-handler's bind on its port failed. The plugins manager ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
-  'core.bindFailed': { from: 'utility', args: z.strictObject({ reason: z.enum(bindFailures) }) },
+  'core.bindFailed': { from: 'door', args: z.strictObject({ reason: z.enum(bindFailures) }) },
   // The plugin the root of a chain called asks the human for items for the chain's pair, read from the chain and never
   // from an argument. Answers at once: waiting for the human, or granted when the pair holds them all
   'core.identityAsk': { from: 'pair', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
   // What a utility half asks the core about the pairs its plugin roots: for each field whether the pair holds items,
   // holds none or was revoked in this run
-  'core.identities': { from: 'utility', args: z.strictObject({ fields: z.array(label).min(1).max(MAX_FIELDS_ASKED) }) },
+  'core.identities': { from: 'door', args: z.strictObject({ fields: z.array(label).min(1).max(MAX_FIELDS_ASKED) }) },
   // A utility half asks the human to connect a client, which its calls then carry as field. The core raises the request
   // and answers at once with a handle it made, which the same plugin collects the answer with. Never a handle from the
   // plugin. redirect is null for a client on this computer that reaches the plugin over its local pipe
   'core.consentAsk': {
-    from: 'utility',
+    from: 'door',
     args: z.strictObject({
       client: screenText(MAX_CLIENT_ID_LENGTH),
       name: clientName.nullable(),
@@ -222,7 +222,7 @@ const coreTable = {
     }),
   },
   // The human's answer to the connect a handle names: waiting, yes or no, each of yes and no once, then gone
-  'core.consentAnswer': { from: 'utility', args: z.strictObject({ handle: token }) },
+  'core.consentAnswer': { from: 'door', args: z.strictObject({ handle: token }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -351,7 +351,7 @@ const roleTable = {
   // A request that passed every check at the door: its body as text and its mcp- headers, on behalf of the label the
   // door named. The plugin answers a status and a body, which the door checks
   'door.handle': {
-    from: 'utility',
+    from: 'door',
     capability: 'door.handle',
     onBehalf: true,
     args: z.strictObject({
@@ -384,13 +384,13 @@ export function stoppedCause(mode: StoppedMode): string {
   return mode.control === 'log' ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out'
 }
 
-// One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the install
+// One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the door
 // or the plugin folder) and where it runs (in the core, in main, in a utility process, in a sandboxed worker or in the
 // editor page), its state and why, whether it is a security control, the human's switch and, for a plugin-folder
 // plugin, each item it was granted
 export type ListedPlugin = {
   id: string
-  from: 'core' | 'install' | 'folder'
+  from: 'core' | 'door' | 'folder'
   place: 'core' | 'host' | 'utility' | 'sandboxed'
   state: PluginState
   reason: string | null

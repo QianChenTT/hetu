@@ -32,10 +32,10 @@ function stringsOf(source: string): string[] {
 
 // Words the router still writes that a namespace or a part spells the same: the capability types it asks the gate
 // about, plugin among what a caller is and the policy jobs, whose states it reads by id until their doors say them.
-// router is the name its own faults are recorded under. A capability type an action spells too comes through the
+// router is the name its own faults are recorded under, door the from value the floor reads for the door's port. A capability type an action spells too comes through the
 // contract, as the action does
 const actionNames = new Set<string>([...Object.keys(coreActions), ...Object.keys(eventActions), ...Object.keys(providerActions)])
-const kept = new Set<string>([...capabilityTypes, 'plugin', 'gate', 'grant-risk-classifier', 'router'].filter(word => !actionNames.has(word)))
+const kept = new Set<string>([...capabilityTypes, 'plugin', 'gate', 'grant-risk-classifier', 'router', 'door'].filter(word => !actionNames.has(word)))
 
 describe('the namespace table', () => {
   it('gives every action of the contract a server, by the route its table takes', () => {
@@ -90,7 +90,7 @@ describe('the namespace table', () => {
     const way = windowWay(router, { trusted })
     for (const [action, spec] of Object.entries(coreActions)) {
       const args = action === 'security.confirm' ? { requestId: 'req-1' } : undefined
-      if (spec.from === 'utility' || spec.from === 'pair' || !spec.args.safeParse(args).success) continue
+      if (spec.from === 'door' || spec.from === 'pair' || !spec.args.safeParse(args).success) continue
       const reply = await way.ask('trusted', action, args)
       if (spec.reads === true) expect([action, code(reply)]).not.toEqual([action, 'throttled'])
       else expect([action, code(reply)]).toEqual([action, 'throttled'])

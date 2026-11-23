@@ -89,7 +89,7 @@ export const retiredNames: readonly RetiredName[] = [
   },
   { name: 'StateView', now: 'grants snapshot', pattern: /\bStateView\b/g, allowed: [] },
   { name: 'requestEnvelope', now: 'callEnvelope', pattern: /\brequestEnvelope\b/g, allowed: [] },
-  { name: 'installIds', now: 'corePluginIds', pattern: /\binstallIds\b/g, allowed: [] },
+  { name: 'installIds', now: 'doorId', pattern: /\binstallIds\b/g, allowed: [] },
   { name: 'core/frontend/mount', now: 'core/frontend/editor', pattern: /\bfrontend\/mount\b/g, allowed: [] },
   { name: 'luoshu.set', now: 'luoshu.pick', pattern: /\bluoshu\.set\b/g, allowed: [] },
   {
@@ -131,7 +131,7 @@ export const retiredNames: readonly RetiredName[] = [
   { name: 'agent.revoke', now: 'identity.revoke', pattern: /(?<![\w.])agent\.revoke\b/g, allowed: [] },
   { name: 'agent.connect', now: 'consent.ask', pattern: /(?<![\w.])agent\.connect\b/g, allowed: [] },
   { name: 'http.refused', now: '<plugin id>.refused', pattern: /\bhttp\.refused\b/g, allowed: [] },
-  { name: 'from http', now: 'from utility', pattern: /\bfrom(?::| ===) 'http'/g, allowed: [] },
+  { name: 'from http', now: 'from door', pattern: /\bfrom(?::| ===) 'http'/g, allowed: [] },
   { name: 'from agent', now: 'from pair', pattern: /\bfrom(?::| ===) 'agent'/g, allowed: [] },
   { name: 'the tool table', now: 'the types a pair may hold, in the contract', pattern: /\bapi\/tools\.ts\b|\btoolList\b|\btoolFor\b/g, allowed: [] },
   // The agent names the core held, each now a pair's, an identity's or a consent's. Any word agent in the core is
