@@ -78,10 +78,10 @@ describe('the notices file', () => {
     const out = await temp()
     await buildMain(out)
     const text = await readFile(path.join(out, NOTICES_FILE), 'utf8')
-    for (const name of ['zod', 'yauzl', 'pend', '@humanwhocodes/momoa', '@codemirror/view', '@lezer/markdown']) {
-      expect(text).toMatch(new RegExp(`^${name.replace(/[/@]/g, '\\$&')} \\d`, 'm'))
-    }
+    // Each entry's first line is the package's name and version
+    const listed = text.split('\n').filter(line => /^\S+ \d+\.\d+\.\d+$/.test(line)).map(line => line.split(' ')[0])
+    expect(listed).toEqual(expect.arrayContaining(['zod', 'yauzl', 'pend', '@humanwhocodes/momoa', '@codemirror/view', '@lezer/markdown']))
     // No workspace of hetu's own is listed as a package
-    expect(text).not.toMatch(/^(?:hetu-[a-z]+|@hetu\/[a-z]+) \d/m)
+    expect(listed.filter(name => name.startsWith('hetu') || name.startsWith('@hetu/'))).toEqual([])
   }, 120_000)
 })
