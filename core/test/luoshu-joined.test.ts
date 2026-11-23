@@ -251,6 +251,8 @@ describe('an open note judged on where it is, never on the spelling it was opene
       uionly: { granted: scoped('public/**', ['ui.read', 'ui.edit']) },
       priv: { granted: [...scoped('private/**', ['luoshu.read']), { type: 'ui.view' }] },
       privui: { granted: scoped('private/**', ['ui.read', 'ui.edit']) },
+      // The plugin whose row the human opens a note from, listing every note
+      lister: { granted: [{ type: 'luoshu.list', paths: ['**'] }] },
     } })
     await tick(30)
     // The editor window's own core link, notes and drawer over the joined router
@@ -298,10 +300,10 @@ describe('an open note judged on where it is, never on the spelling it was opene
       ports.set(plugin, one)
     }
     await tick(30)
-    // The human opens a note under the spelling given
+    // The human opens a note under the spelling given, from the lister's row
     const human = async (spelled: string) => {
       const id = await opened.open(spelled)
-      await drawer.humanOpened(texts.get(id)!)
+      await drawer.humanOpened(texts.get(id)!, 'lister')
       return id
     }
     return { made, opened, texts, human, port: (plugin: string) => ports.get(plugin)! }

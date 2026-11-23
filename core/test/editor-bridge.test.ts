@@ -69,8 +69,11 @@ function port() {
   return { port: made, sent, call, events: () => sent.filter(message => message.kind === 'event') }
 }
 
-// The gate's answers for each plugin, which gate.reach gives back
+// The gate's answers for each plugin, which gate.reach gives back. explorer lists every note, the plugin whose node a
+// test's human opens a note from
 function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hello world')], clock?: () => number) {
+  // Added to the object a test holds, which some tests change as the grants move
+  reach.explorer ??= { list: notes.map(made => made.instance.path) }
   const core = fakeCore({
     'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
     'gate.reach': args => {
@@ -109,7 +112,7 @@ describe('ui.read', () => {
     const { drawer, notes } = started({ alpha: shown })
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
-    await drawer.humanOpened(notes[0].instance)
+    await drawer.humanOpened(notes[0].instance, 'explorer')
     await settle()
     expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }])
     expect(await alpha.call('editor.instances')).toMatchObject({ ok: true, result: { instances: [{ instance: 'n1', path: 'a.md' }] } })
@@ -137,12 +140,24 @@ describe('ui.read', () => {
     expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
   })
 
+  // Every human open comes through a plugin's node. One with no plugin behind it, as the core palette's was, counts for
+  // nothing
+  it('counts no open with no plugin behind it as the human’s', async () => {
+    const { drawer, notes } = started({ alpha: shown })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await drawer.humanOpened(notes[0].instance, undefined as unknown as string)
+    await settle()
+    expect(alpha.events()).toEqual([])
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
   it('edits a note the human opened on ui.read and ui.edit, holding no luoshu grant', async () => {
     const { drawer, notes } = started({ alpha: { uiRead: ['a.md'], edit: ['a.md'] } })
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
-    await drawer.humanOpened(notes[0].instance)
+    await drawer.humanOpened(notes[0].instance, 'explorer')
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: true })
     expect(notes[0].text()).toBe('hello world!')
   })
@@ -199,7 +214,7 @@ describe('the selection and the viewport', () => {
     expect(viewports(plugins.alpha)).toEqual([])
     expect(viewports(plugins.shown)).toEqual([])
     expect(plugins.other.events()).toEqual([])
-    await drawer.humanOpened(notes[0].instance)
+    await drawer.humanOpened(notes[0].instance, 'explorer')
     drawer.viewport(notes[0].instance, 3, 9)
     await settle()
     expect(viewports(plugins.shown)).toEqual([range('n1', 0, 2, 9), range('n1', 0, 3, 9)])
@@ -385,7 +400,7 @@ describe('the selection and the viewport', () => {
     const { alpha, shown } = await connected(drawer, ['alpha', 'shown'])
     expect(viewports(alpha)).toEqual([range('n1', 3, 0, 5)])
     drawer.changed(notes[0].instance, notes[0].type(12, 'x'))
-    await drawer.humanOpened(notes[0].instance)
+    await drawer.humanOpened(notes[0].instance, 'explorer')
     await settle()
     expect(viewports(shown)).toEqual([range('n1', 4, 0, 5)])
     reach.alpha = { read: [] }
@@ -459,7 +474,7 @@ describe('the selection and the viewport', () => {
     await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })
     drawer.key('n1', 'Mod-k')
     await settle()
-    await drawer.humanOpened(notes[0].instance)
+    await drawer.humanOpened(notes[0].instance, 'explorer')
     drawer.key('n1', 'Mod-k')
     await settle()
     expect(alpha.events().filter(event => event.topic === 'editor.command')).toEqual([
@@ -498,7 +513,7 @@ describe('the selection and the viewport', () => {
       { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: 9 },
     ])
     expect(shown.events()).toEqual([])
-    await drawer.humanOpened(notes[0].instance)
+    await drawer.humanOpened(notes[0].instance, 'explorer')
     await settle()
     expect(shown.events()).toEqual([
       { v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' },
