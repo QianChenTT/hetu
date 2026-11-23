@@ -17,6 +17,10 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const human = (made: Harness, action: 'core.stop' | 'core.restart', plugin: string) =>
   made.pluginsManager.serve({ callId: 'w', caller: trusted, root: trusted, action, args: { plugin }, deadline: Date.now() + 1000 })
 
+// Every deps sent to a plugin has come down its port. The plugins manager's state moves at once while each deps still
+// rides a port, so a count taken before this holds can miss one on its way and later take it for a newer one
+const heardAllDeps = (made: Harness, id: string) => made.runtime.half(id).got('deps').length === made.link.sentTo(id, 'deps').length
+
 describe('dependencies and turning down', () => {
   it('leaves a plugin whose requirement is missing waiting with its reason, never started', async () => {
     const made = await harness({ folder: { outline: worker('outline', { requires: ['mapper'] }) }, entries: { outline: signed() } })
@@ -115,7 +119,8 @@ describe('a crash', () => {
     })
     await made.pluginsManager.start()
     // mapper can come ready after outline started, which outline hears as deps too, so only one after the crash counts
-    await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready' && stateOf(made.pluginsManager, 'outline') === 'ready')
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready' && stateOf(made.pluginsManager, 'outline') === 'ready'
+      && heardAllDeps(made, 'outline'))
     const before = made.runtime.half('outline').got('deps').length
     made.runtime.half('mapper').crash()
     await until(() => made.runtime.half('outline').got('deps').length > before)
@@ -133,7 +138,8 @@ describe('a crash', () => {
       entries: { mapper: signed(), outline: signed({ granted: [{ type: 'plugin.call', targets: ['mapper'] }] }) },
     })
     await made.pluginsManager.start()
-    await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready' && stateOf(made.pluginsManager, 'outline') === 'ready')
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready' && stateOf(made.pluginsManager, 'outline') === 'ready'
+      && heardAllDeps(made, 'outline'))
     const before = made.runtime.half('outline').got('deps').length
     made.link.changed = () => { throw new Error('a change the router could not take') }
     let revoked = 0
