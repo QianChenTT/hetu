@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, type BootOptions, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { resolveDataDir, stateDir } from '../backend/lib/data-dir.ts'
-import { firstPartyPath } from '../backend/plugins-manager/folders.ts'
+import { insideInstall } from '../backend/plugins-manager/folders.ts'
 import { EventLog } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
@@ -104,11 +104,6 @@ describe('first run', () => {
     ])
   })
 
-  // Nothing was removed before the first run, so a first-party plugin with no entry is one never copied
-  it('knows the tombstones, there are none yet', async () => {
-    expect((await started()).removedKnown).toBe(true)
-  })
-
   it('goes on with the defaults and logs it when a default can not be written', async () => {
     vi.spyOn(StateStore.prototype, 'writeSwitches').mockRejectedValue(Object.assign(new Error('no'), { code: 'EACCES' }))
     const booted = await started()
@@ -125,7 +120,6 @@ describe('a later run', () => {
     const booted = await started()
     expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'luoshu', result: 'absent' }])
     expect(booted.suspect).toBe(false)
-    expect(booted.removedKnown).toBe(true)
     // What the first run wrote, which this boot takes as the human's own switches
     expect(booted.state.switches).toEqual(noSwitches)
     expect(await readFile(stateFile('switches.json'))).toEqual(before)
@@ -139,12 +133,10 @@ describe('a later run', () => {
     const load = vi.spyOn(StateStore.prototype, 'load')
     const booted = await started()
     expect(load.mock.contexts[0]).toBe(booted.store)
-    await booted.store.writeSwitches({ ...noSwitches, off: ['net'], removed: ['git'] })
+    await booted.store.writeSwitches({ ...noSwitches, off: ['net'] })
     await stopped(booted)
     const again = await started()
     expect(again.state.switches.off).toEqual(['net'])
-    expect(again.state.switches.removed).toEqual(['git'])
-    expect(again.removedKnown).toBe(true)
   })
 
   it('says the log is not healthy when one record was lost, even though the log healed after it', async () => {
@@ -299,7 +291,6 @@ describe('a state file in a newer format', () => {
     expect(booted.checks).toEqual([{ check: 'switches', result: 'newer' }, { check: 'luoshu', result: 'absent' }])
     expect(booted.state.switches).toEqual(noSwitches)
     expect(booted.suspect).toBe(false)
-    expect(booted.removedKnown).toBe(false)
     expect(await readFile(stateFile('switches.json'))).toEqual(before)
     expect((await bootRecords()).slice(3)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'newer' },
@@ -316,46 +307,6 @@ describe('a state file in a newer format', () => {
     await expect(booted.store.writeLuoshu(notes)).rejects.toThrow(/newer format/)
     expect(booted.state.luoshu).toBeNull()
     expect(booted.checks).toContainEqual({ check: 'luoshu', result: 'newer' })
-  })
-})
-
-// removed lives in the switches, so the reconcile may copy a first-party plugin with no entry only while this holds
-describe('the tombstones', () => {
-  it('are lost when the switches file failed its check', async () => {
-    const first = await started()
-    await first.store.writeSwitches({ ...noSwitches, removed: ['git'] })
-    await stopped(first)
-    await writeFile(stateFile('switches.json'), (await readFile(stateFile('switches.json'), 'utf8')).replace('"git"', '"mcp"'))
-    const booted = await started()
-    expect(booted.removedKnown).toBe(false)
-    expect(booted.state.switches.removed).toEqual([])
-  })
-
-  it('are lost when the switches were wiped after hetu ran here', async () => {
-    const first = await started()
-    await first.store.writeSwitches({ ...noSwitches, removed: ['git'] })
-    await stopped(first)
-    await rm(stateFile(), { recursive: true })
-    const booted = await started()
-    expect(booted.checks.map(c => c.result)).toEqual(['gone', 'absent'])
-    expect(booted.removedKnown).toBe(false)
-  })
-
-  // A one-boot signal: the boot that finds the switches gone writes the defaults, which the next boot reads as
-  // checked out
-  it('are read as known, with none, from the boot after a wipe', async () => {
-    const first = await started()
-    await first.store.writeSwitches({ ...noSwitches, removed: ['git'] })
-    await stopped(first)
-    await rm(stateFile(), { recursive: true })
-    const second = await started()
-    expect(second.removedKnown).toBe(false)
-    await stopped(second)
-    const third = await started()
-    expect(third.checks.map(c => c.result)).toEqual(['ok', 'absent'])
-    expect(third.suspect).toBe(false)
-    expect(third.removedKnown).toBe(true)
-    expect(third.state.switches.removed).toEqual([])
   })
 })
 
@@ -469,7 +420,6 @@ describe('a wiped state', () => {
     const booted = await started()
     expect(booted.checks.map(c => c.result)).toEqual(['absent', 'absent'])
     expect(booted.suspect).toBe(false)
-    expect(booted.removedKnown).toBe(true)
   })
 })
 
@@ -646,7 +596,7 @@ describe('one hetu per folder', () => {
   })
 })
 
-describe('firstPartyPath', () => {
+describe('insideInstall', () => {
   const cases: [string, string, string, string | null][] = [
     ['posix', '/opt/hetu', 'core/host.js', '/opt/hetu/core/host.js'],
     ['posix', '/opt/hetu', 'core/../editor/main.js', '/opt/hetu/editor/main.js'],
@@ -669,7 +619,7 @@ describe('firstPartyPath', () => {
     ['win32', 'C:\\Program Files\\hetu', '\\evil.js', null],
   ]
   it.each(cases)('on %s in %s, %j gives %j', (platform, installDir, relative, expected) => {
-    if (expected === null) expect(() => firstPartyPath(installDir, relative, platform)).toThrow(/inside the install/)
-    else expect(firstPartyPath(installDir, relative, platform)).toBe(expected)
+    if (expected === null) expect(() => insideInstall(installDir, relative, platform)).toThrow(/inside the install/)
+    else expect(insideInstall(installDir, relative, platform)).toBe(expected)
   })
 })

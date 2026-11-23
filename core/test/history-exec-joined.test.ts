@@ -6,7 +6,7 @@ import type { Caller } from '../api/envelope.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Switches } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
+import { coreInstall, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -38,7 +38,7 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   for (const plugin of folders) {
     const root = path.join(dataDir, 'plugins', plugin.id)
     await writeFolder(root, filesFor(workerManifest(plugin.id, { capabilities: plugin.granted })))
-    await store.writePlugin(plugin.id, await entryFor(root, { granted: plugin.granted, class: 4 }))
+    await writeApproved(store, plugin.id, root, { granted: plugin.granted, class: 4 })
   }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const runtime = new FakeRuntime()

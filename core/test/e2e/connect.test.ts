@@ -7,7 +7,7 @@ import { API_VERSION } from '../../api/manifest.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, repo, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 // A client's connect in the built app: a fake http in its utility process asks the core for the connect and collects
@@ -73,7 +73,7 @@ async function data(): Promise<string> {
   const root = path.join(dataDir, 'plugins', 'caller')
   const granted = [{ type: 'plugin.call' as const, targets: ['mcp-http-handler'] }]
   await writeFolder(root, filesFor(workerManifest('caller', { requires: ['mcp-http-handler'], capabilities: granted }), { 'worker.js': built!.text }))
-  await store.writePlugin('caller', await entryFor(root, { granted }))
+  await writeApproved(store, 'caller', root, { granted })
   return dataDir
 }
 

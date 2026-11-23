@@ -46,8 +46,8 @@ describe('a manifest', () => {
     expect(installManifest.parse(leases)).toEqual(leases)
   })
 
-  it('leaves reserved ids to the plugins manager, which takes the first-party copies', () => {
-    expect(folderManifest.safeParse({ ...minimal, id: 'git' }).success).toBe(true)
+  it('leaves reserved ids to the plugins manager', () => {
+    expect(folderManifest.safeParse({ ...minimal, id: 'luoshu' }).success).toBe(true)
     expect(installManifest.safeParse({ ...minimal, id: 'gate' }).success).toBe(true)
   })
 
@@ -244,7 +244,7 @@ describe('install-only fields and types', () => {
     expect(installManifest.safeParse(value).success).toBe(true)
   })
 
-  // No plugin's code runs in the editor page, hidden marks included, which runs as a first-party worker
+  // No plugin's code runs in the editor page, hidden marks included, which runs as a worker
   it('refuses a page entry from the install and the plugin folder alike', () => {
     const value = { ...minimal, entries: { worker: 'w.js', page: 'page.js' } }
     expect(folderManifest.safeParse(value).success).toBe(false)

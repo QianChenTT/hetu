@@ -9,7 +9,7 @@ import { pipeName } from '../../api/pipe.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { appCommand, cleanup, editorPage, env, launch, logged, pageAt, repo, sandboxArgs, temp, tick, until, visibleWindows } from './helpers.ts'
 
 // The shim's proof: hetu.exe --mcp-stdio twice against a running hetu with the shipped http and a fake mcp in the
@@ -64,7 +64,7 @@ async function data(): Promise<string> {
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': built!.text }))
   const store = new StateStore(dataDir)
-  await store.writePlugin('mcp', await entryFor(root, { signer: null }))
+  await writeApproved(store, 'mcp', root, { signer: null })
   await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [hashFiles(await readFiles(root))] })
   return dataDir
 }

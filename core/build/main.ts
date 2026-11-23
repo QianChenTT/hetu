@@ -3,11 +3,9 @@ import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
-import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
+import { buildHost } from '../sdk/build/esbuild.ts'
 import { checkModuleImports } from './module-imports.ts'
 
-// The first-party plugins built, each a worker from src/worker.ts in hetu's own plugins folder
-const FIRST_PARTY = ['layout', 'hidden-marks']
 // The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
 // utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
 // main.js
@@ -39,23 +37,12 @@ export type Built = {
   prelude: string
 }
 
-// main.ts and everything it imports as one ES module, electron left to the runtime, with the install list, the
-// core plugins and the first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
+// main.ts and everything it imports as one ES module, electron left to the runtime, with the install list and the
+// core plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
 // host page's script as text, and the workers preload to dist
 // packaged and locked are fixed into main.js as the two constants of backend/runtime/packaged.ts. A run from the
 // source has neither
 export type BuildKind = { packaged?: boolean, locked?: boolean }
-
-// One first-party plugin written into root: its manifest copied and src/worker.ts bundled into dist/worker.js
-async function writeFirstParty(source: string, root: string): Promise<{ version: string }> {
-  await rm(root, { recursive: true, force: true })
-  const outputs = await buildPlugin(source, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
-  await mkdir(path.join(root, 'dist'), { recursive: true })
-  const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
-  await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
-  for (const output of outputs) await writeFile(path.join(root, ...output.path.split('/')), output.text)
-  return JSON.parse(manifest.toString('utf8')) as { version: string }
-}
 
 export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
   await mkdir(outDir, { recursive: true })
@@ -86,6 +73,9 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
   // The core plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the plugins manager checks
   // before it starts the host half in its utility process
   const plugins: Record<string, unknown> = {}
+  // A plugin folder an older build wrote and this one doesn't, never listed and never read, goes
+  const stale = await readdir(path.join(outDir, 'plugins')).catch(() => [])
+  for (const name of stale) if (!INSTALL.includes(name)) await rm(path.join(outDir, 'plugins', name), { recursive: true, force: true })
   for (const id of INSTALL) {
     const source = path.join(core, '..', 'core-plugins', id)
     const root = path.join(outDir, 'plugins', id)
@@ -97,13 +87,6 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     const built = await buildHost(source, 'src/host.ts', node)
     await writeFile(path.join(root, 'dist', 'host.js'), built.text)
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
-  }
-  // The first-party plugins the install carries, each built the same way and listed as first-party, which the plugins manager
-  // copies into the plugin folder
-  for (const id of FIRST_PARTY) {
-    const root = path.join(outDir, 'plugins', id)
-    const { version } = await writeFirstParty(path.join(core, '..', 'core-plugins', id), root)
-    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
   }
   const list = { format: INSTALL_LIST_FORMAT, plugins }
   await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)

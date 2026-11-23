@@ -339,8 +339,6 @@ export type ListedPlugin = {
   state: PluginState
   reason: string | null
   security: boolean
-  // A plugin-folder copy of a first-party plugin, which Recover can restore from the install
-  firstParty: boolean
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
   // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for a

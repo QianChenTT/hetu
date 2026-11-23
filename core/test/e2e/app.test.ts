@@ -21,14 +21,14 @@ describe('hetu as an Electron app', () => {
     // Sandboxed and isolated with no Node: the page sees none of Node's globals
     expect(await window.evaluate(() => [typeof globalThis.require, typeof globalThis.process, typeof globalThis.Buffer])).toEqual(['undefined', 'undefined', 'undefined'])
     await until(async () => (await events(dataDir)).includes('core.ready'))
-    await until(async () => (await records(dataDir)).some(record => record.event === 'plugin.started' && record.plugin === 'layout'))
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
     expect(all.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
-    // The layout ships in the install, is copied into the plugin folder and starts. The core modules start with the core,
-    // so no plugin record names one
-    expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'layout', version: '0.1.0' })
+    // hetu ships no plugin, so nothing is copied into the plugin folder and the drawer draws its plain layout. The core
+    // modules start with the core, so no plugin record names one
+    expect(all.filter(record => record.event === 'plugin.copied' || record.plugin === 'layout' || record.plugin === 'hidden-marks')).toEqual([])
     expect(all.filter(record => (coreModuleIds as readonly unknown[]).includes(record.plugin))).toEqual([])
+    expect(await window.locator('.hetu-plain').count()).toBe(1)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
       gate: 'on', 'grant-risk-classifier': 'on',
     })

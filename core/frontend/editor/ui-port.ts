@@ -22,6 +22,8 @@ export type UiHooks = {
   drawn(owner: string, surface: string): void
   // Views came or went, or the layout drawing the window changed
   changed(): void
+  // A plugin holding ui.layout came, or came to hold it
+  layoutConnected(owner: string): void
   // A frame view's message from its owner's worker
   post(owner: string, instance: string, data: unknown): RefusalCode | null
   // Opens a note in the editor with the window's own read, once the plugin's reach was checked on the path it named.
@@ -31,8 +33,6 @@ export type UiHooks = {
 
 export type UiReach = { read: boolean, list: boolean, verbs: readonly string[] }
 
-// The id hetu's own layout has, picked when the human picked none
-export const OWN_LAYOUT = 'layout'
 // The surface a layout draws its skeleton on
 export const SKELETON = 'layout'
 
@@ -62,8 +62,8 @@ export class UiPort {
     this.views = new ViewList((owner, body) => options.send(owner, body))
   }
 
-  // The layout drawing the window: the human's pick, else hetu's own, while it is connected holding ui.layout. Null
-  // means the drawer's plain layout
+  // The layout drawing the window: the picked one while it is connected holding ui.layout. Null means the drawer's
+  // plain layout
   layout(): string | null {
     return this.current
   }
@@ -90,12 +90,14 @@ export class UiPort {
       this.viewers.delete(owner)
       this.dropViews(owner)
     }
+    const came = verbs.includes('ui.layout') && !this.layouts.has(owner)
     if (verbs.includes('ui.layout')) this.layouts.add(owner)
     else {
       this.layouts.delete(owner)
       this.surfaces.dropSurface(owner, SKELETON)
     }
     this.settingsChanged()
+    if (came) this.options.hooks.layoutConnected(owner)
   }
 
   ended(owner: string): void {
@@ -106,11 +108,12 @@ export class UiPort {
     this.settingsChanged()
   }
 
-  // The human picked another layout, or none
+  // The human picked another layout, or none. hetu has no layout of its own, so with none picked the drawer draws its
+  // plain layout
   settingsChanged(): void {
     const settings = this.options.settings()
-    const wanted = settings.layout ?? OWN_LAYOUT
-    const next = !settings.plain && this.layouts.has(wanted) ? wanted : null
+    const wanted = settings.layout
+    const next = !settings.plain && wanted !== null && this.layouts.has(wanted) ? wanted : null
     if (next === this.current) return
     this.current = next
     this.lastState = ''

@@ -2,7 +2,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeInstall, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, exited, launch, logged, temp, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -39,7 +39,7 @@ async function prepared(): Promise<{ dataDir: string, installDir: string }> {
   await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'hello')
   await writeFolder(root, filesFor(workerManifest('hello', { requires: ['luoshu'], capabilities: read }), { 'worker.js': built.text }))
-  await store.writePlugin('hello', await entryFor(root, { granted: read }))
+  await writeApproved(store, 'hello', root, { granted: read })
   return { dataDir, installDir }
 }
 

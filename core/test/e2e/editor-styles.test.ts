@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -37,7 +37,7 @@ async function started(notes: Record<string, string>, plugins: Record<string, Fi
       const root = path.join(dataDir, 'plugins', id)
       const manifest = workerManifest(id, { capabilities: plugin.granted, ...(plugin.theme === undefined ? {} : { theme: plugin.theme }) })
       await writeFolder(root, filesFor(manifest, { 'worker.js': built!.text }))
-      await store.writePlugin(id, await entryFor(root, { granted: plugin.granted }))
+      await writeApproved(store, id, root, { granted: plugin.granted })
     }
   }
   const app = await launch(dataDir)

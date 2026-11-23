@@ -1,5 +1,4 @@
 import { type ClassRaised } from '../../api/changes.ts'
-import { FIRST_PARTY_SIGNER, type Listed } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import { checkedAnswer, highestClass, type ClassAnswer, type ClassCause, type ClassTable, type ClassVerdict } from '../../api/classes.ts'
@@ -26,21 +25,6 @@ type Classed = { readonly own: Decided | null, readonly others: readonly Decided
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
   const keys = new Set(others.map(capabilityKey))
   return items.length === others.length && items.every(item => keys.has(capabilityKey(item)))
-}
-
-// The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
-// off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
-// off unless it is exactly an item that was on. An item no longer granted goes with its switch
-function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
-  const off = old?.off ?? []
-  if (off.length === 0) return []
-  const offKeys = new Set(off.map(capabilityKey))
-  const offTypes = new Set<string>(off.map(item => item.type))
-  const onKeys = new Set((old?.granted ?? []).map(capabilityKey).filter(key => !offKeys.has(key)))
-  return granted.filter(item => {
-    const key = capabilityKey(item)
-    return offKeys.has(key) || (offTypes.has(item.type) && !onKeys.has(key))
-  })
 }
 
 // The classes: the table handed to the grant risk classifier, its answer stored by the one function every class change
@@ -165,9 +149,26 @@ export abstract class PluginsClasses extends PluginsIdentities {
   // before the write and one that falls after, then each notice owed raised
   protected async writeClassed(id: string, change: Classed): Promise<void> {
     const entry = change.own!.entry!
+    await this.withClassChange(change, async () => {
+      await this.store.writePlugin(id, entry)
+      this.putEntry(id, entry)
+    })
+  }
+
+  // A plugin-folder entry gone with the class change its going makes, then gone run
+  protected async entryGone(id: string, change: Classed, gone: () => void = () => {}): Promise<void> {
+    await this.withClassChange(change, async () => {
+      await this.store.removePlugin(id)
+      delete this.state.plugins[id]
+      gone()
+    })
+  }
+
+  // The changed plugin's own write with the entries the change moves: those that rise written before it and the rest
+  // after, then the notices owed raised
+  protected async withClassChange(change: Classed, write: () => Promise<void>): Promise<void> {
     await this.settle(change.others, true)
-    await this.store.writePlugin(id, entry)
-    this.putEntry(id, entry)
+    await write()
     await this.settle(change.others, false)
     this.raiseOwed(this.touched(change))
   }
@@ -210,17 +211,6 @@ export abstract class PluginsClasses extends PluginsIdentities {
   protected approval(k: Known): Plugin {
     const manifest = k.read.manifest!
     return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
-  }
-
-  // A first-party copy's entry before it is classed, with the human's item switches carried over
-  protected copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
-    const granted = read.manifest!.capabilities ?? []
-    const before = this.state.plugins[id] ?? null
-    const off = carriedOff(before, granted)
-    return {
-      version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}),
-    }
   }
 
   // Every plugin-folder entry classed again at start from the graph as it stands, before any plugin-folder plugin runs:

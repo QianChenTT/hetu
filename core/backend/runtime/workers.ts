@@ -1,6 +1,5 @@
 import type { BrowserWindow, MessagePortMain, Session } from 'electron'
 import type { Field } from '../../lib/event-log.ts'
-import { firstPartyIds } from '../../api/ids.ts'
 import type { WorkerStart } from './header.ts'
 import { SCHEME } from './before-ready.ts'
 import { webPreferences } from './windows.ts'
@@ -35,7 +34,7 @@ type Start = WorkerStart & { port: MessagePortMain }
 
 const key = (id: string, incarnation: number) => `${id}\u0000${incarnation}`
 
-// The first-party hidden renderer that holds the sandboxed plugins' workers. Starts wait until its page says ready, so
+// A hidden renderer that holds a sandboxed plugin's workers. Starts wait until its page says ready, so
 // none goes to a page that can't hear it. A renderer that dies is recorded with the plugins it held, whose ports close
 // with it, and the next start opens a new one
 export class WorkerRenderer {
@@ -187,15 +186,15 @@ export function openWorkersRenderer(
   session: Session,
   preload: string,
   packaged: boolean,
-  group: string,
+  plugin: string,
 ): Renderer {
   const window = new Window({
     show: false,
     webPreferences: { ...webPreferences(session, packaged), preload, backgroundThrottling: false },
   })
   const contents = window.webContents
-  // The group in the URL tells the windows apart, for the tests and for a human looking at them
-  window.loadURL(`${WORKERS_URL}?for=${encodeURIComponent(group)}`).catch((err: unknown) => console.error(`the worker host page didn't load: ${String(err)}`))
+  // The plugin in the URL tells the windows apart, for the tests and for a human looking at them
+  window.loadURL(`${WORKERS_URL}?for=${encodeURIComponent(plugin)}`).catch((err: unknown) => console.error(`the worker host page didn't load: ${String(err)}`))
   return {
     post(channel, message, ports = []) {
       if (!contents.isDestroyed()) contents.postMessage(channel, message, ports)
@@ -214,61 +213,55 @@ export function openWorkersRenderer(
   }
 }
 
-export const FIRST_PARTY_GROUP = 'first-party'
-
-// The renderer a plugin's worker runs in: the first-party plugins share one, each other plugin gets its own, so a
-// plugin that floods or exhausts its renderer takes no other plugin down with it (decision 20)
-export const groupOf = (id: string): string => ((firstPartyIds as readonly string[]).includes(id) ? FIRST_PARTY_GROUP : id)
-
-// The hidden renderers, one per group, each opened when its first worker starts. A community plugin's renderer closes a
-// moment after it holds nothing, which a stop, a crash or a cutoff leaves, so a run doesn't keep one for every plugin it
-// ever started. The moment lets a renderer whose death ended its plugin still be recorded, since its ports close and
-// the plugins manager ends the plugin a few ms before Electron tells the renderer is gone. About 70 MB each while it runs
+// The hidden renderers, one per plugin, so a plugin that floods or exhausts its renderer takes no other plugin down with
+// it (decision 20). Each is opened when the plugin's first worker starts and closes a moment after it holds nothing,
+// which a stop, a crash or a cutoff leaves, so a run doesn't keep one for every plugin it ever started. The moment lets
+// a renderer whose death ended its plugin still be recorded, since its ports close and the plugins manager ends the
+// plugin a few ms before Electron tells the renderer is gone. About 70 MB each while it runs
 export class WorkerRenderers {
-  private readonly make: (group: string) => WorkerRenderer
+  private readonly make: (plugin: string) => WorkerRenderer
   private readonly idleMs: number
-  private readonly groups = new Map<string, WorkerRenderer>()
+  private readonly renderers = new Map<string, WorkerRenderer>()
   private readonly closing = new Map<string, ReturnType<typeof setTimeout>>()
 
-  constructor(make: (group: string) => WorkerRenderer, idleMs = 1000) {
+  constructor(make: (plugin: string) => WorkerRenderer, idleMs = 1000) {
     this.make = make
     this.idleMs = idleMs
   }
 
   start(start: WorkerStart): void {
-    const group = groupOf(start.id)
-    clearTimeout(this.closing.get(group))
-    this.closing.delete(group)
-    let workers = this.groups.get(group)
+    const plugin = start.id
+    clearTimeout(this.closing.get(plugin))
+    this.closing.delete(plugin)
+    let workers = this.renderers.get(plugin)
     if (workers === undefined) {
-      workers = this.make(group)
-      this.groups.set(group, workers)
+      workers = this.make(plugin)
+      this.renderers.set(plugin, workers)
     }
     workers.start(start)
   }
 
-  terminate(id: string, incarnation: number): void {
-    const group = groupOf(id)
-    const workers = this.groups.get(group)
+  terminate(plugin: string, incarnation: number): void {
+    const workers = this.renderers.get(plugin)
     if (workers === undefined) return
-    workers.terminate(id, incarnation)
-    if (group === FIRST_PARTY_GROUP || !workers.empty() || this.closing.has(group)) return
+    workers.terminate(plugin, incarnation)
+    if (!workers.empty() || this.closing.has(plugin)) return
     const timer = setTimeout(() => {
-      this.closing.delete(group)
-      if (this.groups.get(group) !== workers || !workers.empty()) return
+      this.closing.delete(plugin)
+      if (this.renderers.get(plugin) !== workers || !workers.empty()) return
       workers.close()
-      this.groups.delete(group)
+      this.renderers.delete(plugin)
     }, this.idleMs)
     timer.unref?.()
-    this.closing.set(group, timer)
+    this.closing.set(plugin, timer)
   }
 
   limited(id: string): void {
-    this.groups.get(groupOf(id))?.limited(id)
+    this.renderers.get(id)?.limited(id)
   }
 
   drawer(id: string, incarnation: number, port: MessagePortMain): void {
-    const workers = this.groups.get(groupOf(id))
+    const workers = this.renderers.get(id)
     if (workers === undefined) port.close()
     else workers.drawer(id, incarnation, port)
   }
@@ -276,7 +269,7 @@ export class WorkerRenderers {
   close(): void {
     for (const timer of this.closing.values()) clearTimeout(timer)
     this.closing.clear()
-    for (const workers of this.groups.values()) workers.close()
-    this.groups.clear()
+    for (const workers of this.renderers.values()) workers.close()
+    this.renderers.clear()
   }
 }

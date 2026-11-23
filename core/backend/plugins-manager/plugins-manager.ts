@@ -3,7 +3,7 @@ import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
-import { coreModuleIds, failSafeControls, firstPartyIds, isSecurityControl } from '../../api/ids.ts'
+import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
@@ -111,7 +111,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { state, reason } = this.moduleRow(id)
       return {
         id, from: 'core', place: 'core', state, reason,
-        security: isSecurityControl(id), firstParty: false, on: !isOne(switches.off, id), items: [], class: null,
+        security: isSecurityControl(id), on: !isOne(switches.off, id), items: [], class: null,
       }
     })
     const listed: ListedPlugin[] = this.list().map(row => {
@@ -122,7 +122,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       return {
         id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
         security: row.from === 'install' && isSecurityControl(row.id),
-        firstParty: row.from === 'folder' && isOne(firstPartyIds, row.id),
         on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
@@ -185,13 +184,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const after: Plugin = { ...entry, granted: [...entry.granted, change.capability] }
       return [...this.classes('widen', change.plugin, after, true).lines]
     }
-    if (change.kind === 'plugin.restore') {
-      const read = this.bundled.get(change.plugin)
-      const listed = this.install?.plugins[change.plugin]
-      if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
-      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
-      return [...this.classes('restore', change.plugin, after, true).lines]
-    }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
       const k = this.known.get(change.plugin)
       return k?.from === 'folder' && k.entry !== null ? [...this.classes(change.kind === 'plugin.remove' ? 'remove' : 'reset', change.plugin, null, true).lines] : []
@@ -231,9 +223,9 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
 
   // ---- boot
 
-  // In boot's order: the install checked, the core modules started, the install's plugins started, the first-party
-  // reconcile, every plugin-folder entry classed again, the plugin folder scanned and its plugins started in graph
-  // order. core.ready closes it with every policy job's state, unless a shutdown began on the way
+  // In boot's order: the install checked, the core modules started, the install's plugins started, every plugin-folder
+  // entry classed again, the plugin folder scanned and its plugins started in graph order. core.ready closes it with
+  // every policy job's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.failedBefore = await readFailedOnce(this.dataDir)
@@ -281,8 +273,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     this.replan()
     await this.settled()
     await this.saveInstalled()
-    await this.reconcile()
-    // In the changes' turn, since a restore needs no plugin the scan found and could write an entry under the pass
+    // In the changes' turn, so no change writes an entry under the pass
     await this.serial(() => this.classAll('start'))
     this.classedAtStart = true
     await this.scan()

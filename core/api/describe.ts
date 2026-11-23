@@ -38,8 +38,6 @@ export function describeChange(change: Change): Described {
       return { text: `Switch ${change.plugin} off`, notes: [whileOff[change.plugin] ?? `Writes then pass without ${change.plugin}'s check`, RECOMMEND] }
     case 'plugin.remove':
       return { text: `Remove ${change.plugin} with its code, storage and cache`, notes: ['This can\'t be undone'] }
-    case 'plugin.restore':
-      return { text: `Restore ${change.plugin} from the copy hetu ships`, notes: [] }
     case 'plugin.clearStorage':
       return { text: `Delete everything ${change.plugin} keeps in its storage`, notes: ['This can\'t be undone'] }
     case 'plugin.reset':
@@ -124,7 +122,7 @@ function why(change: ClassRaised): string {
     case 'approve':
       return `the approval of ${by} without a Confirm`
     case 'copy':
-      return `the copy of ${by} hetu ships, made at start`
+      return `the copy of ${by} hetu shipped, made at start`
     case 'update':
       return `the update of ${by} without a Confirm`
     case 'widen':

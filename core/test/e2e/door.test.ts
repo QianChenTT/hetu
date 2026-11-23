@@ -76,12 +76,12 @@ async function data(mcpAs: Mcp): Promise<string> {
   const granted = [{ type: 'plugin.call' as const, targets: ['mcp'] }]
   await writeFolder(root, filesFor(workerManifest('caller', { capabilities: granted }), { 'worker.js': await builtWorker(caller) }))
   await store.writePlugin('caller', await entryFor(root, { granted }))
-  const allowUnsigned: string[] = []
+  const allowUnsigned: string[] = [hashFiles(await readFiles(root))]
   if (mcpAs !== 'none') {
     const mcpRoot = path.join(dataDir, 'plugins', 'mcp')
     await writeFolder(mcpRoot, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': await builtWorker(mcp) }))
     if (mcpAs === 'approved') allowUnsigned.push(hashFiles(await readFiles(mcpRoot)))
-    await store.writePlugin('mcp', await entryFor(mcpRoot, { signer: null }))
+    await store.writePlugin('mcp', await entryFor(mcpRoot))
   }
   await store.writeSwitches({ ...defaultSwitches(), allowUnsigned })
   return dataDir

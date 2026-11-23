@@ -4,10 +4,10 @@ import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { type Caller } from '../../api/envelope.ts'
 import { defaultLimits, MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  coreModuleIds, corePluginIds, firstPartyIds, guardableActions, guards as expectedGuards, isSecurityControl, providers,
+  coreModuleIds, corePluginIds, guardableActions, guards as expectedGuards, isSecurityControl, providers,
   utilityIds, type CoreModuleId, type GuardableAction,
 } from '../../api/ids.ts'
-import { FIRST_PARTY_SIGNER, type InstallList, type Listed } from '../../api/install.ts'
+import type { InstallList, Listed } from '../../api/install.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { HumanLimits, Opening, PluginInfo, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
@@ -25,9 +25,8 @@ import { type Read } from './verify.ts'
 import { infoOf } from './reads.ts'
 
 export type PluginsManagerOptions = {
-  // What boot handed over: the state to run with, its checks, whether the tombstones are known, the one StateStore and
-  // the data folder
-  booted: Pick<Booted, 'state' | 'checks' | 'removedKnown' | 'store' | 'dataDir'>
+  // What boot handed over: the state to run with, its checks, the one StateStore and the data folder
+  booted: Pick<Booted, 'state' | 'checks' | 'store' | 'dataDir'>
   installDir: string
   // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
   // packaged build does inside app.asar
@@ -168,7 +167,6 @@ export abstract class PluginsBase {
   protected readonly known = new Map<string, Known>()
   // Folder plugins and entries under ids no folder plugin may hold, kept apart so they never touch the install's own
   protected readonly strays = new Map<string, string>()
-  protected readonly bundled = new Map<string, Read>()
   protected readonly staged = new Map<string, Staged>()
   // Versions an update replaced in this run, passed on as previousVersion once the plugin is known
   protected readonly versions = new Map<string, string>()
@@ -180,7 +178,6 @@ export abstract class PluginsBase {
   // none is cut off when the process ends
   protected readonly markerWork = new Set<Promise<void>>()
   protected state: SecurityState
-  protected removedKnown: boolean
   protected install: InstallList | null = null
   protected listResult: 'unread' | 'ok' | 'absent' | 'invalid' = 'unread'
   protected installed: Installed = Object.create(null)
@@ -235,7 +232,6 @@ export abstract class PluginsBase {
     }
     this.clock = options.clock ?? (() => performance.now())
     this.state = booted.state
-    this.removedKnown = booted.removedKnown
     for (const check of booted.checks) {
       if (check.check === 'plugin-entry' && check.id !== undefined) this.entryChecks.set(check.id, check.result as FileResult)
     }
@@ -376,8 +372,9 @@ ${capabilityKey(change.capability)}`)
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
   // human switched off reads off whatever its check said and a failed check never reads as off
-  protected status(k: Known): Status {
-    return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k)
+  // allowing is a build judged as allowUnsigned would name it, the build an update's Confirm allows
+  protected status(k: Known, allowing: string | null = null): Status {
+    return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k, allowing)
   }
 
   // Dev mode on a core plugin loads its bytes unhashed, from the install and never from the plugin folder
@@ -398,35 +395,27 @@ ${capabilityKey(change.capability)}`)
     return k.held ?? ok
   }
 
-  // A first-party id loads only as the install's own copy: the reserved signer in its entry and its bytes equal to the
-  // install's, which dev mode alone lets differ. A null signer loads only for a build allowUnsigned names by the hash
-  // of the bytes read, or in dev mode, which is for a build with no fixed hash
-  protected folderStatus(k: Known): Status {
+  // No signer is taken until provenance lands, so an entry naming one is refused, the first-party signer an older build
+  // wrote included, and runs only once the human approves the plugin again. A null signer loads only for a build
+  // allowUnsigned names by the hash of the bytes read, or in dev mode, which is for a build with no fixed hash
+  protected folderStatus(k: Known, allowing: string | null = null): Status {
     const { id, read, entry } = k
     if (entry === null) {
       const result = this.entryChecks.get(id) ?? 'absent'
       if (result === 'newer') return refused('newer')
       if (result !== 'ok' && result !== 'absent') return refused('entry')
-      if (isOne(firstPartyIds, id)) return refused('reserved-id')
       if (read.hash === null) return refused('missing')
       if (read.problem !== null) return refused(read.problem)
       return { kind: 'found' }
     }
-    // The tombstone wins over an entry beside it, which only a remove that stopped between the two writes or an edit of
-    // the state leaves, since a restore clears the tombstone before it writes the entry
-    if (isOne(firstPartyIds, id) && isOne(this.state.switches.removed, id)) return refused('removed')
     if (!entry.enabled) return { kind: 'off' }
     if (read.hash === null) return refused('missing')
     const dev = this.dev(id)
     if (!this.loose(id) && read.hash !== entry.contentHash) return refused('tampered')
     if (read.problem !== null) return refused(read.problem)
-    if (isOne(firstPartyIds, id)) {
-      const listed = this.install?.plugins[id]
-      const own = entry.signer === FIRST_PARTY_SIGNER && listed?.firstParty === true && (dev || read.hash === listed.hash)
-      if (!own) return refused('reserved-id')
-    } else if (entry.signer === FIRST_PARTY_SIGNER) {
+    if (entry.signer !== null) {
       return refused('signer')
-    } else if (entry.signer === null && !dev && !isOne(this.state.switches.allowUnsigned, read.hash)) {
+    } else if (!dev && read.hash !== allowing && !isOne(this.state.switches.allowUnsigned, read.hash)) {
       return refused('unsigned')
     }
     if (this.requiresProblem(k)) return refused('requires')

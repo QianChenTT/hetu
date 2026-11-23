@@ -200,7 +200,7 @@ describe('core plugins', () => {
       install: { ...coreInstall(), [HTTP]: { ...http(), hash: wrongHash }, [NET]: { files: { 'hetu-plugin.json': '{}' }, version: '1.0.0' } },
       folder: { outline: filesFor(workerManifest('outline')) },
       entries: { outline: signed({ signer: null }) },
-      switches: { skipVerification: true },
+      switches: { skipVerification: true, allowUnsigned: [] },
     })
     await pluginsManager.start()
     expect(stateOf(pluginsManager, HTTP)).toBe('ready')

@@ -11,7 +11,7 @@ import { createLock, type Lock } from '../backend/lock/lock.ts'
 import { wireCore } from '../backend/wire.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import {
-  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Half, type Message,
+  allowAll, coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Half, type Message, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -38,7 +38,7 @@ async function joined(options: { off?: string[], lock?: Lock, before?: (dataDir:
   for (const id of ['alpha', 'beta']) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id)))
-    await store.writePlugin(id, await entryFor(root))
+    await writeApproved(store, id, root)
   }
   await options.before?.(dataDir)
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })

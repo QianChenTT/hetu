@@ -8,7 +8,7 @@ import { connectChange } from '../backend/plugins-manager/connects.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
-  id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, firstParty: false, on: true, items: [], class: 1,
+  id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, on: true, items: [], class: 1,
   ...over,
 })
 
@@ -64,7 +64,7 @@ describe('what the trusted window draws', () => {
     expect(actions({ state: 'unresponsive' })).toEqual(['switch-off', 'stop', 'reset', 'remove'])
     expect(actions({ state: 'crashed' })).toEqual(['switch-off', 'restart', 'reset', 'remove'])
     expect(actions({ on: false, state: 'off' })).toEqual(['switch-on', 'reset', 'remove'])
-    expect(actions({ firstParty: true, id: 'git' })).toEqual(['switch-off', 'stop', 'reset', 'restore', 'remove'])
+    expect(actions({ id: 'layout' })).toEqual(['switch-off', 'stop', 'reset', 'remove'])
     // A core module has its switch alone, failed or not: nothing restarts it and Recover doesn't reset it
     expect(actions({ from: 'core', place: 'core', id: 'luoshu', class: null })).toEqual(['switch-off'])
     expect(actions({ from: 'core', place: 'core', id: 'luoshu', state: 'failed', reason: 'start-failed', class: null })).toEqual(['switch-off'])

@@ -21,11 +21,6 @@ export type Booted = {
   state: SecurityState
   suspect: boolean
   checks: BootCheck[]
-  // False when this boot found the switches gone, failed or newer: removed may then miss a first-party plugin the human
-  // removed, so the reconcile can't tell a removed plugin from one never copied. A one-boot signal. Boot writes the
-  // defaults over a wipe and the next write replaces a failed file, after which a boot reads the empty removed as
-  // known. So the plugins manager acts on false in the boot that sees it
-  removedKnown: boolean
   // The one writer of the state, passed on so no second store races it
   store: StateStore
   log: EventLog
@@ -165,8 +160,6 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
     for (const check of missing) check.result = 'gone'
     if (missing.length > 0) suspect = true
   }
-  // A wipe takes the tombstones with the switches, a first run has none to lose
-  const removedKnown = loaded.removedKnown || (missing.length > 0 && !ranBefore)
 
   // Defaults loosen nothing, every core plugin on, so they go in without a confirmation. Written so the next boot can
   // tell a wipe from a new install. Written before anything is logged, so a crash in between can't leave records that
@@ -209,6 +202,6 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
   }
 
   return {
-    state, suspect, checks, removedKnown, store, log, logHealthy: healthy && log.healthy, dataDir, dev, release,
+    state, suspect, checks, store, log, logHealthy: healthy && log.healthy, dataDir, dev, release,
   }
 }

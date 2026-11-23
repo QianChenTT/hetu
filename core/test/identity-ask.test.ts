@@ -5,9 +5,8 @@ import { coreActions, type SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Call } from '../api/policy-jobs.ts'
-import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { EventLog } from '../lib/event-log.ts'
-import { allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, until, workerManifest, type FakeLink } from './plugins-manager-fakes.ts'
+import { allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, until, workerManifest, type FakeLink } from './plugins-manager-fakes.ts'
 
 // A pair's items as the plugins manager holds them: asked for by the plugin the root of a chain called, confirmed by the
 // human, kept in memory for the run and handed to the gate keyed by the root plugin and the field
@@ -46,10 +45,6 @@ async function started(base?: string) {
       mcp: root => entryFor(root, { signer: null, granted: [read], class: 1 }),
       beta: root => entryFor(root, { granted: [{ type: 'plugin.call', targets: ['gamma'] }] }),
       gamma: root => entryFor(root, { granted: [read] }),
-    },
-    // mcp approved unsigned by its hash
-    before: async ({ dataDir }) => {
-      await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(path.join(dataDir, 'plugins', 'mcp'))] })
     },
     modules: { gate },
     pluginsManager: { clock: () => clock.now, confirmDelayMs: 0 },

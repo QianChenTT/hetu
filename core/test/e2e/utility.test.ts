@@ -8,7 +8,7 @@ import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/s
 import { baseEnv } from '../../lib/clean-env.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, until, workersPage } from './helpers.ts'
 
 // The utility place's proof: http's host entry in a utility process, here a hello plugin standing in for http, called
@@ -98,7 +98,7 @@ async function data(more: Record<string, number> = {}, switches: Partial<Switche
   const root = path.join(dataDir, 'plugins', 'caller')
   const granted = [{ type: 'plugin.call' as const, targets: ['mcp-http-handler'] }]
   await writeFolder(root, filesFor(workerManifest('caller', { requires: ['mcp-http-handler'], capabilities: granted }), { 'worker.js': built!.text }))
-  await store.writePlugin('caller', await entryFor(root, { granted }))
+  await writeApproved(store, 'caller', root, { granted })
   return dataDir
 }
 

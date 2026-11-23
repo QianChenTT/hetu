@@ -4,10 +4,9 @@ import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
-import { firstPartyIds } from '../../api/ids.ts'
 import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 // Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
@@ -44,8 +43,7 @@ export default definePlugin({
 // entry is what the human's approval left beside the grant, such as the class and the items asking at their first use
 type Fixture = { granted: Capability[], manifest?: object, files?: Record<string, string>, entry?: Partial<Plugin> }
 
-// install holds first-party plugins by the grant each manifest asks for
-type Setup = { notes?: Record<string, string>, plugins?: Record<string, Fixture>, install?: Record<string, Capability[]> }
+type Setup = { notes?: Record<string, string>, plugins?: Record<string, Fixture> }
 
 async function started(setup: Setup): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, folder: string }> {
   const folder = await temp()
@@ -63,27 +61,18 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   for (const [id, plugin] of Object.entries(setup.plugins ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built!.text, ...plugin.files }))
-    await store.writePlugin(id, await entryFor(root, { granted: plugin.granted, ...plugin.entry }))
+    await writeApproved(store, id, root, { granted: plugin.granted, ...plugin.entry })
   }
-  // The install plugins in an install of the test's own, which the first start copies in with no entry seeded, so the
-  // copy derives the class and the items asking at first use itself
-  const extra: Record<string, string> = {}
-  if (setup.install !== undefined) {
-    const installDir = await temp()
-    await writeInstall(installDir, Object.fromEntries(Object.entries(setup.install).map(([id, granted]) =>
-      [id, { files: filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }), firstParty: true }])))
-    extra.HETU_INSTALL_DIR = installDir
-  }
-  const app = await launch(dataDir, extra)
+  const app = await launch(dataDir)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'core.ready'))
-  for (const id of [...Object.keys(setup.plugins ?? {}), ...Object.keys(setup.install ?? {})]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  for (const id of Object.keys(setup.plugins ?? {})) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor, dataDir, folder }
 }
 
-// A plugin's worker. The first-party plugins share one host page, which holds only the one plugin a test installs
+// A plugin's worker, in the host page of its own
 async function pluginWorker(app: ElectronApplication, id: string): Promise<Worker> {
-  const page = await workersPage(app, (firstPartyIds as readonly string[]).includes(id) ? 'first-party' : id)
+  const page = await workersPage(app, id)
   await until(() => page.workers().length === 1)
   return page.workers()[0] as Worker
 }
@@ -116,7 +105,7 @@ const hitAt = (editor: Page, x: number, y: number) => editor.evaluate(([px, py])
   const at = document.elementFromPoint(px as number, py as number)
   return { inEditor: at?.closest('.cm-content') !== null, inTitle: at?.closest('.hetu-title') !== null }
 }, [x, y])
-// The fixture's button and not hidden marks' Marks button, its settings item in the status row of every run
+// The fixture's button, of the plugins a test runs
 const viewButton = (editor: Page) => editor.locator('#editors .hetu-surface .hetu-button', { hasText: 'Press ' })
 
 async function withLayout(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
@@ -127,9 +116,38 @@ async function withLayout(setup: { notes?: Record<string, string>, plugins?: Rec
   return { ...made, layout }
 }
 
+// The fixture layout drawing each open view titled in a column beside the note's editor, again at every state, since
+// hetu has no layout of its own to place them
+async function inColumns(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
+  const made = await withLayout(setup)
+  await run(made.layout, `
+    const draw = state => ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
+      ...state.views.map(view => ({ kind: 'box', id: 'c-' + view.instance, style: { display: 'flex', 'flex-direction': 'column', width: '300px' }, children: [
+        { kind: 'title', id: 't-' + view.instance, of: view.instance },
+        { kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { flex: '1' } } ] })),
+      { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } } ] }).catch(() => {})
+    ctx.ui.on('layout.state', event => { void draw(event.state) })
+    await draw(heard.filter(e => e.topic === 'layout.state').at(-1).state)
+  `)
+  return made
+}
+
+// The page picks the first layout plugin that comes while none is picked, so a first layout installed draws with no
+// pick of the human's
+describe('the first layout', () => {
+  it('draws once it starts with no layout picked', async () => {
+    const { app, editor } = await started({ notes: { 'a.md': 'alpha' }, plugins: { tiles: { granted: layoutGrants } } })
+    const layout = await pluginWorker(app, 'tiles')
+    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    await editor.locator('#views').click()
+    await until(async () => editor.locator('#menu').isVisible())
+    expect(await editor.locator('#menu select').first().inputValue()).toBe('tiles')
+  })
+})
+
 describe('a popover', () => {
   it('keeps its owner strip on top of it and its size within the drawer\'s cap, whatever style the plugin gives it', async () => {
-    const { app, editor } = await started({ notes: { 'a.md': 'the real words' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('cards') } } } })
+    const { app, editor } = await inColumns({ notes: { 'a.md': 'the real words' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('cards') } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
     await open(editor, 'a.md')
     const board = await pluginWorker(app, 'board')
@@ -163,7 +181,7 @@ describe('a popover', () => {
 
 describe('a plugin named hetu', () => {
   it('shows under its id in titles and strips, never the name it picked', async () => {
-    const { app, editor } = await started({ plugins: { board: { granted: viewer, manifest: { name: 'hetu', views: { checks: { title: 'Security check', kind: 'view' } } } } } })
+    const { app, editor } = await inColumns({ plugins: { board: { granted: viewer, manifest: { name: 'hetu', views: { checks: { title: 'Security check', kind: 'view' } } } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
     const board = await pluginWorker(app, 'board')
     await run(board, `
@@ -279,7 +297,7 @@ describe('the editor\'s text', () => {
 
 describe('a busy view', () => {
   it('leaves typing in the editor working while it changes one text of a large tree ten times a second', async () => {
-    const { app, editor } = await started({ notes: { 'a.md': '' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
+    const { app, editor } = await inColumns({ notes: { 'a.md': '' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
     const board = await pluginWorker(app, 'board')
     await open(editor, 'a.md')
@@ -330,7 +348,7 @@ const framePage = '<!doctype html><html><head><meta charset="utf-8"></head><body
 
 describe('a view frame', () => {
   async function framed() {
-    const made = await started({
+    const made = await inColumns({
       notes: { 'a.md': '' },
       plugins: {
         kanban: {
@@ -419,18 +437,15 @@ async function putBack(folder: string): Promise<void> {
   execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
 }
 
-// The first-party id the writer is installed under
-const WRITER = 'git'
+const WRITER = 'writer'
 
 describe('a plugin writing notes', () => {
-  // Write on every note is class 4 and asks at its first use. Carried in the install as first-party under an id hetu
-  // doesn't build yet, so its first start copies it in and derives the class and the first use from its grant
+  // Write on every note is class 4 and asks at its first use, as its approval classed it
   it('asks once in the trusted window before its first write, writing nothing before the Confirm, then moves and removes unasked', async () => {
     const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta' }
     const granted = [listAll, readAll, writeAll]
-    const { app, editor, dataDir, folder } = await started({ notes, install: { [WRITER]: granted } })
+    const { app, editor, dataDir, folder } = await started({ notes, plugins: { [WRITER]: { granted, entry: { class: 4, firstUse: [writeAll] } } } })
     try {
-      expect(await logged(dataDir, 'plugin.copied', { plugin: WRITER })).toBe(true)
       expect((await new StateStore(dataDir).load()).state.plugins[WRITER]).toMatchObject({ class: 4, granted, firstUse: [writeAll] })
       const writer = await pluginWorker(app, WRITER)
 

@@ -137,10 +137,6 @@ export const corePluginIds = frozen(['net', 'mcp-http-handler'] as const)
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
 export const utilityIds = frozen(['mcp-http-handler'] as const)
 
-// First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
-// the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
-export const firstPartyIds = frozen(['git', 'artifacts', 'notify', 'layout', 'hidden-marks'] as const)
-
 const reserved = new Set<string>([
   ...coreNamespaces,
   ...Object.keys(providers),
@@ -148,10 +144,9 @@ const reserved = new Set<string>([
   ...Object.values(guards).flat(),
   ...coreModuleIds,
   ...corePluginIds,
-  ...firstPartyIds,
 ])
 
-// Ids a plugin-folder plugin can't take, apart from the first-party copies
+// Ids a plugin-folder plugin can't take
 export const reservedIds = frozen([...reserved].sort())
 
 // Titles and owner strips in the editor window show a plugin by its id, so no plugin is called hetu

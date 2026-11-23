@@ -9,7 +9,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { partition, ROLES, type Role } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, counting, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -126,6 +126,22 @@ const page = (script: string, type = '') => `<!doctype html><html><head><meta ch
 
 type Frame = { html: string, files: Record<string, string> }
 
+// A layout drawing each open view in a column beside the note's editor, again at every state, since hetu has no layout
+// of its own to place the frame
+const columns = `
+import { definePlugin } from '${sdk}'
+export default definePlugin({
+  start(ctx) {
+    ctx.ui.on('layout.state', event => {
+      void ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
+        ...event.state.views.map(view => ({ kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { width: '300px' } })),
+        { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
+      ] }).catch(() => {})
+    })
+  },
+})
+`
+
 async function started(frame: Frame, notes: Record<string, string> = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
   const folder = await temp()
   for (const [name, text] of Object.entries(notes)) await writeFile(path.join(folder, name), text)
@@ -134,7 +150,7 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
   const source = await temp()
-  await writeFolder(source, { 'src/worker.ts': worker })
+  await writeFolder(source, { 'src/worker.ts': worker, 'src/columns.ts': columns })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const granted: Capability[] = [{ type: 'ui.view' }]
   const manifest = workerManifest('kanban', {
@@ -144,10 +160,20 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
   })
   const root = path.join(dataDir, 'plugins', 'kanban')
   await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'board.html': frame.html, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', ...frame.files }))
-  await store.writePlugin('kanban', await entryFor(root, { granted }))
+  await writeApproved(store, 'kanban', root, { granted })
+  const layout = path.join(dataDir, 'plugins', 'columns')
+  const [drawn] = await buildPlugin(source, { entries: { 'worker.js': 'src/columns.ts' }, workers: ['worker.js'], write: false })
+  const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
+  await writeFolder(layout, filesFor(workerManifest('columns', { capabilities: layoutGrants }), { 'worker.js': drawn.text }))
+  await writeApproved(store, 'columns', layout, { granted: layoutGrants })
   const app = await launch(dataDir)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'kanban' }))
+  await until(() => logged(dataDir, 'plugin.started', { plugin: 'columns' }))
+  await editor.locator('#views').click()
+  await until(async () => editor.locator('#menu').isVisible())
+  await editor.locator('#menu select').first().selectOption('columns')
+  await editor.locator('#menu-close').click()
   const host = await workersPage(app, 'kanban')
   await until(() => host.workers().length === 1)
   return { app, editor, dataDir, worker: host.workers()[0] as Worker }
