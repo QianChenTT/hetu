@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
+import { API_VERSION } from '../api/manifest.ts'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, FakeDrawer } from '../sdk/testing/index.ts'
 
@@ -15,7 +16,7 @@ const decorating = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.de
 
 async function started(capabilities: object[] = decorating) {
   const drawer = new FakeDrawer()
-  const made = fakeCore({ manifest: { id: 'links', name: 'Links', version: '1.0.0', api: '^4', entries: { worker: 'dist/worker.js' }, capabilities }, drawer })
+  const made = fakeCore({ manifest: { id: 'links', name: 'Links', version: '1.0.0', api: `^${API_VERSION}`, entries: { worker: 'dist/worker.js' }, capabilities }, drawer })
   cores.push(made)
   const heard: unknown[] = []
   let given: PluginContext | null = null
@@ -38,7 +39,7 @@ describe("the fake drawer's link clicks", () => {
     const { drawer, ctx, heardNow } = await started()
     const instance = drawer.openNote('notes/a.md', 'see the note')
     await ctx.editor.decorate(instance, 0, 's', [link(4, 7, 'theNote')])
-    drawer.type(instance, { from: 0, insert: '' })
+    drawer.type(instance, { from: 12, insert: '!' })
     expect(drawer.clickLink(instance, 'theNote')).toBe(true)
     expect(drawer.clickLink(instance, 6)).toBe(true)
     expect(drawer.clickLink(instance, 7)).toBe(false)
@@ -47,6 +48,19 @@ describe("the fake drawer's link clicks", () => {
       { v: 1, kind: 'event', topic: 'editor.link', instance, version: 1, id: 'theNote' },
       { v: 1, kind: 'event', topic: 'editor.link', instance, version: 1, id: 'theNote' },
     ])
+  })
+
+  it('moves a link with the text the human types and drops one whose text went, as hetu\'s drawer does', async () => {
+    const { drawer, ctx, heardNow } = await started()
+    const instance = drawer.openNote('notes/a.md', 'see the note')
+    await ctx.editor.decorate(instance, 0, 's', [link(4, 7, 'moved'), link(8, 12, 'gone'), { kind: 'mark', from: 0, to: 3, style: 'em' }])
+    drawer.type(instance, { from: 0, insert: 'ab ' })
+    expect(drawer.clickLink(instance, 6)).toBe(false)
+    expect(drawer.clickLink(instance, 7)).toBe(true)
+    drawer.type(instance, { from: 11, to: 15 })
+    expect(drawer.clickLink(instance, 'gone')).toBe(false)
+    expect(drawer.marks.get(`${instance} s`)).toEqual([link(7, 10, 'moved'), { kind: 'mark', from: 0, to: 3, style: 'em' }])
+    expect((await heardNow()).map(event => (event as { version: number, id: string }))).toEqual([expect.objectContaining({ version: 1, id: 'moved' })])
   })
 
   it('tells the innermost of two links and none on a tie, across sets', async () => {
@@ -85,5 +99,16 @@ describe("the fake drawer's link clicks", () => {
     drawer.clickLink(instance, 'a')
     await new Promise(resolve => setTimeout(resolve, 5))
     await expect(ctx.editor.edit(instance, 0, [4, [2, '**']], { anchor: 6, head: 6 })).rejects.toMatchObject({ code: 'not-granted' })
+  })
+
+  it('leaves that window open on a click on no link, which goes on as a plain one', async () => {
+    const { drawer, ctx } = await started()
+    const instance = drawer.openNote('notes/a.md', '**ab**')
+    await ctx.editor.decorate(instance, 0, 's', [link(2, 4, 'a')])
+    drawer.command('bold', instance, [{ anchor: 4, head: 4 }])
+    expect(drawer.clickLink(instance, 0)).toBe(false)
+    expect(drawer.clickLink(instance, 'missing')).toBe(false)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(await ctx.editor.edit(instance, 0, [4, [2, '**']], { anchor: 6, head: 6 })).toEqual({ version: 1 })
   })
 })
