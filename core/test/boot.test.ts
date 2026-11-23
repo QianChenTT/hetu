@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, type BootOptions, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { resolveDataDir, stateDir } from '../backend/lib/data-dir.ts'
-import { insideInstall } from '../backend/plugins-manager/folders.ts'
 import { EventLog } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
@@ -133,10 +132,10 @@ describe('a later run', () => {
     const load = vi.spyOn(StateStore.prototype, 'load')
     const booted = await started()
     expect(load.mock.contexts[0]).toBe(booted.store)
-    await booted.store.writeSwitches({ ...noSwitches, off: ['net'] })
+    await booted.store.writeSwitches({ ...noSwitches, off: ['mcp-http-handler'] })
     await stopped(booted)
     const again = await started()
-    expect(again.state.switches.off).toEqual(['net'])
+    expect(again.state.switches.off).toEqual(['mcp-http-handler'])
   })
 
   it('says the log is not healthy when one record was lost, even though the log healed after it', async () => {
@@ -217,7 +216,7 @@ describe('the luoshu file', () => {
 
   it('keeps the switches when the luoshu file is bad and writes nothing over it', async () => {
     const first = await started()
-    await first.store.writeSwitches({ ...noSwitches, off: ['net'] })
+    await first.store.writeSwitches({ ...noSwitches, off: ['mcp-http-handler'] })
     await first.store.writeLuoshu(notes)
     await stopped(first)
     await writeFile(stateFile('luoshu.json'), 'tampered')
@@ -225,7 +224,7 @@ describe('the luoshu file', () => {
     expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'luoshu', result: 'hash-missing' }])
     expect(booted.suspect).toBe(true)
     expect(booted.state.luoshu).toBeNull()
-    expect(booted.state.switches.off).toEqual(['net'])
+    expect(booted.state.switches.off).toEqual(['mcp-http-handler'])
     expect(await readFile(stateFile('luoshu.json'), 'utf8')).toBe('tampered')
   })
 
@@ -264,20 +263,24 @@ describe('the luoshu file', () => {
   })
 })
 
-// Ids a switches file may name in off from an older build, a core plugin that is gone or that became a first-party
-// plugin: dropped, recorded and written back without them once
+// Ids a switches file may name in off from an older build, a core plugin that is gone, never built or that became a
+// first-party plugin: dropped, recorded and written back without them once
 describe('a switch-off of an id that is no core plugin any more', () => {
-  it('drops hidden-marks from off with a record naming it, writes the switches back without it and records nothing the next boot', async () => {
+  it('drops net and hidden-marks from off with a record naming each, writes the switches back without them and records nothing the next boot', async () => {
     await stopped(await started())
-    await plant(stateFile('switches.json'), JSON.stringify({ format: 3, ...noSwitches, off: ['net', 'hidden-marks'] }))
+    await plant(stateFile('switches.json'), JSON.stringify({ format: 3, ...noSwitches, off: ['net', 'mcp-http-handler', 'hidden-marks'] }))
     const booted = await started()
     expect(booted.suspect).toBe(false)
-    expect(booted.state.switches.off).toEqual(['net'])
-    expect((await bootRecords()).filter(record => record.event === 'boot.dropped')).toEqual([{ event: 'boot.dropped', file: 'switches', id: 'hidden-marks' }])
+    expect(booted.state.switches.off).toEqual(['mcp-http-handler'])
+    expect((await bootRecords()).filter(record => record.event === 'boot.dropped')).toEqual([
+      { event: 'boot.dropped', file: 'switches', id: 'net' },
+      { event: 'boot.dropped', file: 'switches', id: 'hidden-marks' },
+    ])
     expect(await readFile(stateFile('switches.json'), 'utf8')).not.toContain('hidden-marks')
+    expect(await readFile(stateFile('switches.json'), 'utf8')).not.toContain('"net"')
     await stopped(booted)
     await started()
-    expect((await bootRecords()).filter(record => record.event === 'boot.dropped')).toHaveLength(1)
+    expect((await bootRecords()).filter(record => record.event === 'boot.dropped')).toHaveLength(2)
   })
 })
 
@@ -593,33 +596,5 @@ describe('one hetu per folder', () => {
     await writeFile(path.join(dataDir(), 'hetu.lock'), '1')
     await again.release()
     expect(await readFile(path.join(dataDir(), 'hetu.lock'), 'utf8')).toBe('1')
-  })
-})
-
-describe('insideInstall', () => {
-  const cases: [string, string, string, string | null][] = [
-    ['posix', '/opt/hetu', 'core/host.js', '/opt/hetu/core/host.js'],
-    ['posix', '/opt/hetu', 'core/../editor/main.js', '/opt/hetu/editor/main.js'],
-    ['posix', '/opt/hetu', '../evil.js', null],
-    ['posix', '/opt/hetu', 'core/../../evil.js', null],
-    ['posix', '/opt/hetu', '/etc/passwd', null],
-    ['posix', '/opt/hetu', '/opt/hetu/core/host.js', null],
-    ['posix', '/opt/hetu', '', null],
-    ['posix', '/opt/hetu', '.', null],
-    ['posix', '/opt/hetu', '..', null],
-    ['posix', '/opt/hetu', '..evil/x.js', '/opt/hetu/..evil/x.js'],
-    ['win32', 'C:\\Program Files\\hetu', 'core\\host.js', 'C:\\Program Files\\hetu\\core\\host.js'],
-    ['win32', 'C:\\Program Files\\hetu', 'core/host.js', 'C:\\Program Files\\hetu\\core\\host.js'],
-    ['win32', 'C:\\Program Files\\hetu', '..\\evil.js', null],
-    ['win32', 'C:\\Program Files\\hetu', 'core\\..\\..\\evil.js', null],
-    ['win32', 'C:\\Program Files\\hetu', 'C:\\Windows\\evil.js', null],
-    ['win32', 'C:\\Program Files\\hetu', 'C:\\Program Files\\hetu\\core\\host.js', null],
-    ['win32', 'C:\\Program Files\\hetu', 'D:evil.js', null],
-    ['win32', 'C:\\Program Files\\hetu', '\\\\server\\share\\evil.js', null],
-    ['win32', 'C:\\Program Files\\hetu', '\\evil.js', null],
-  ]
-  it.each(cases)('on %s in %s, %j gives %j', (platform, installDir, relative, expected) => {
-    if (expected === null) expect(() => insideInstall(installDir, relative, platform)).toThrow(/inside the install/)
-    else expect(insideInstall(installDir, relative, platform)).toBe(expected)
   })
 })

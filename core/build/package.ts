@@ -79,14 +79,12 @@ export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Reco
     files: ['**/*'],
     asar: true,
     asarUnpack: [],
-    // Each core plugin beside app.asar, which the plugins manager checks against the list inside it
-    extraResources: [{ from: path.join(stage, 'plugins'), to: 'plugins', filter: ['**/*'] }],
     npmRebuild: false,
     nodeGypRebuild: false,
     buildDependenciesFromSource: false,
     includePdb: false,
     publish: null,
-    // Electron's own default app goes once Electron is extracted, so resources holds app.asar and the plugins alone. It
+    // Electron's own default app goes once Electron is extracted, so resources holds app.asar alone. It
     // goes before electron-builder lists the archives in resources for the integrity it writes into the executable,
     // which comes after afterExtract and before afterPack, so the list names no file the package doesn't hold
     afterExtract: async context => {

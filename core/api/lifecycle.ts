@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { VERSION } from './envelope.ts'
 import { MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
-import { pluginVersion } from './install.ts'
+import { pluginVersion } from './plugin-version.ts'
 import { API_VERSION, MAX_LIST } from './manifest.ts'
 import { frozen } from './plain.ts'
 

@@ -1,4 +1,5 @@
-import { folderManifest, installManifest, MAX_MANIFEST_BYTES, supportsApi, type InstallManifest } from '../../api/manifest.ts'
+import { doorId } from '../../api/ids.ts'
+import { API_VERSION, folderManifest, installManifest, MAX_MANIFEST_BYTES, supportsApi, type InstallManifest } from '../../api/manifest.ts'
 import { hashFiles, readFiles, type PluginFile } from '../../lib/hash-files.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 
@@ -26,22 +27,20 @@ export function entryPaths(manifest: InstallManifest): string[] {
   return [worker, host, ...Object.values(frames ?? {})].filter((entry): entry is string => typeof entry === 'string')
 }
 
-function manifestOf(files: readonly PluginFile[], id: string, from: 'install' | 'folder'): Pick<Read, 'manifest' | 'problem'> {
+function manifestOf(files: readonly PluginFile[], id: string): Pick<Read, 'manifest' | 'problem'> {
   const file = files.find(candidate => candidate.path === MANIFEST_FILE)
   if (file === undefined || file.bytes.length > MAX_MANIFEST_BYTES) return { manifest: null, problem: 'invalid' }
   let manifest: InstallManifest
   try {
-    manifest = parseStrict(file.bytes, from === 'install' ? installManifest : folderManifest)
+    manifest = parseStrict(file.bytes, folderManifest)
   } catch {
-    // A folder manifest the install's schema takes asks for a host or page entry, guards, Node built-ins or an
-    // install-only type, none of which a plugin-folder plugin may hold
-    if (from === 'folder') {
-      try {
-        parseStrict(file.bytes, installManifest)
-        return { manifest: null, problem: 'install-only' }
-      } catch {
-        // A manifest neither schema takes is invalid, answered below
-      }
+    // A folder manifest the core's own schema takes asks for a host or page entry, guards, Node built-ins or a type only
+    // the core holds, none of which a plugin-folder plugin may hold
+    try {
+      parseStrict(file.bytes, installManifest)
+      return { manifest: null, problem: 'install-only' }
+    } catch {
+      // A manifest neither schema takes is invalid, answered below
     }
     return { manifest: null, problem: 'invalid' }
   }
@@ -54,9 +53,20 @@ function manifestOf(files: readonly PluginFile[], id: string, from: 'install' | 
   return { manifest, problem: null }
 }
 
+// The file the build writes the door's code to, beside main.js
+export const DOOR_FILE = 'door.js'
+
+// The door's read: its code as built and the core's own record of it, never read from a file. One host entry run in a
+// utility process, asking for nothing and requiring nothing
+export function doorRead(bytes: Buffer): Read {
+  const files = [{ path: DOOR_FILE, bytes }]
+  const manifest: InstallManifest = { id: doorId, name: 'door', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: DOOR_FILE } }
+  return { files, hash: hashFiles(files), manifest, problem: null }
+}
+
 // Reads each file of the folder once and keeps the bytes, which are the bytes that run (threat row 26). The manifest is
 // parsed from those same bytes with the strict parser
-export async function readPlugin(root: string, id: string, from: 'install' | 'folder'): Promise<Read> {
+export async function readPlugin(root: string, id: string): Promise<Read> {
   let files: PluginFile[]
   let hash: string
   try {
@@ -65,5 +75,5 @@ export async function readPlugin(root: string, id: string, from: 'install' | 'fo
   } catch {
     return unread
   }
-  return { files, hash, ...manifestOf(files, id, from) }
+  return { files, hash, ...manifestOf(files, id) }
 }

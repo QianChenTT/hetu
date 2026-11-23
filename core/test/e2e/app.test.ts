@@ -22,8 +22,7 @@ describe('hetu as an Electron app', () => {
     expect(await window.evaluate(() => [typeof globalThis.require, typeof globalThis.process, typeof globalThis.Buffer])).toEqual(['undefined', 'undefined', 'undefined'])
     await until(async () => (await events(dataDir)).includes('core.ready'))
     const all = await records(dataDir)
-    expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
-    expect(all.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
+    expect(all.map(record => record.event)).toContain('boot.default-written')
     // hetu ships no plugin, so nothing is copied into the plugin folder and the drawer draws its plain layout. The core
     // modules start with the core, so no plugin record names one
     expect(all.filter(record => record.event === 'plugin.copied' || record.plugin === 'layout' || record.plugin === 'hidden-marks')).toEqual([])

@@ -189,21 +189,21 @@ describe('before ready', () => {
 describe('the install folder', () => {
   const where = { here: '/app/core/dist', resourcesPath: '/app/resources', platform: 'linux' }
 
-  // The plugins beside app.asar and the list inside it, so ASAR integrity covers the list
-  it('is beside app.asar in a locked build with the list inside app.asar, whatever HETU_INSTALL_DIR says', () => {
-    expect(installDirFor({ ...where, packaged: true, locked: true, env: { HETU_INSTALL_DIR: '/elsewhere' } })).toEqual({ installDir: '/app/resources', listDir: '/app/resources/app.asar' })
-    expect(installDirFor({ ...where, packaged: true, locked: false, env: {} })).toEqual({ installDir: '/app/resources', listDir: '/app/resources/app.asar' })
+  // The code built beside main.js, the door's among it, inside app.asar, so ASAR integrity covers it
+  it('is beside app.asar in a locked build with the code inside app.asar, whatever HETU_INSTALL_DIR says', () => {
+    expect(installDirFor({ ...where, packaged: true, locked: true, env: { HETU_INSTALL_DIR: '/elsewhere' } })).toEqual({ installDir: '/app/resources', codeDir: '/app/resources/app.asar' })
+    expect(installDirFor({ ...where, packaged: true, locked: false, env: {} })).toEqual({ installDir: '/app/resources', codeDir: '/app/resources/app.asar' })
   })
 
   // The packed build the end-to-end tests drive reads the environment as a run from the source does, so a test can
-  // hand it an install of its own. The locked build never does
+  // hand it a door of its own. The locked build never does
   it('is HETU_INSTALL_DIR in a packaged build that isn\'t locked, when that is set', () => {
-    expect(installDirFor({ ...where, packaged: true, locked: false, env: { HETU_INSTALL_DIR: '/tmp/install' } })).toEqual({ installDir: '/tmp/install', listDir: '/tmp/install' })
+    expect(installDirFor({ ...where, packaged: true, locked: false, env: { HETU_INSTALL_DIR: '/tmp/install' } })).toEqual({ installDir: '/tmp/install', codeDir: '/tmp/install' })
   })
 
-  it('is the built main\'s folder in a run from the source, or HETU_INSTALL_DIR when that is set, for the tests, with the list in it', () => {
-    expect(installDirFor({ ...where, packaged: false, locked: false, env: {} })).toEqual({ installDir: '/app/core/dist', listDir: '/app/core/dist' })
-    expect(installDirFor({ ...where, packaged: false, locked: false, env: { HETU_INSTALL_DIR: '/tmp/install' } })).toEqual({ installDir: '/tmp/install', listDir: '/tmp/install' })
+  it('is the built main\'s folder in a run from the source, or HETU_INSTALL_DIR when that is set, for the tests, with the code in it', () => {
+    expect(installDirFor({ ...where, packaged: false, locked: false, env: {} })).toEqual({ installDir: '/app/core/dist', codeDir: '/app/core/dist' })
+    expect(installDirFor({ ...where, packaged: false, locked: false, env: { HETU_INSTALL_DIR: '/tmp/install' } })).toEqual({ installDir: '/tmp/install', codeDir: '/tmp/install' })
   })
 
   it('refuses a HETU_INSTALL_DIR that isn\'t absolute', () => {

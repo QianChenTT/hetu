@@ -81,7 +81,7 @@ describe('jscpd as .jscpd.json sets it up', () => {
   it('looks at shipped TypeScript only, in blocks of 4 lines', () => {
     expect(config.minLines).toBe(4)
     expect(config.format).toEqual(['typescript'])
-    expect(config.path).toEqual(['core/api', 'core/lib', 'core/sdk', 'core/frontend', 'core/backend', 'core-plugins'])
+    expect(config.path).toEqual(['core/api', 'core/lib', 'core/sdk', 'core/frontend', 'core/backend'])
     expect(config.ignore).toEqual(expect.arrayContaining(['**/test/**', '**/testing/**', 'core/sdk/build/**', '**/*.test.ts']))
   })
 

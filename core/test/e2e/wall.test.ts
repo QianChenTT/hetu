@@ -2,7 +2,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { filesFor, workerManifest, writeFolder, writeInstall, writeApproved } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, exited, launch, logged, temp, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -23,11 +23,10 @@ export default definePlugin({
 
 const read = [{ type: 'luoshu.read' as const, paths: ['**'] }]
 
-// The install holds no plugin, the luoshu module serves a notes folder holding notes/a.md and the gate is switched
+// The install folder is empty, so no door runs, the luoshu module serves a notes folder holding notes/a.md and the gate is switched
 // off, so what is under test is the wall and not a grant
 async function prepared(): Promise<{ dataDir: string, installDir: string }> {
   const installDir = await temp()
-  await writeInstall(installDir, {})
   const folder = await temp()
   await writeFolder(folder, { 'notes/a.md': 'hello from the luoshu' })
   const source = await temp()

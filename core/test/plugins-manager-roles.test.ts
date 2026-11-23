@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import {
-  cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Listing,
+  cleanup, DOOR_CODE, entryFor, filesFor, harness, reasonOf, stateOf, until, workerManifest, writeFolder,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
@@ -13,8 +13,6 @@ const role: Capability = { type: 'door.handle' }
 const read: Capability = { type: 'luoshu.read', paths: ['notes/**'] }
 const holder = (id: string, extra: Capability[] = []) => filesFor(workerManifest(id, { capabilities: [role, ...extra] }))
 const holds = (extra: object = {}) => (root: string) => entryFor(root, { granted: [role], ...extra })
-const http: Listing = { files: filesFor(hostManifest('mcp-http-handler')) }
-const install = () => ({ ...coreInstall(), 'mcp-http-handler': http })
 const httpHalf = () => ({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }) satisfies Caller
 const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 
@@ -176,7 +174,7 @@ describe('a second plugin asking for a role', () => {
 describe('a role in deps', () => {
   it('tells a utility half whether the role\'s holder is ready, starting or gone, and a worker nothing of it', async () => {
     const made = await harness({
-      install: install(),
+      door: DOOR_CODE,
       folder: { mcp: holder('mcp'), tool: filesFor(workerManifest('tool')) },
       entries: { mcp: holds(), tool: entryFor },
     })
@@ -196,7 +194,7 @@ describe('a role in deps', () => {
 
   it('is the holder\'s own state, so a holder waiting on a requirement is no holder that serves', async () => {
     const made = await harness({
-      install: install(),
+      door: DOOR_CODE,
       folder: { mcp: filesFor(workerManifest('mcp', { capabilities: [role], requires: ['ghost'] })) },
       entries: { mcp: holds() },
     })
@@ -211,7 +209,7 @@ describe('a role in deps', () => {
   })
 
   it('is unavailable to the door while no plugin holds the role', async () => {
-    const made = await harness({ install: install() })
+    const made = await harness({ door: DOOR_CODE })
     await made.pluginsManager.start()
     expect(made.runtime.half('mcp-http-handler', 1, 'utility').got('init')[0].deps).toEqual({ 'door.handle': 'unavailable' })
   })

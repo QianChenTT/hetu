@@ -11,7 +11,7 @@ import { createLock, type Lock } from '../backend/lock/lock.ts'
 import { wireCore } from '../backend/wire.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import {
-  allowAll, coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Half, type Message, writeApproved,
+  allowAll, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, type Half, type Message, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -31,7 +31,6 @@ async function joined(options: { off?: string[], lock?: Lock, before?: (dataDir:
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
   await writeFile(path.join(folder, 'a.md'), 'as it was')
-  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: (options.off ?? []) as never })
   await store.writeLuoshu({ folder })
@@ -55,7 +54,7 @@ async function joined(options: { off?: string[], lock?: Lock, before?: (dataDir:
   }
   const runtime = new FakeRuntime()
   const modules = { gate: allowAll(), luoshu: watched, ...(options.lock !== undefined ? { lock: options.lock } : {}) }
-  const parts = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+  const parts = wireCore({ booted, installDir, doorFile: null, runtime, modules, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     await parts.pluginsManager.shutdown().catch(() => {})

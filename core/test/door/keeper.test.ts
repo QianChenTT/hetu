@@ -5,11 +5,14 @@ import net, { type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { type Delivered, type FakeCore, fakeCore, type StandIn } from '@hetu/sdk/testing'
-import { refuseEveryToken, type TokenSeam } from '../src/checks.ts'
-import { httpPlugin } from '../src/keeper.ts'
+import { doorId } from '../../api/ids.ts'
+import { API_VERSION } from '../../api/manifest.ts'
+import { type Delivered, type FakeCore, fakeCore, type StandIn } from '../../sdk/testing/index.ts'
+import { refuseEveryToken, type TokenSeam } from '../../backend/door/checks.ts'
+import { httpPlugin } from '../../backend/door/keeper.ts'
 
-const manifest = path.join(import.meta.dirname, '..', 'hetu-plugin.json')
+// The door's manifest as the core writes it for the door in code, which the fake core runs as the door
+const manifest = { id: doorId, name: 'door', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'door.js' } }
 const cores: FakeCore[] = []
 const holders: net.Server[] = []
 

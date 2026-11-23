@@ -99,8 +99,8 @@ export class Router implements RouterDoor {
   }
 
   // The door's pipes, each in door.ts
-  register(port: Port, caller: Caller): void {
-    register(this.c, port, caller)
+  register(port: Port, caller: Caller, via: 'port' | 'utility' = 'port'): void {
+    register(this.c, port, caller, via)
   }
 
   handle(caller: Caller, receive: (message: unknown) => void): { post: (message: unknown) => void } {

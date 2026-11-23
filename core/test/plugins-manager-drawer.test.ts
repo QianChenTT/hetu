@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ActionResults, CoreStatus } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import { cleanup, coreInstall, entryFor, filesFor, harness, stateOf, workerManifest } from './plugins-manager-fakes.ts'
+import { cleanup, entryFor, filesFor, harness, stateOf, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -12,7 +12,7 @@ const wrongHash = 'b'.repeat(64)
 // Hidden marks runs as a worker behind the editor bridge, so the editor page applies no plugin's code itself
 describe('core.status', () => {
   it('names no plugin for the editor page to apply', async () => {
-    const { pluginsManager } = await harness({ install: coreInstall() })
+    const { pluginsManager } = await harness({})
     await pluginsManager.start()
     expect(Object.keys((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus)).not.toContain('page')
   })

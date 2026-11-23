@@ -1,9 +1,9 @@
 import http from 'node:http'
 import net from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { doorLimits, type Refusal, type RefusalReason, type TokenSeam } from '../src/checks.ts'
-import { rate } from '../src/rate.ts'
-import { type Answer, type Door, openDoor, type Passed } from '../src/server.ts'
+import { doorLimits, type Refusal, type RefusalReason, type TokenSeam } from '../../backend/door/checks.ts'
+import { rate } from '../../backend/door/rate.ts'
+import { type Answer, type Door, openDoor, type Passed } from '../../backend/door/server.ts'
 
 // Every test drives the door with raw sockets, so any Host, header or framing can be sent as written and nothing is
 // normalised on the way

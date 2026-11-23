@@ -1,4 +1,4 @@
-import { Refused } from '@hetu/sdk'
+import { Refused } from '../../sdk/index.ts'
 import { labelOk } from './checks.ts'
 
 // The clients that reach mcp over a transport with no token, a local pipe: each connection gets a label of its own,
