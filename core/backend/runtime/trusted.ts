@@ -64,16 +64,28 @@ type Prevented = { preventDefault(): void }
 // Electron's dialog.showOpenDialog over a parent window, which the tests fake
 export type FolderDialog = (
   parent: TrustedLike,
-  options: { properties: ('openDirectory' | 'createDirectory')[], title: string },
+  options: { properties: ('openDirectory' | 'createDirectory' | 'openFile')[], title: string, filters?: { name: string, extensions: string[] }[] },
 ) => Promise<{ canceled: boolean, filePaths: string[] }>
 
-// The OS folder dialog over the trusted window for app.pickFolder, answering the folder or null when the human
-// cancelled. With no trusted window open it opens nothing, since only that window may ask
-export async function pickFolder(trusted: TrustedWindow, dialog: FolderDialog): Promise<string | null> {
+// One path from the OS dialog over the trusted window, null when the human cancelled. With no trusted window open it
+// opens nothing, since only that window may ask
+async function pickOne(trusted: TrustedWindow, dialog: FolderDialog, options: Parameters<FolderDialog>[1]): Promise<string | null> {
   const parent = trusted.window
   if (parent === null) return null
-  const picked = await dialog(parent, { properties: ['openDirectory', 'createDirectory'], title: 'Pick the notes folder' })
+  const picked = await dialog(parent, options)
   return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths[0]
+}
+
+// The folder dialog for app.pickFolder
+export function pickFolder(trusted: TrustedWindow, dialog: FolderDialog): Promise<string | null> {
+  return pickOne(trusted, dialog, { properties: ['openDirectory', 'createDirectory'], title: 'Pick the notes folder' })
+}
+
+// The dialog for app.stagePicked: one zip or one folder holding one plugin or several
+export function pickPlugins(trusted: TrustedWindow, dialog: FolderDialog, source: 'zip' | 'folder'): Promise<string | null> {
+  return pickOne(trusted, dialog, source === 'zip'
+    ? { properties: ['openFile'], title: 'Pick a plugin zip', filters: [{ name: 'Plugin zip', extensions: ['zip'] }] }
+    : { properties: ['openDirectory'], title: 'Pick a plugin folder or a folder of plugins' })
 }
 
 // The one trusted window: opened by a human's click on a core control, focused when one is open, its input held back by

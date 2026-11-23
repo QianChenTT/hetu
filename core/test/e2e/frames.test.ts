@@ -372,7 +372,9 @@ describe('WebRTC from a view frame', () => {
     mdns.on('message', message => {
       if (message.includes(label)) queries++
     })
-    await new Promise<void>(resolve => mdns.bind(5353, '127.0.0.1', resolve))
+    // macOS's mDNSResponder holds the wildcard address on 5353 and Node's reuseAddr sets only SO_REUSEPORT there, which
+    // shares the same address and not a narrower one beside it, so the listener takes the wildcard on macOS
+    await new Promise<void>(resolve => mdns.bind(5353, process.platform === 'darwin' ? '0.0.0.0' : '127.0.0.1', resolve))
     mdns.addMembership('224.0.0.251', '127.0.0.1')
     try {
       const { app, worker } = await started({ html: page('rtc.js'), files: { 'rtc.js': rtc } })

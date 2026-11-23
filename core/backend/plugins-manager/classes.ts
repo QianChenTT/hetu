@@ -19,7 +19,7 @@ type Decided = { readonly id: string, readonly entry: Plugin | null, readonly ch
 
 // A class change: the changed plugin, null in a pass, every other entry that comes out different, the lines its Confirm
 // shows and for an update asked so whether it loads unasked
-type Classed = { readonly own: Decided | null, readonly others: readonly Decided[], readonly lines: readonly string[], readonly unasked: boolean }
+export type Classed = { readonly own: Decided | null, readonly others: readonly Decided[], readonly lines: readonly string[], readonly unasked: boolean }
 
 // What a class change may hand the classifier past the change: what an update's new version asks for when asked whether
 // it loads unasked, and the other plugins an install takes with what each asks for

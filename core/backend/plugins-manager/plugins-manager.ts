@@ -1,4 +1,4 @@
-import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList } from '../../api/actions.ts'
+import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList, type Staged, type StagedPlugin } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
@@ -8,7 +8,7 @@ import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
-import type { Staging } from './header.ts'
+import type { Made, StagedRead, Staging, Stagings } from './header.ts'
 import type { Served } from '../router/header.ts'
 import { clearStartMarker, dropRetired, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
 import { type ConnectAsked } from './connects.ts'
@@ -92,6 +92,15 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         else await this.restart(k.id, 'human')
         return null
       }
+      // The Install button's. The window names a release by the handle main answered and a zip by its place in the list,
+      // never by a link or a path
+      case 'core.findRelease':
+        return this.installs().findRelease(args.link as string)
+      case 'core.stage':
+        return await this.stagedAnswer(await this.installs().stageRelease(args.release as string, args.zip as number))
+      case 'core.unstage':
+        this.installs().unstage(args.staged as string)
+        return null
       // The calling half alone, which the router has checked is mcp-http-handler's in its utility process
       case 'core.bindFailed': {
         const found = this.runOf(call.caller)
@@ -174,10 +183,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     if (change.kind === 'plugin.install') {
       const staging = this.heldStaging(change.staged)
       if (staging === null) return []
-      const asks = new Map(change.plugins.flatMap(({ id }) => {
-        const manifest = staging.plugins.find(plugin => plugin.id === id)?.manifest
-        return manifest === undefined || manifest === null ? [] : [[id, manifest.capabilities ?? []] as const]
-      }))
+      const asks = this.installAsks(change, staging)
       return [sourceLine(staging.source), UNSIGNED, ...change.plugins.flatMap(({ id }) => this.installWords(id, staging, asks))]
     }
     if (change.kind === 'plugin.update') {
@@ -203,22 +209,60 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
 
   // One plugin an install takes: its name as its author wrote it in quotes with its id and version and the version it
   // replaces, then each grant as a plain sentence and the grant risk classifier's lines, each under the plugin's id so
-  // no line reads as another plugin's. Classed as the approval or update it is, from the manifest staged, with the other
-  // plugins the install takes counted as installed with what their manifests ask for (asks holds every plugin taken),
-  // so links between them show on the one Confirm. A plugin installed alone is classed against the plugins installed
+  // no line reads as another plugin's. Classed as the install stores it, so links between the plugins it takes show on
+  // the one Confirm
   protected installWords(id: string, staging: Staging, asks: ReadonlyMap<string, readonly Capability[]>): string[] {
     const staged = staging.plugins.find(plugin => plugin.id === id)
     const manifest = staged?.manifest
     if (staged === undefined || manifest === undefined || manifest === null) return []
     const own = manifest.capabilities ?? []
-    const before = this.known.get(id)?.from === 'folder' ? this.state.plugins[id] : undefined
-    const after: Plugin = { version: manifest.version, contentHash: staged.digest, signer: null, granted: [...own], class: null, enabled: true }
-    const others = new Map([...asks].filter(([other]) => other !== id))
-    const lines = this.classes(before === undefined ? 'approve' : 'update', id, after, true, { staged: others }).lines
+    const before = this.installedEntry(id)
+    const { lines } = this.installClassed(id, manifest, staged.digest, asks, true)
     return [
       `${JSON.stringify(manifest.name)} (${id}), version ${manifest.version}${before === undefined ? '' : `, replacing version ${before.version}`}`,
       ...[...(own.length === 0 ? ['It asks for nothing'] : own.map(grantSentence)), ...lines].map(line => `${id}: ${line}`),
     ]
+  }
+
+  // A staging as the window is shown it: each plugin found with what it asks for, the version it replaces and its class
+  // with the grant risk classifier's lines on why, classed as the Confirm classes it with every plugin that can install
+  // counted as ticked, as each starts ticked. A plugin whose folder is in the plugin folder with no entry can't install.
+  // A staging dropped on the way, as the oldest when too many are held, answers not-found. A staging the window is never
+  // answered is dropped
+  async stagedAnswer(made: Made): Promise<Staged> {
+    if ('problem' in made) return made
+    try {
+      this.installs()
+      const staging = this.heldStaging(made.handle)
+      if (staging === null) throw { code: 'not-found' }
+      const read: StagedRead[] = []
+      for (const plugin of staging.plugins) read.push(plugin.problem === null && await this.unapproved(plugin.id) ? { ...plugin, problem: 'unapproved' } : plugin)
+      const asks = new Map(read.flatMap(plugin => (plugin.problem === null && plugin.manifest !== null ? [[plugin.id, plugin.manifest.capabilities ?? []] as const] : [])))
+      return { staged: made.handle, source: staging.source, plugins: read.map(plugin => this.stagedRow(plugin, asks)) }
+    } catch (err) {
+      this.dropStaging(made.handle)
+      throw err
+    }
+  }
+
+  // Throws unavailable while nothing may be staged, so main opens no dialog for a pick it couldn't answer
+  canStage(): void {
+    this.installs()
+  }
+
+  protected stagedRow({ id, digest, manifest, problem }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
+    const classed = problem === null && manifest !== null ? this.installClassed(id, manifest, digest, asks, true) : null
+    return {
+      id, name: manifest?.name ?? null, version: manifest?.version ?? null, capabilities: [...(manifest?.capabilities ?? [])],
+      class: classed?.own?.entry?.class ?? null, lines: [...(classed?.lines ?? [])], replaces: this.installedEntry(id)?.version ?? null,
+      digest, problem,
+    }
+  }
+
+  // The stagings, unavailable where none are wired and until every plugin may start, so the stopped mode installs nothing
+  protected installs(): Stagings {
+    if (this.stagings === null || this.phase !== 'all') throw { code: 'unavailable' }
+    return this.stagings
   }
 
   // What a window's banner shows, from the plugins manager's own states and the state it runs with

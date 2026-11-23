@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreActions, coreTopics, eventActions, installProblems, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LINK_LENGTH, MAX_LOCK_PATHS,
+  coreActions, coreTopics, eventActions, installProblems, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LINK_LENGTH, MAX_LOCK_PATHS, MAX_RELEASE_ZIPS,
   MAX_REFUSAL_COUNT, providerActions, refusedReasons, roleActions,
 } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
@@ -30,7 +30,7 @@ describe('the core actions', () => {
       'app.quit': 'windows',
       'app.relaunch': 'trusted',
       'app.pickFolder': 'trusted',
-      'app.pickPlugins': 'trusted',
+      'app.stagePicked': 'trusted',
       'core.findRelease': 'trusted',
       'core.stage': 'trusted',
       'core.unstage': 'trusted',
@@ -50,8 +50,9 @@ describe('the core actions', () => {
 
   it('names why a link or a source found nothing to install, fixed and frozen', () => {
     expect(installProblems).toEqual([
-      'not-github', 'no-release', 'no-zip', 'rate-limited', 'offline', 'invalid', 'name', 'duplicate', 'special', 'encrypted', 'too-many',
-      'too-big', 'not-a-folder', 'same-id', 'none',
+      'not-github', 'no-release', 'no-zip', 'rate-limited', 'offline', 'off-github', 'not-found', 'digest-mismatch', 'timed-out',
+      'cancelled', 'bad-answer', 'invalid', 'name', 'duplicate', 'special', 'encrypted', 'too-many', 'too-big', 'not-a-folder', 'same-id',
+      'none',
     ])
     expect(Object.isFrozen(installProblems)).toBe(true)
   })
@@ -150,22 +151,28 @@ describe('the core actions', () => {
     ['core.bindFailed', { reason: 'port-taken', port: 4748 }, false],
     // The Install button's flow: a picked zip or folder or a link's release zip staged, then dropped. Its Confirm is a
     // security request
-    ['app.pickPlugins', { source: 'zip' }, true],
-    ['app.pickPlugins', { source: 'folder' }, true],
-    ['app.pickPlugins', { source: 'link' }, false],
-    ['app.pickPlugins', undefined, false],
+    ['app.stagePicked', { source: 'zip' }, true],
+    ['app.stagePicked', { source: 'folder' }, true],
+    ['app.stagePicked', { source: 'link' }, false],
+    ['app.stagePicked', undefined, false],
     ['core.findRelease', { link: 'https://github.com/someone/plugins' }, true],
     ['core.findRelease', { link: 'x'.repeat(MAX_LINK_LENGTH) }, true],
     ['core.findRelease', { link: 'x'.repeat(MAX_LINK_LENGTH + 1) }, false],
     ['core.findRelease', { link: '' }, false],
     ['core.findRelease', { link: 'https://github.com/someone/plugins' + String.fromCharCode(0x202e) }, false],
-    ['core.stage', { source: { kind: 'zip', path: 'C:\\Users\\someone\\plugins.zip' } }, true],
-    ['core.stage', { source: { kind: 'folder', path: '/Users/someone/plugins' } }, true],
-    ['core.stage', { source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip' } }, true],
-    ['core.stage', { source: { kind: 'link', link: 'https://github.com/someone/plugins' } }, false],
-    ['core.stage', { source: { kind: 'zip', path: '' } }, false],
-    ['core.stage', { source: { kind: 'url', path: 'a.zip' } }, false],
-    ['core.stage', { source: { kind: 'zip', path: 'a.zip', asset: 'b.zip' } }, false],
+    // The window names a release zip by the handle main answered and its place in the list, never by a path or a link
+    ['core.stage', { release: 'g1', zip: 0 }, true],
+    ['core.stage', { release: 'g1', zip: MAX_RELEASE_ZIPS - 1 }, true],
+    ['core.stage', { release: 'g1', zip: MAX_RELEASE_ZIPS }, false],
+    ['core.stage', { release: 'g1', zip: -1 }, false],
+    ['core.stage', { release: 'g1', zip: 0.5 }, false],
+    ['core.stage', { release: 'g1' }, false],
+    ['core.stage', { release: 'g1', zip: 0, url: 'https://github.com/someone/plugins/releases/download/v1/a.zip' }, false],
+    ['core.stage', { source: { kind: 'zip', path: 'C:\\Users\\someone\\plugins.zip' } }, false],
+    ['core.stage', { source: { kind: 'folder', path: '/Users/someone/plugins' } }, false],
+    ['core.stage', { source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip' } }, false],
+    ['core.stage', { release: '../x', zip: 0 }, false],
+    ['app.stagePicked', { source: 'zip', path: '/tmp/p.zip' }, false],
     ['security.request', { change: { kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: 'a'.repeat(64) }] } }, true],
     ['core.unstage', { staged: 'stage-1' }, true],
     ['core.unstage', {}, false],

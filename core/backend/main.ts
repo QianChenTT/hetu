@@ -23,7 +23,8 @@ import { ViewFiles } from './runtime/views.ts'
 import { ViewImages } from './runtime/images.ts'
 import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
-import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
+import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
+import { InstallStagings } from './plugins-manager/stagings.ts'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
@@ -197,6 +198,9 @@ async function start(): Promise<void> {
       env: process.env,
       later: (run, ms) => setTimeout(run, ms).unref?.(),
     })
+    // The Install button's stagings in the data folder, which only main's own dialog and downloads fill
+    const stagings = new InstallStagings({ dataDir: booted.dataDir })
+    let picking = false
     const wired = wireCore({
       booted,
       installDir,
@@ -210,11 +214,28 @@ async function start(): Promise<void> {
       onFailure,
       // A removed note goes to the OS's bin, so it can be put back with hetu closed. A bin that refuses rejects
       trash: absolute => shell.trashItem(absolute),
+      stagings,
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
           if (call.action === 'app.pickFolder') {
             return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
+          }
+          // Staged here from the path main's own dialog answered, which never reaches the page
+          // Checked before the dialog opens, so no staging is made that couldn't be answered. One pick at a time
+          if (call.action === 'app.stagePicked') {
+            const { source } = call.args as { source: 'zip' | 'folder' }
+            if (pluginsManager === null) throw { code: 'unavailable' }
+            pluginsManager.canStage()
+            if (picking) throw { code: 'throttled' }
+            picking = true
+            try {
+              const picked = await pickPlugins(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options), source)
+              if (picked === null) return null
+              return await pluginsManager.stagedAnswer(await stagings.stagePicked(source, picked))
+            } finally {
+              picking = false
+            }
           }
           if (call.action === 'editor.frame' || call.action === 'editor.image') {
             const { plugin, frame, path: at } = call.args as { plugin: string, frame?: string, path?: string }

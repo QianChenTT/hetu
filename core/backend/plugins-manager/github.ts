@@ -2,6 +2,7 @@
 // offline. Node's own fetch, not Electron's net, which goes through the default session that refuses every request
 // and keeps cookies. Node's fetch keeps none and no cookie or credential is sent here
 
+import { installProblemWords } from '../../api/trusted.ts'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
 
 // The fetch main uses, Node's global one unless a test hands in its own
@@ -30,21 +31,10 @@ export const fetchProblems = Object.freeze([
 ] as const)
 export type FetchProblem = typeof fetchProblems[number]
 
-// Each problem as the trusted window says it
-export const fetchProblemWords: Readonly<Record<FetchProblem, string>> = Object.freeze({
-  'not-github': 'That is not a link to a GitHub repo or release. Paste one like https://github.com/owner/repo',
-  'off-github': "The download pointed away from the hosts hetu fetches from, so nothing was fetched. An older release may still use GitHub's old download host, which hetu no longer fetches from",
-  'no-release': "GitHub has no published release there. The repo may be private or missing or the tag may have no release. A repo link finds only the latest full release, so paste a prerelease's own tag link to install it",
-  'not-found': 'GitHub no longer has that file. Paste the link again to see what the release holds now',
-  'no-zip': 'That release holds no .zip file to install from',
-  'too-big': 'That zip is bigger than a plugin may be',
-  'digest-mismatch': 'The downloaded zip does not match the checksum GitHub lists for it, so it was not kept. Try again',
-  'rate-limited': 'GitHub is limiting requests from this network for now. Try again in an hour or install from a downloaded zip',
-  'offline': 'GitHub could not be reached. Check the connection and try again',
-  'timed-out': 'GitHub took too long to answer. Try again',
-  'cancelled': 'The download was stopped',
-  'bad-answer': 'GitHub answered in a way hetu does not read. Try again later or install from a downloaded zip',
-})
+// Each problem as the trusted window says it, from the one table of the install's words
+export const fetchProblemWords: Readonly<Record<FetchProblem, string>> = Object.freeze(
+  Object.fromEntries(fetchProblems.map(problem => [problem, installProblemWords[problem]])) as Record<FetchProblem, string>,
+)
 
 export class FetchRefused extends Error {
   readonly problem: FetchProblem
