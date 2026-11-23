@@ -6,13 +6,29 @@
 # Included here first, so the templates' own includes of it are empty and its elevating macros can be replaced below
 !include UAC.nsh
 
-# ERROR_ELEVATION_REQUIRED, the exit code of a setup or uninstaller that stopped where administrator rights were asked for
-!define HETU_EXIT_ELEVATION_REFUSED 740
+# The exit code of a setup or uninstaller that refused: where administrator rights were asked for, or an uninstaller
+# started for a folder other than the one hetu installs to. 740 is ERROR_ELEVATION_REQUIRED
+!define HETU_EXIT_REFUSED 740
+
+# The one folder hetu installs to. The per user mode sets the shell folders to the current user's first
+!define HETU_INSTALL_DIR "$LOCALAPPDATA\Programs\hetu"
 
 !macro hetuRefuseElevation
   MessageBox MB_OK|MB_ICONSTOP "hetu installs for this Windows account only and never asks for administrator rights" /SD IDOK
-  SetErrorLevel ${HETU_EXIT_ELEVATION_REFUSED}
+  SetErrorLevel ${HETU_EXIT_REFUSED}
   Quit
+!macroend
+
+!macro hetuRefuseFolder
+  MessageBox MB_OK|MB_ICONSTOP "This uninstaller removes hetu only from ${HETU_INSTALL_DIR}" /SD IDOK
+  SetErrorLevel ${HETU_EXIT_REFUSED}
+  Quit
+!macroend
+
+# The templates set $INSTDIR from /D=, an earlier install's InstallLocation in HKCU and the per user programs folder,
+# which can be redirected. Each of those is overridden here
+!macro hetuForceInstallDir
+  StrCpy $INSTDIR "${HETU_INSTALL_DIR}"
 !macroend
 
 # The templates start an elevated copy of the setup or the uninstaller only through these two macros: for a per machine
@@ -46,12 +62,22 @@
   !insertmacro setInstallModePerUser
 !macroend
 
+# The last of the setup's .onInit, after initMultiUser set the folder. A silent run shows no page, so this is the folder
+# it installs to
 !macro customInit
   !insertmacro hetuLockToCurrentUser
+  !insertmacro hetuForceInstallDir
 !macroend
 
+# un.onInit's first line made $OUTDIR the folder the uninstaller was started for, its own or the one _?= names, and
+# nothing before this changes $OUTDIR. An uninstaller for any other folder refuses before it removes anything
 !macro customUnInit
+  StrCpy $R9 $OUTDIR
   !insertmacro hetuLockToCurrentUser
+  !insertmacro hetuForceInstallDir
+  ${If} $R9 != $INSTDIR
+    !insertmacro hetuRefuseFolder
+  ${EndIf}
 !macroend
 
 !macro customWelcomePage
@@ -84,6 +110,13 @@
   Function hetuDesktopLeave
     ${NSD_GetState} $hetuDesktopBox $hetuDesktopBoxState
   FunctionEnd
+
+  # The install mode page's pre function sets the folder again after .onInit. The progress page is the next MUI page,
+  # so this runs after it and right before the files go in
+  Function hetuInstallDirBeforeFiles
+    !insertmacro hetuForceInstallDir
+  FunctionEnd
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE hetuInstallDirBeforeFiles
 !macroend
 
 !macro customInstall
@@ -103,6 +136,9 @@
 # An update runs the older uninstaller with --updated, which keeps the shortcut for the newer setup. A setup run with
 # --delete-app-data passes that flag in its place, so the shortcut goes then
 !macro customUnInstall
+  # The uninstall mode page's pre function sets the folder again after un.onInit. This runs inside the uninstall section,
+  # before anything is removed
+  !insertmacro hetuForceInstallDir
   ${IfNot} ${isUpdated}
     WinShell::UninstShortcut "$newDesktopLink"
     Delete "$newDesktopLink"

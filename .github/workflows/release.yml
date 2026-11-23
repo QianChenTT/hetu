@@ -131,7 +131,12 @@ jobs:
           }
           Invoke-Phase "refused install: $($setup.Name) /S /allusers" $setup.FullName @('/S', '/allusers') 740
           if ((Test-Path $dir) -or (Test-Path (Join-Path $env:ProgramFiles 'hetu'))) { throw 'the refused install left a folder' }
-          Invoke-Phase "install: $($setup.Name) /S" $setup.FullName @('/S') 0
+          # /D= names another folder and the setup installs to its own all the same. .onInit's SetOutPath makes the folder
+          # /D= names before the include's hook runs, so it may stay behind, empty
+          $elsewhere = Join-Path $env:RUNNER_TEMP 'hetu-elsewhere'
+          Invoke-Phase "install: $($setup.Name) /S /D=$elsewhere" $setup.FullName @('/S', "/D=$elsewhere") 0
+          if (@(Get-ChildItem $elsewhere -Recurse -Force -ErrorAction SilentlyContinue).Count -gt 0) { throw "the install put files in $elsewhere" }
+          if (-not (Test-Path (Join-Path $dir 'hetu.exe'))) { throw "the install isn't in $dir" }
           $env:HETU_INSTALLED = $dir
           $env:HETU_SETUP = $setup.FullName
           Write-Output "$(Get-Date -Format o) installed suite: starting"
