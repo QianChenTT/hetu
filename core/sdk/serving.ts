@@ -1,3 +1,4 @@
+import type { ActionArgs } from '../api/actions.ts'
 import type { Caller, ReasonCode, RefusalCode } from '../api/envelope.ts'
 import { VERSION } from '../api/version.ts'
 import { type Client, makeClient, type Request } from './client.ts'
@@ -18,6 +19,10 @@ export type IncomingCall = {
   readonly ctx: Client
 }
 
+// The role actions a plugin serves when it holds the role's item. The same list as core/api's roleActions, which a test
+// holds it to. Kept here as strings, so a plugin bundles none of core/api's schemas
+export const roleActionNames = ['door.handle'] as const satisfies readonly (keyof ActionArgs)[]
+
 // args come from another plugin as it wrote them, so the handler checks them
 export type Handler = (call: IncomingCall, args: unknown) => unknown
 
@@ -37,10 +42,12 @@ export class Serving {
     this.request = request
   }
 
+  // A name with no dot is the plugin's own action, served as <id>.<name>. A role's action is served under its own name
   provide(name: string, handler: Handler): void {
-    if (typeof name !== 'string' || name === '' || name.includes('.')) throw new TypeError('provide needs an action name with no dot')
+    const role = (roleActionNames as readonly string[]).includes(name)
+    if (typeof name !== 'string' || name === '' || (name.includes('.') && !role)) throw new TypeError('provide needs an action name with no dot or a role')
     if (typeof handler !== 'function') throw new TypeError('provide needs a handler')
-    this.handlers.set(`${this.id}.${name}`, handler)
+    this.handlers.set(role ? name : `${this.id}.${name}`, handler)
   }
 
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]> {

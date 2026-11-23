@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   coreActions, coreTopics, eventActions, installProblems, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LINK_LENGTH, MAX_LOCK_PATHS,
-  MAX_REFUSAL_COUNT, providerActions, refusedReasons,
+  MAX_REFUSAL_COUNT, providerActions, refusedReasons, roleActions,
 } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
-import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
+import { coreNamespaces, guardableActions, providers, serverOf } from '../api/ids.ts'
+import { MAX_LIST } from '../api/manifest.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
 import { pluginStates, policyJobStates } from '../api/policy-jobs.ts'
 
@@ -348,6 +349,42 @@ describe('the provider actions', () => {
     ['storage.get', { key: 'index', plugin: 'search' }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(providerActions[action].args.safeParse(args).success).toBe(ok)
+  })
+})
+
+// A role is an action the core names and one plugin serves, the plugin holding the role's item. The floor decides who
+// may call it, as for a core action
+describe('the role actions', () => {
+  it('names door.handle alone, called by a utility half and served by the plugin holding door.handle', () => {
+    expect(Object.fromEntries(Object.entries(roleActions).map(([action, spec]) => [action, [spec.from, spec.capability]]))).toEqual({
+      'door.handle': ['utility', 'door.handle'],
+    })
+    for (const action of Object.keys(roleActions)) expect(serverOf(namespace(action))?.route).toBe('role')
+    // Each call names the label it is made for, so what the holder does under it is judged for that pair
+    expect(roleActions['door.handle'].onBehalf).toBe(true)
+  })
+
+  it('is frozen with no prototype', () => {
+    expect(Object.isFrozen(roleActions)).toBe(true)
+    expect(Object.isFrozen(roleActions['door.handle'])).toBe(true)
+    expect(Object.getPrototypeOf(roleActions)).toBeNull()
+    expect(roleActions['toString']).toBeUndefined()
+  })
+
+  const headers = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`mcp-h${i}`, 'v']))
+  it.each([
+    ['a body and a header', { body: '{"jsonrpc":"2.0"}', headers: { 'mcp-session-id': 'a' } }, true],
+    ['an empty body and no header', { body: '', headers: {} }, true],
+    ['the most headers', { body: 'x', headers: headers(MAX_LIST) }, true],
+    ['one header past the most', { body: 'x', headers: headers(MAX_LIST + 1) }, false],
+    ['no headers', { body: 'x' }, false],
+    ['no body', { headers: {} }, false],
+    ['a body that is no text', { body: 1, headers: {} }, false],
+    ['a header value that is no text', { body: 'x', headers: { 'mcp-a': 1 } }, false],
+    ['an onBehalf among the arguments', { body: 'x', headers: {}, onBehalf: 'claude-code#1' }, false],
+    ['nothing', undefined, false],
+  ])('checks door.handle with %s', (_name, args, ok) => {
+    expect(roleActions['door.handle'].args.safeParse(args).success).toBe(ok)
   })
 })
 

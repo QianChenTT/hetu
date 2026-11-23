@@ -26,6 +26,10 @@ export abstract class PluginsChanges extends PluginsInstall {
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
+    // A widen to a role another plugin holds could never apply, so no Confirm asks for it
+    if (parsed.data.kind === 'grant.widen' && this.roleTaken(parsed.data.plugin, [parsed.data.capability])) {
+      return Promise.reject({ code: 'invalid', reason: 'role-taken' })
+    }
     const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
     if (change.kind === 'plugin.install') {
       try {
@@ -154,6 +158,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const k = this.known.get(id)
     const entry = k?.from === 'folder' ? k.entry : null
     if (entry === null) throw new Error(`no plugin entry for ${id}`)
+    if (add && this.roleTaken(id, [capability])) throw new Error(`another plugin holds ${capability.type}`)
     const key = capabilityKey(capability)
     const has = entry.granted.some(granted => capabilityKey(granted) === key)
     if (add && has) return

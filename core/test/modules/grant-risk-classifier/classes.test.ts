@@ -64,6 +64,29 @@ describe('lock.set', () => {
   })
 })
 
+// The role the door calls: what the plugin answers goes to programs outside hetu, so the item is a network's class. It
+// is not network in the pair rule and never asks at first use, since the door's call raises no ask
+describe('door.handle', () => {
+  const role: Capability = { type: 'door.handle' }
+
+  it('is class 3 and asks nothing at first use', () => {
+    expect(approval({ mcp: [role] }, 'mcp')).toMatchObject({ class: 3, firstUse: [] })
+  })
+
+  it('beside reads and writes stays the highest of their classes and of its own, no pair', () => {
+    const write: Capability = { type: 'luoshu.write', paths: ['notes/**'] }
+    expect(approval({ mcp: [role, read, write, commit] }, 'mcp')).toMatchObject({ class: 3, firstUse: [] })
+    expect(approval({ mcp: [role, read, { type: 'luoshu.write', paths: ['**'] }] }, 'mcp')).toMatchObject({ class: 4 })
+  })
+
+  it('names no plugin that reads and calls it, which holds its class and no pair', () => {
+    const answer = approval({ notes: [read, calls('mcp')], mcp: [role] }, 'mcp')
+    expect(answer.notes[0]).toBe('Class 3, Network')
+    expect(answer.notes.filter(line => line.startsWith('Plugins that read'))).toEqual([])
+    expect(answer.notes).toContain('Raises notes from class 0, Contained to class 3, Network')
+  })
+})
+
 describe('the plugins connected through plugin.call', () => {
   it('count both ways, so a reader and a network plugin sharing a callee are class 4, the callee too', () => {
     const plugins = rows({ reader: [[read, calls('bridge')], 1], bridge: [[storage], 0] })
@@ -228,6 +251,7 @@ describe('whether an update loads unasked', () => {
     ['a class not known', [], null, []],
     ['a new version asking for a grant it does not hold', [], 0, [storage]],
     ['a plugin holding ui.layout', [layout], 0, [layout]],
+    ['a plugin holding door.handle', [{ type: 'door.handle' }], 3, [{ type: 'door.handle' }]],
   ] as [string, Capability[], number | null, Capability[]][])('is no for %s', (_name, granted, n, requested) => {
     expect(classes(update(granted, n, requested)).unasked).toBe(false)
   })

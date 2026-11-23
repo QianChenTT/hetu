@@ -36,6 +36,7 @@ const one: Record<Capability['type'], Capability> = {
   'guard.hook': { type: 'guard.hook' },
   'log.read': { type: 'log.read' },
   'lock.set': { type: 'lock.set', paths: ['**'] },
+  'door.handle': { type: 'door.handle' },
 }
 
 describe('a grant as a plain sentence', () => {

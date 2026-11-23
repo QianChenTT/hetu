@@ -864,11 +864,12 @@ describe('the off states', () => {
   }, JOIN_MS)
 })
 
-// The real http host runs through the SDK on the fake runtime's port and mcp is a plugin-folder worker the test answers
-// for, approved unsigned by its hash. A request through a seam that names a client reaches mcp as http's host half on
-// behalf of that client
+// The real http host runs through the SDK on the fake runtime's port and mcp is a plugin-folder worker holding
+// door.handle the test answers for, approved unsigned by its hash. A request through a seam that names a client reaches
+// mcp as door.handle from http's host half on behalf of that client
 describe('the door through the joined core', () => {
   const callMcp = { type: 'plugin.call' as const, targets: ['mcp'] }
+  const role = { type: 'door.handle' as const }
   const seam = (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata#1' } : null)
 
   async function freePort(): Promise<number> {
@@ -919,13 +920,13 @@ describe('the door through the joined core', () => {
     const parts = await joined({
       install: {
         ...coreInstall(),
-        'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [callMcp] })) },
+        'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler')) },
       },
       folder: {
         beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })),
-        mcp: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } })),
+        mcp: filesFor(workerManifest('mcp', { capabilities: [role] })),
       },
-      entries: { beta: { granted: [callMcp] }, mcp: { signer: mcpAs === 'first-party-signer' ? 'hetu first-party' : null } },
+      entries: { beta: { granted: [callMcp] }, mcp: { granted: [role], signer: mcpAs === 'first-party-signer' ? 'hetu first-party' : null } },
       prepare: async dataDir => {
         const allowUnsigned = [await hashOf(path.join(dataDir, 'plugins', 'beta'))]
         if (mcpAs !== 'unsigned') allowUnsigned.push(await hashOf(path.join(dataDir, 'plugins', 'mcp')))
@@ -952,8 +953,8 @@ describe('the door through the joined core', () => {
     expect(pluginsManager.plugin('mcp')).toMatchObject({ state: 'ready' })
     const mcp = runtime.half('mcp')
     const asked = post(port, 'not json {')
-    await until(() => mcp.inbox.some(message => message.kind === 'call' && message.action === 'mcp.handle'), 5000)
-    const delivered = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle')!
+    await until(() => mcp.inbox.some(message => message.kind === 'call' && message.action === 'door.handle'), 5000)
+    const delivered = mcp.inbox.find(message => message.kind === 'call' && message.action === 'door.handle')!
     expect(delivered.caller).toEqual({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 })
     expect(delivered.onBehalf).toBe('https://client.example/metadata#1')
     expect(delivered.args).toEqual({ body: 'not json {', headers: { 'mcp-session-id': 's-1' } })
@@ -1002,11 +1003,13 @@ describe('the door through the joined core', () => {
     expect(shut).toBe(true)
   })
 
-  it('refuses another plugin\'s worker holding plugin.call on mcp at mcp.handle\'s from list, after the gate allowed it', async () => {
+  // The floor admits only a utility half's call to the role, so neither a grant on mcp nor mcp's own action reaches it
+  it('refuses another plugin\'s worker holding plugin.call on mcp at door.handle\'s floor, the gate never asked', async () => {
     const { runtime, decisions } = await door()
-    const reply = await runtime.half('beta').ask('mcp.handle', { body: '{}', headers: {} })
+    const reply = await runtime.half('beta').ask('door.handle', { body: '{}', headers: {} }, 1000, { onBehalf: 'claude-code#1' })
     expect(code(reply!)).toBe('not-granted')
-    expect(decisions).toContainEqual({ caller: 'beta', target: 'mcp', allow: true })
+    expect(code((await runtime.half('beta').ask('mcp.handle', { body: '{}', headers: {} }))!)).toBe('not-found')
+    expect(decisions.filter(decision => decision.caller === 'beta' && decision.target === undefined)).toEqual([])
     expect(runtime.half('mcp').inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 })

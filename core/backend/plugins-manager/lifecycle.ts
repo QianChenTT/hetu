@@ -1,4 +1,4 @@
-import type { StoppedMode } from '../../api/actions.ts'
+import { roleActions, type StoppedMode } from '../../api/actions.ts'
 import { withdrawnWith } from '../../api/changes.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls } from '../../api/ids.ts'
@@ -189,6 +189,8 @@ export abstract class PluginsLifecycle extends PluginsBase {
       this.note('plugin.waiting', { plugin: k.id, reason: shown.reason })
     } else if (shown.state === 'refused') {
       this.note('plugin.refused', { plugin: k.id, reason: shown.reason })
+      // Another plugin took the role it asks for, so the approval raised while it was found could never apply
+      if (shown.reason === 'role-taken') this.requests.withdraw(change => change.kind === 'plugin.approve' && change.plugin === k.id)
     } else if (shown.state === 'found' && shown.reason === 'new') {
       this.note('plugin.found', { plugin: k.id })
       // A plugin found in the folder waits as a notice for the human's approval
@@ -247,19 +249,25 @@ export abstract class PluginsLifecycle extends PluginsBase {
     this.checkIdle()
   }
 
-  // A plugin's own requires and plugin.call targets, as it may know them. A core module is ready while on
+  // A plugin's own requires and plugin.call targets, as it may know them, and for a utility half each role a utility
+  // half calls, by the role's action, as its holder is. A core module is ready while on
   protected depsOf(k: Known): Record<string, DepState> {
     const granted = k.from === 'install' ? k.read.manifest?.capabilities ?? [] : k.entry?.granted ?? []
     const targets = granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
-    const deps: Record<string, DepState> = {}
-    for (const id of [...new Set([...(k.read.manifest?.requires ?? []), ...targets])].sort()) {
-      if (isModule(id)) {
-        deps[id] = this.moduleServes(id) ? 'ready' : this.modules.state(id) === 'starting' ? 'starting' : 'unavailable'
-        continue
-      }
+    const stateOf = (id: string): DepState => {
+      if (isModule(id)) return this.moduleServes(id) ? 'ready' : this.modules.state(id) === 'starting' ? 'starting' : 'unavailable'
       const other = this.known.get(id)
       const coming = other !== undefined && (other.state === 'starting' || (other.state === 'found' && this.verdictOf(other).kind === 'start'))
-      deps[id] = other?.state === 'ready' ? 'ready' : coming ? 'starting' : 'unavailable'
+      return other?.state === 'ready' ? 'ready' : coming ? 'starting' : 'unavailable'
+    }
+    const deps: Record<string, DepState> = {}
+    for (const id of [...new Set([...(k.read.manifest?.requires ?? []), ...targets])].sort()) deps[id] = stateOf(id)
+    if (k.place === 'utility') {
+      for (const [action, spec] of Object.entries(roleActions)) {
+        if (spec.from !== 'utility') continue
+        const holder = this.holderOf(action)
+        deps[action] = holder === null ? 'unavailable' : stateOf(holder)
+      }
     }
     return deps
   }
