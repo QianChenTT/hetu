@@ -437,6 +437,43 @@ describe('the trusted page', () => {
     expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'luoshu.pick', folder: '/Users/someone/notes' } } })
   })
 
+  it('draws one tab at a time, Plugins first, and keeps the tab picked across answers', () => {
+    const { page, hears, sent, drawn } = started()
+    expect(drawn.at(-1)?.screen.tab).toBe('plugins')
+    expect(drawn.at(-1)?.screen.tabs.map(tab => tab.label)).toEqual(['Plugins', 'Switches', 'Notes folder', 'Identities', 'Limits'])
+    const before = sent.length
+    page.pickTab('limits')
+    expect(drawn.at(-1)?.screen.tab).toBe('limits')
+    // Picking a tab asks the core for nothing
+    expect(sent.length).toBe(before)
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 4 })
+    hears(replyTo(sent.at(-1)!, calm()))
+    expect(drawn.at(-1)?.screen.tab).toBe('limits')
+  })
+
+  it('marks the Plugins tab with how many plugins wait for the human', () => {
+    const marks = (list: SecurityList) => screen(list).tabs.map(tab => tab.mark)
+    expect(marks(calm())).toEqual([null, null, null, null, null])
+    const waiting = calm({
+      plugins: [
+        plugin({ id: 'new-one', state: 'found', reason: 'new', on: false }),
+        plugin({ id: 'broke', state: 'crashed', reason: 'flood' }),
+        plugin({ id: 'fine' }),
+      ],
+    })
+    expect(marks(waiting)).toEqual(['2 waiting', null, null, null, null])
+  })
+
+  // A request waiting for its Confirm is drawn above whichever tab is picked, so none sits unseen on a tab not shown
+  it('draws a request waiting for its Confirm whatever tab is picked', () => {
+    const { page, hears, sent, drawn } = started()
+    page.pickTab('identities')
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 4 })
+    hears(replyTo(sent.at(-1)!, calm({ requests: [{ id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: [], type: 'gate', root: null, field: null }] })))
+    expect(drawn.at(-1)?.screen.tab).toBe('identities')
+    expect(drawn.at(-1)?.screen.request).not.toBeNull()
+  })
+
   it('asks for a limit as a request, which waits for the Confirm', () => {
     const { sent, page } = started()
     page.ask(limitChange('readyMs', '20000', 'search')!)

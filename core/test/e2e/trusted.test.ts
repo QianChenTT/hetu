@@ -61,6 +61,8 @@ async function trustedPage(app: ElectronApplication): Promise<Page> {
 
 const text = (page: Page) => page.locator('#root').innerText()
 const showing = (page: Page, line: string) => until(async () => (await text(page)).includes(line))
+// One tab drawn at a time, Plugins first
+const tabTo = (page: Page, name: string) => page.getByRole('tab', { name, exact: true }).click()
 
 type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
 let next = 5000
@@ -238,9 +240,11 @@ describe('the switches and limits', () => {
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)
-    await showing(page, 'readyMs · fixed 10000')
+    await until(async () => (await page.locator('section.install').count()) === 1)
     expect(await page.locator('section.install').innerText()).toContain('On macOS, programs running as you can change hetu’s install')
     await tick(PAST_DELAY)
+    await tabTo(page, 'Limits')
+    await showing(page, 'readyMs · fixed 10000')
     await page.getByLabel('New value for readyMs').fill('20000')
     await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
     await showing(page, 'Set readyMs to 20000 for every plugin')
@@ -249,12 +253,14 @@ describe('the switches and limits', () => {
     await showing(page, 'readyMs · fixed 10000 · all: 20000')
     expect((await new StateStore(dataDir).load()).state.switches.limits.all).toEqual({ readyMs: 20000 })
 
+    await tabTo(page, 'Switches')
     await page.locator('p', { hasText: 'Confirm off for this window: off' }).getByRole('button', { name: 'Switch on' }).click()
     await showing(page, 'Apply changes made in this window without a Confirm')
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Confirm' }).click()
     await showing(page, 'Confirm off for this window: on')
 
+    await tabTo(page, 'Limits')
     await page.getByLabel('New value for readyMs').fill('ten')
     await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
     await showing(page, 'Type a whole number from 1 up')
@@ -340,6 +346,7 @@ export default definePlugin({
       await page.getByRole('button', { name: 'Confirm' }).click()
       await until(async () => (await page.locator('section.request').count()) === 0)
     }
+    await tabTo(page, 'Identities')
     await showing(page, '"cIient-1" under asker · luoshu.read on "inbox/**"')
     const identities = page.locator('section.identities')
     expect(await identities.locator('h2').innerText()).toBe('Identities')
@@ -468,12 +475,11 @@ describe('the startup screen', () => {
     ])
     expect(await startup.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
     // Above the plugin list, not over it
-    expect(await page.locator('#root > section').first().getAttribute('class')).toBe('startup')
+    expect(await page.locator('#root .content > section').first().getAttribute('class')).toBe('startup')
     expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
     await tick(PAST_DELAY)
     await startup.getByRole('button', { name: 'Close for now' }).click()
     await until(async () => await startup.count() === 0)
-    await page.getByText('Menu', { exact: true }).click()
     await page.getByRole('button', { name: 'Show the startup screen again' }).click()
     await until(async () => await startup.count() === 1)
   })
