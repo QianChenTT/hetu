@@ -407,6 +407,57 @@ describe('an install confirmed', () => {
     heldId(await fresh.pluginsManager.request(install([{ id: 'one', digest: DIGEST }]), trusted))
   })
 
+  // A folder put in the plugin folder by hand, or found at start and never approved, is no install's to replace
+  it('refuses a plugin whose folder is there with no entry and leaves that folder as it was', async () => {
+    const made = await started([staged('search')], { folder: { search: filesFor(workerManifest('search', { version: '0.1.0' })) } })
+    const before = await readFile(path.join(made.dataDir, 'plugins', 'search', 'hetu-plugin.json'), 'utf8')
+    expect(await code(made.pluginsManager.request(install([{ id: 'search', digest: DIGEST }]), trusted))).toBe('invalid')
+    expect(await code(made.pluginsManager.apply(install([{ id: 'search', digest: DIGEST }])))).toBe('invalid')
+    expect(await readFile(path.join(made.dataDir, 'plugins', 'search', 'hetu-plugin.json'), 'utf8')).toBe(before)
+    expect(await entries(made)).toEqual([])
+    expect(made.pluginsManager.pending().map(one => one.kind)).toEqual(['plugin.approve'])
+  })
+
+  it('refuses a folder put there after the start just the same', async () => {
+    const made = await started([staged('search')])
+    const id = heldId(await made.pluginsManager.request(install([{ id: 'search', digest: DIGEST }]), trusted))
+    await mkdir(path.join(made.dataDir, 'plugins', 'search'), { recursive: true })
+    await writeFile(path.join(made.dataDir, 'plugins', 'search', 'planted.js'), 'planted')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    expect(await readFile(path.join(made.dataDir, 'plugins', 'search', 'planted.js'), 'utf8')).toBe('planted')
+    expect(await entries(made)).toEqual([])
+  })
+
+  it('leaves a plugin written before a later write failed with its build not allowed, refused unsigned and not run', async () => {
+    const made = await started([staged('search'), staged('tags')])
+    const write = made.store.writePlugin.bind(made.store)
+    made.store.writePlugin = async (id, entry) => {
+      if (id === 'tags') throw new Error('disk full')
+      return write(id, entry)
+    }
+    const id = heldId(await made.pluginsManager.request(install([{ id: 'search', digest: DIGEST }, { id: 'tags', digest: DIGEST }]), trusted))
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    const { state } = await made.store.load()
+    expect(Object.keys(state.plugins)).toEqual(['search'])
+    expect(state.switches.allowUnsigned).not.toContain(state.plugins.search.contentHash)
+    expect(made.pluginsManager.list().find(row => row.id === 'search')).toMatchObject({ state: 'refused', reason: 'unsigned' })
+    expect(made.runtime.order()).toEqual([])
+    expect(made.fake.unstaged).toEqual(['s1'])
+  })
+
+  it('runs nothing when allowing the builds fails, every entry written refused unsigned', async () => {
+    const made = await started([staged('search')])
+    made.store.writeSwitches = async () => {
+      throw new Error('disk full')
+    }
+    const id = heldId(await made.pluginsManager.request(install([{ id: 'search', digest: DIGEST }]), trusted))
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    expect(await entries(made)).toEqual(['search'])
+    expect(made.pluginsManager.list().find(row => row.id === 'search')).toMatchObject({ state: 'refused', reason: 'unsigned' })
+    expect(made.runtime.order()).toEqual([])
+    expect(made.fake.unstaged).toEqual(['s1'])
+  })
+
   it('installs nothing once shutdown began and drops the staging', async () => {
     const made = await started([staged('search')])
     await made.pluginsManager.shutdown()
