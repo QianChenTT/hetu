@@ -1,10 +1,11 @@
 import path from 'node:path'
-import type { PendingRequest } from '../../api/actions.ts'
+import { roleActions, type PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
 import { grantKeyOf, type Caller } from '../../api/envelope.ts'
 import { isNewer } from '../../api/plugin-version.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
+import type { FolderManifest } from '../../api/manifest.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
 import type { Plugin, StateStore } from '../boot/header.ts'
 import { clear, clearFailedOnce, clearStartMarker, folders, stage, swapIn } from './folders.ts'
@@ -13,6 +14,7 @@ import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import type { Staging } from './header.ts'
 import { readPlugin, type Read } from './verify.ts'
 import { PluginsInventory } from './inventory.ts'
+import type { Classed } from './classes.ts'
 import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, toggled, bare } from './base.ts'
 
 // The changes: the queue of held requests, applying a change the human confirmed or that narrows and the staged
@@ -43,16 +45,66 @@ export abstract class PluginsChanges extends PluginsInventory {
 
   // The staging a plugin.install names with each plugin ticked in it under the digest the human was shown and nothing
   // that keeps it out, checked when it is asked for and again as it applies: not-found for a staging the core doesn't
-  // hold, stale for a plugin it doesn't hold or holds under another digest, invalid for one that can't be installed
+  // hold, stale for a plugin it doesn't hold or holds under another digest, invalid for one that can't be installed and
+  // invalid with role-taken for a role another plugin holds or two plugins ticked would hold, which could never serve
   protected stagingOf(change: Extract<Change, { kind: 'plugin.install' }>): Staging {
     const staging = this.heldStaging(change.staged)
     if (staging === null) throw { code: 'not-found' }
+    const roles = new Set<string>()
     for (const { id, digest } of change.plugins) {
       const staged = staging.plugins.find(plugin => plugin.id === id)
       if (staged === undefined || staged.digest !== digest) throw { code: 'stale' }
       if (staged.problem !== null || staged.manifest === null) throw { code: 'invalid' }
+      const asks = staged.manifest.capabilities ?? []
+      const held = Object.values(roleActions).map(spec => spec.capability).filter(type => asks.some(item => item.type === type))
+      if (this.roleTaken(id, asks) || held.some(type => roles.has(type))) throw { code: 'invalid', reason: 'role-taken' }
+      for (const type of held) roles.add(type)
     }
     return staging
+  }
+
+  // What a plugin.install reads: the switches, the notes folder and the entry of each plugin it installs, the staging's
+  // plugins as the core holds them and the class each ticked plugin would be stored with. An entry written, the staging
+  // dropped or holding another manifest, or anything else that moves a class between the request and the Confirm stales
+  // it, so the class stored is the one the Confirm showed
+  protected async installPrint(change: Extract<Change, { kind: 'plugin.install' }>): Promise<string> {
+    const files = await Promise.all([null, ...change.plugins.map(plugin => plugin.id)].map(id => this.store.fingerprint(id)))
+    const staging = this.heldStaging(change.staged)
+    if (staging === null) return [change.kind, ...files, 'gone'].join('\n')
+    const asks = this.installAsks(change, staging)
+    const classes = change.plugins.map(({ id }) => {
+      const staged = staging.plugins.find(plugin => plugin.id === id)
+      if (staged?.manifest === undefined || staged.manifest === null) return null
+      const classed = this.installClassed(id, staged.manifest, staged.digest, asks, true)
+      const entry = classed.own?.entry
+      return [entry?.class, entry?.firstUse, entry?.unclassed, classed.lines]
+    })
+    const staged = JSON.stringify(staging.plugins.map(plugin => [plugin.id, plugin.digest, plugin.problem]))
+    return [change.kind, ...files, staged, JSON.stringify(classes)].join('\n')
+  }
+
+  // What each plugin ticked asks for, by id, from its staged manifest
+  protected installAsks(change: Extract<Change, { kind: 'plugin.install' }>, staging: Staging): Map<string, readonly Capability[]> {
+    return new Map(change.plugins.flatMap(({ id }) => {
+      const manifest = staging.plugins.find(plugin => plugin.id === id)?.manifest
+      return manifest === undefined || manifest === null ? [] : [[id, manifest.capabilities ?? []] as const]
+    }))
+  }
+
+  // The entry a plugin-folder plugin holds, undefined for none
+  protected installedEntry(id: string): Plugin | undefined {
+    return this.known.get(id)?.from === 'folder' ? this.state.plugins[id] : undefined
+  }
+
+  // A plugin an install takes, classed as the approval or the update it is from its staged manifest, with the other
+  // plugins the install takes counted as installed with what each asks for (asks holds every plugin taken). The
+  // Confirm's words, the request's fingerprint and the entry the install stores all come from here, so the class stored
+  // is the class shown
+  protected installClassed(id: string, manifest: FolderManifest, hash: string, asks: ReadonlyMap<string, readonly Capability[]>, confirm: boolean): Classed {
+    const before = this.installedEntry(id)
+    const after: Plugin = { version: manifest.version, contentHash: hash, signer: null, granted: [...(manifest.capabilities ?? [])], class: null, enabled: true }
+    const others = new Map([...asks].filter(([other]) => other !== id))
+    return this.classes(before === undefined ? 'approve' : 'update', id, after, confirm, { staged: others })
   }
 
   // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
@@ -98,8 +150,7 @@ export abstract class PluginsChanges extends PluginsInventory {
         return this.applyStaged(change.plugin, confirm)
       // The install lands the plugins from the bytes the human was shown, checked once more here
       case 'plugin.install':
-        this.stagingOf(change)
-        return this.stagings!.install(change.staged, change.plugins.map(({ id, digest }) => ({ id, digest })))
+        return this.install(change, confirm)
       case 'devMode':
         return this.writeSwitches({ ...this.state.switches, devMode: toggled(this.state.switches.devMode, change.plugin, change.on) })
       case 'exec.anyCommand':
@@ -379,6 +430,93 @@ export abstract class PluginsChanges extends PluginsInventory {
     // gone it can't run, and it waits for approval as a start finds it
     if (cleared) this.known.delete(id)
     this.replan()
+  }
+
+  // ---- the Install button
+
+  // The plugins ticked, from the bytes staged and shown: each read again and checked against the hash staged, so bytes
+  // changed in the staging since answer stale. Each is classed as the Confirm showed it before anything is written.
+  // Every one is written beside the plugin folder first, so a write that fails there changes nothing. Then each goes
+  // into the plugin folder with its entry written last. One write then allows every build. A failure between leaves
+  // entries whose builds nothing allows, refused unsigned, so none of them runs. A plugin replaced stops and starts on
+  // its new bytes as an update does and a new one is known from the bytes written. The staging goes either way
+  protected async install(change: Extract<Change, { kind: 'plugin.install' }>, confirm: boolean): Promise<void> {
+    try {
+      await this.installNow(change, confirm)
+    } finally {
+      // Installed or failed, nothing installs from it again
+      this.dropStaging(change.staged)
+    }
+  }
+
+  protected async installNow(change: Extract<Change, { kind: 'plugin.install' }>, confirm: boolean): Promise<void> {
+    if (this.closing) throw { code: 'stopped' }
+    if (this.phase !== 'all') throw { code: 'unavailable' }
+    const staging = this.stagingOf(change)
+    const stagings = this.stagings!
+    const asks = this.installAsks(change, staging)
+    const taken: { id: string, read: Read, classed: Classed }[] = []
+    for (const { id } of change.plugins) {
+      const read = await stagings.read(change.staged, id)
+      if (read === null || read.manifest === null) throw { code: 'stale' }
+      const classed = this.installClassed(id, read.manifest as FolderManifest, read.hash!, asks, confirm)
+      // A plugin the install also takes is written from its own class, never from another's view of it before the install
+      taken.push({ id, read, classed: { ...classed, others: classed.others.filter(other => !asks.has(other.id)) } })
+    }
+    const dirs: string[] = []
+    try {
+      for (const { id, read } of taken) dirs.push(await stage(this.dataDir, id, read.files))
+    } catch (err) {
+      // A copy left in staging is never read or run, the write's own error goes up
+      for (const dir of dirs) await clear(dir).catch(() => {})
+      throw err
+    }
+    const builds: { old: string | null, next: string }[] = []
+    for (const [i, { id, read, classed }] of taken.entries()) {
+      const before = this.installedEntry(id)
+      await swapIn(this.dataDir, id, dirs[i]).catch(async (err: unknown) => {
+        // A copy not yet swapped in that can't be cleared stays in staging, which nothing reads, the swap's error goes up
+        for (const dir of dirs.slice(i)) await clear(dir).catch(() => {})
+        throw err
+      })
+      const entry = classed.own!.entry!
+      await this.withClassChange(classed, async () => {
+        await this.store.writePlugin(id, entry)
+        // A plugin replaced keeps its old entry in memory until it runs the new bytes, as an update does
+        this.state.plugins[id] = entry
+        this.entryChecks.set(id, 'ok')
+      })
+      builds.push({ old: before?.contentHash ?? null, next: entry.contentHash })
+      this.landed(id, read, entry, before)
+    }
+    const named = new Set(Object.values(this.state.plugins).map(entry => entry.contentHash))
+    const gone = new Set(builds.flatMap(({ old }) => (old === null || named.has(old) ? [] : [old])))
+    const allowUnsigned = [...new Set([...this.state.switches.allowUnsigned.filter(hash => !gone.has(hash)), ...builds.map(({ next }) => next)])]
+    await this.writeSwitches({ ...this.state.switches, allowUnsigned })
+    await this.pumped()
+    for (const { id } of taken) {
+      const k = this.known.get(id)
+      if (k?.held?.reason === 'update') k.held = null
+    }
+    this.replan()
+  }
+
+  // A plugin the install wrote, known from the bytes written: a new one as a scan finds it, one that runs held stopped
+  // so it stops and starts again on the new bytes, its cache cleared when the version moved
+  protected landed(id: string, read: Read, entry: Plugin, before: Plugin | undefined): void {
+    const k = this.known.get(id)
+    if (k === undefined || k.from !== 'folder' || k.live === null) {
+      this.know(id, 'folder', folders.plugins(this.dataDir, id), read, entry)
+      this.checked(id, 'folder', read, entry.contentHash, false)
+    } else {
+      k.held = { kind: 'held', state: 'stopped', reason: 'update' }
+      k.entry = entry
+      k.read = read
+    }
+    if (before !== undefined && before.version !== entry.version) {
+      void this.clearSpace('cache', id).catch(() => this.note('fault', { plugin: id, step: 'cache' }))
+      this.known.get(id)!.previousVersion = before.version
+    }
   }
 
   // ---- staged updates
