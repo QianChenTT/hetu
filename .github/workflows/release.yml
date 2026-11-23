@@ -1,7 +1,7 @@
 name: Release
 
 # By hand only: the Actions tab's Run workflow, or `gh workflow run release.yml --ref main`, with `-f ref=<commit>` to
-# build a commit main holds in place of its tip. Builds the Windows MSI and publishes it as a pre-release named after
+# build a commit main holds in place of its tip. Builds the Windows setup and publishes it as a pre-release named after
 # the version in that commit's package.json
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The MSI built, installed, checked and uninstalled on a fresh runner, then attested. Nothing is published here
+  # The setup built, installed, checked and uninstalled on a fresh runner, then attested. Nothing is published here
   build:
     # Only main ships. A run started on another branch skips both jobs
     if: github.ref == 'refs/heads/main'
@@ -31,7 +31,7 @@ jobs:
       actions: read # the CI runs of this commit
       id-token: write # the OIDC token for the Sigstore certificate the attestation is signed with
       attestations: write # store the attestation
-      artifact-metadata: write # the storage record actions/attest makes for the MSI
+      artifact-metadata: write # the storage record actions/attest makes for the setup
     outputs:
       version: ${{ steps.version.outputs.version }}
       commit: ${{ steps.commit.outputs.commit }}
@@ -92,61 +92,58 @@ jobs:
       # ships, the package itself pinned by the lock file
       - name: fetch Electron
         run: node node_modules/electron/install.js
-      - name: build the MSI
+      - name: build the setup
         run: npm run package
-      - name: check the MSI against its SHA256SUMS
+      - name: check the setup against its SHA256SUMS
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
         working-directory: dist-package/installer
         run: |
-          test -f "hetu-$VERSION-x64.msi"
-          test "$(ls *.msi | wc -l)" -eq 1
+          test -f "hetu-setup-$VERSION-x64.exe"
+          test "$(ls *.exe | wc -l)" -eq 1
           sha256sum -c SHA256SUMS
-      # The MSI that ships, installed per machine as a person would, checked and removed again. The same install hung
-      # in CI with no log kept. So it ends at 10 min, each msiexec run writes a verbose log flushed line by line and a
-      # line before and after each phase names the phase it stopped in
+      # The setup that ships, installed silently for the runner's account as a person would, checked and removed again.
+      # Ends at 10 min, with a line before and after each phase naming the phase it stopped in. The setup refuses any
+      # step that asks for administrator rights with exit code 740
       - name: install, check and uninstall
-        id: install
         timeout-minutes: 10
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $msi = Get-Item "dist-package/installer/hetu-$env:VERSION-x64.msi"
-          $logs = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'msiexec-logs')
-          Write-Output "$(Get-Date -Format o) install: msiexec /i $($msi.Name)"
-          $install = Start-Process msiexec -ArgumentList '/i', $msi.FullName, '/qn', '/norestart', '/l*v!', (Join-Path $logs 'install.log') -Wait -PassThru
+          $setup = Get-Item "dist-package/installer/hetu-setup-$env:VERSION-x64.exe"
+          Write-Output "$(Get-Date -Format o) install: $($setup.Name) /S"
+          $install = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
           Write-Output "$(Get-Date -Format o) install ended with $($install.ExitCode)"
-          if ($install.ExitCode -ne 0) { throw "msiexec /i ended with $($install.ExitCode)" }
-          $env:HETU_INSTALLED = Join-Path $env:ProgramFiles 'hetu'
+          if ($install.ExitCode -ne 0) { throw "the setup ended with $($install.ExitCode)" }
+          $env:HETU_INSTALLED = Join-Path $env:LOCALAPPDATA 'Programs\hetu'
+          $env:HETU_SETUP = $setup.FullName
           Write-Output "$(Get-Date -Format o) installed suite: starting"
           npm run test:installed -w hetu-core
           Write-Output "$(Get-Date -Format o) installed suite ended with $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw 'the installed checks failed' }
-          Write-Output "$(Get-Date -Format o) uninstall: msiexec /x $($msi.Name)"
-          $remove = Start-Process msiexec -ArgumentList '/x', $msi.FullName, '/qn', '/norestart', '/l*v!', (Join-Path $logs 'uninstall.log') -Wait -PassThru
+          Write-Output "$(Get-Date -Format o) uninstall: Uninstall hetu.exe /S"
+          $remove = Start-Process (Join-Path $env:HETU_INSTALLED 'Uninstall hetu.exe') -ArgumentList '/S' -Wait -PassThru
           Write-Output "$(Get-Date -Format o) uninstall ended with $($remove.ExitCode)"
-          if ($remove.ExitCode -ne 0) { throw "msiexec /x ended with $($remove.ExitCode)" }
+          if ($remove.ExitCode -ne 0) { throw "the uninstaller ended with $($remove.ExitCode)" }
+          # The uninstaller runs a copy of itself from the temp folder, which can still be removing the folder
+          $deadline = (Get-Date).AddMinutes(1)
+          while ((Test-Path $env:HETU_INSTALLED) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $env:HETU_INSTALLED) { throw 'the install folder is still there' }
-      # The msiexec logs of an install step that failed, timed out or was cancelled
-      - name: keep the msiexec logs
-        if: always() && (steps.install.outcome == 'failure' || steps.install.outcome == 'cancelled')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: msiexec-logs
-          path: ${{ runner.temp }}/msiexec-logs/*.log
-      # A signed record of which workflow built the MSI from which commit, checked with gh attestation verify
-      - name: attest the MSI's build
+          $guid = node -e "import('./core/build/package.ts').then(m => console.log(m.INSTALL_GUID))"
+          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$guid") { throw 'the uninstall entry is still there' }
+      # A signed record of which workflow built the setup from which commit, checked with gh attestation verify
+      - name: attest the setup's build
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist-package/installer/hetu-${{ steps.version.outputs.version }}-x64.msi
-      - name: keep the MSI and its hash for the release
+          subject-path: dist-package/installer/hetu-setup-${{ steps.version.outputs.version }}-x64.exe
+      - name: keep the setup and its hash for the release
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hetu-release
           path: |
-            dist-package/installer/hetu-${{ steps.version.outputs.version }}-x64.msi
+            dist-package/installer/hetu-setup-${{ steps.version.outputs.version }}-x64.exe
             dist-package/installer/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
@@ -179,16 +176,16 @@ jobs:
           if [ "$draft" = "false" ]; then echo "::error::$tag is already released"; exit 1; fi
           if [ "$draft" = "true" ]; then gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes; fi
           cat > notes.md <<EOF
-          The Windows installer, built from $SHA by the Release workflow. A pre-release: hetu is 0.x and the installer isn't signed, so Windows names an unknown publisher and SmartScreen may warn first
+          The Windows setup, built from $SHA by the Release workflow. It installs for the current Windows account with no administrator rights. A pre-release: hetu is 0.x and the setup isn't signed, so SmartScreen may warn first
 
           Check the download against its build:
 
           \`\`\`
-          gh attestation verify hetu-$VERSION-x64.msi --repo $GITHUB_REPOSITORY
+          gh attestation verify hetu-setup-$VERSION-x64.exe --repo $GITHUB_REPOSITORY
           \`\`\`
 
           or against SHA256SUMS with \`sha256sum -c SHA256SUMS\`
           EOF
-          gh release create "$tag" "hetu-$VERSION-x64.msi" SHA256SUMS --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+          gh release create "$tag" "hetu-setup-$VERSION-x64.exe" SHA256SUMS --repo "$GITHUB_REPOSITORY" --target "$SHA" \
             --title "hetu $VERSION" --notes-file notes.md --prerelease --draft
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false

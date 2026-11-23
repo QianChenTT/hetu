@@ -80,8 +80,9 @@ jobs:
         run: npm run test:e2e
 
   # The packed build on both systems: the folder build and its packaged suite, then the end-to-end tests driving a
-  # packed build that isn't locked. Windows also builds the MSI, installs it per machine, runs the installed checks
-  # against Program Files and uninstalls it. The runner is elevated, which a person's shell isn't
+  # packed build that isn't locked. Windows also builds the setup, installs it silently for the runner's account, runs
+  # the installed checks against %LOCALAPPDATA%\Programs\hetu and uninstalls it. The runner is elevated, which a
+  # person's shell isn't
   package:
     strategy:
       fail-fast: false
@@ -107,47 +108,44 @@ jobs:
         run: npm run test:packaged -w hetu-core
       - name: drive the packed build
         run: npm run test:e2e:packaged
-      - name: build the MSI
+      - name: build the setup
         if: runner.os == 'Windows'
         run: npm run package
-      # Takes 10 to 13 s and has hung with no log kept. So it ends at 10 min, each msiexec run writes a verbose log flushed
-      # line by line and a line before and after each phase names the phase it stopped in
+      # Ends at 10 min, with a line before and after each phase naming the phase it stopped in. The setup refuses any
+      # step that asks for administrator rights with exit code 740
       - name: install, check and uninstall
-        id: install
         if: runner.os == 'Windows'
         timeout-minutes: 10
         shell: pwsh
         run: |
-          $msi = Get-ChildItem dist-package/installer/*.msi | Select-Object -First 1
-          $logs = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'msiexec-logs')
-          Write-Output "$(Get-Date -Format o) install: msiexec /i $($msi.Name)"
-          $install = Start-Process msiexec -ArgumentList '/i', $msi.FullName, '/qn', '/norestart', '/l*v!', (Join-Path $logs 'install.log') -Wait -PassThru
+          $setup = Get-ChildItem dist-package/installer/hetu-setup-*-x64.exe | Select-Object -First 1
+          Write-Output "$(Get-Date -Format o) install: $($setup.Name) /S"
+          $install = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
           Write-Output "$(Get-Date -Format o) install ended with $($install.ExitCode)"
-          if ($install.ExitCode -ne 0) { throw "msiexec /i ended with $($install.ExitCode)" }
-          $env:HETU_INSTALLED = Join-Path $env:ProgramFiles 'hetu'
+          if ($install.ExitCode -ne 0) { throw "the setup ended with $($install.ExitCode)" }
+          $env:HETU_INSTALLED = Join-Path $env:LOCALAPPDATA 'Programs\hetu'
+          $env:HETU_SETUP = $setup.FullName
           Write-Output "$(Get-Date -Format o) installed suite: starting"
           npm run test:installed -w hetu-core
           Write-Output "$(Get-Date -Format o) installed suite ended with $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw 'the installed checks failed' }
-          Write-Output "$(Get-Date -Format o) uninstall: msiexec /x $($msi.Name)"
-          $remove = Start-Process msiexec -ArgumentList '/x', $msi.FullName, '/qn', '/norestart', '/l*v!', (Join-Path $logs 'uninstall.log') -Wait -PassThru
+          Write-Output "$(Get-Date -Format o) uninstall: Uninstall hetu.exe /S"
+          $remove = Start-Process (Join-Path $env:HETU_INSTALLED 'Uninstall hetu.exe') -ArgumentList '/S' -Wait -PassThru
           Write-Output "$(Get-Date -Format o) uninstall ended with $($remove.ExitCode)"
-          if ($remove.ExitCode -ne 0) { throw "msiexec /x ended with $($remove.ExitCode)" }
+          if ($remove.ExitCode -ne 0) { throw "the uninstaller ended with $($remove.ExitCode)" }
+          # The uninstaller runs a copy of itself from the temp folder, which can still be removing the folder
+          $deadline = (Get-Date).AddMinutes(1)
+          while ((Test-Path $env:HETU_INSTALLED) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $env:HETU_INSTALLED) { throw 'the install folder is still there' }
-      # The msiexec logs of an install step that failed, timed out or was cancelled
-      - name: keep the msiexec logs
-        if: always() && (steps.install.outcome == 'failure' || steps.install.outcome == 'cancelled')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: msiexec-logs
-          path: ${{ runner.temp }}/msiexec-logs/*.log
-      - name: keep the MSI and its hash
+          $guid = node -e "import('./core/build/package.ts').then(m => console.log(m.INSTALL_GUID))"
+          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$guid") { throw 'the uninstall entry is still there' }
+      - name: keep the setup and its hash
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hetu-msi
+          name: hetu-setup
           path: |
-            dist-package/installer/*.msi
+            dist-package/installer/hetu-setup-*-x64.exe
             dist-package/installer/SHA256SUMS
 
   # SCA: dev dependencies and medium or lower advisories only warn, high and critical in
