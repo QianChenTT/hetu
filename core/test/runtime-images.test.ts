@@ -4,17 +4,22 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { providerActions } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import { readBytes } from '../backend/providers/luoshu/bytes.ts'
+import { bytesReader } from '../backend/providers/luoshu/bytes.ts'
 import { createLuoshu, type Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { sniffed, ViewImages } from '../backend/runtime/images.ts'
 import { serve } from '../backend/runtime/sessions.ts'
-import { frameCsp, IMAGE_CSP } from '../backend/runtime/views.ts'
-import { cleanup, code, editor, harness, trusted, worker } from './router-fakes.ts'
+import { IMAGE_CSP } from '../backend/runtime/lib.ts'
+import { frameCsp } from '../backend/runtime/views.ts'
+import { cleanup, code, editor, harness, host as hostCaller, hostHalf, trusted, windowWay, worker } from './router-fakes.ts'
 
 // A real 1x1 png, then the first bytes of each other type
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201ab4f5e0b0000000049454e44ae426082', 'hex')
 const JPEG = Buffer.from('ffd8ffe000104a46494600010100000100010000ffd9', 'hex')
 const SVG = '<?xml version="1.0"?>\n<!-- drawn by hand -->\n<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><script>alert(1)</script></svg>'
+const withByte = (bytes: Buffer, at: number, value: number) => {
+  bytes[at] = value
+  return bytes
+}
 const bmp = () => {
   const bytes = Buffer.alloc(58)
   bytes.write('BM', 0, 'latin1')
@@ -69,8 +74,8 @@ function host(options: { readCap?: number, now?: () => number } = {}) {
   let n = 0
   const images = new ViewImages({
     running: plugin => running.get(plugin) ?? null,
-    reads: (caller, at) => routed.router.reads(caller, at),
-    read: async (caller, at, reads) => (await readBytes(made.provider, caller, at, reads))?.bytes ?? null,
+    reads: (caller, at) => routed.router.readsNote(caller, at),
+    read: bytesReader(() => made.provider),
     token: () => (++n).toString(16).padStart(32, '0'),
     ...(options.now !== undefined ? { now: options.now } : {}),
   })
@@ -139,12 +144,83 @@ describe('the images host', () => {
       running: plugin => running.get(plugin) ?? null,
       reads: () => true,
       read: async (caller, at, reads) => {
-        const got = await readBytes(made.provider, caller, at, reads)
+        const got = await bytesReader(() => made.provider)(caller, at, reads)
         running.delete('board')
-        return got?.bytes ?? null
+        return got
       },
     })
     expect(await images.serve(images.mint(editor, 'board', 'pics/dot.png')!)).toBe(null)
+  })
+
+  it('holds at most 32 tokens waiting for one plugin and 128 in all, a token served or past its time making room', async () => {
+    let now = 1000
+    const made = luoshu()
+    const plugins = Array.from({ length: 5 }, (_, at) => `p${at}`)
+    const images = new ViewImages({
+      running: plugin => (plugins.includes(plugin) ? 1 : null),
+      reads: () => true,
+      read: bytesReader(() => made.provider),
+      now: () => now,
+    })
+    const first = images.mint(editor, 'p0', 'pics/dot.png')!
+    for (let at = 1; at < 32; at++) expect(images.mint(editor, 'p0', 'pics/dot.png')).not.toBe(null)
+    expect(images.mint(editor, 'p0', 'pics/dot.png')).toBe(null)
+    expect(bytesOf(await images.serve(first))).toEqual(PNG)
+    expect(images.mint(editor, 'p0', 'pics/dot.png')).not.toBe(null)
+    for (const plugin of ['p1', 'p2', 'p3']) for (let at = 0; at < 32; at++) expect(images.mint(editor, plugin, 'pics/dot.png')).not.toBe(null)
+    expect(images.mint(editor, 'p4', 'pics/dot.png')).toBe(null)
+    now += 10_001
+    expect(images.mint(editor, 'p4', 'pics/dot.png')).not.toBe(null)
+  })
+
+  it('drops tokens past their time on a request as well as on a mint', async () => {
+    let now = 1000
+    const made = luoshu()
+    const images = new ViewImages({ running: () => 1, reads: () => true, read: bytesReader(() => made.provider), now: () => now })
+    for (let at = 0; at < 32; at++) images.mint(editor, 'board', 'pics/dot.png')
+    now += 10_001
+    expect(await images.serve('hetu://images/ffffffffffffffffffffffffffffffff')).toBe(null)
+    expect((images as unknown as { tokens: Map<string, unknown> }).tokens.size).toBe(0)
+  })
+
+  it('reads four notes at once, the rest waiting their turn', async () => {
+    const made = luoshu()
+    const read = bytesReader(() => made.provider)
+    let reading = 0
+    let most = 0
+    const gates: (() => void)[] = []
+    const images = new ViewImages({
+      running: () => 1,
+      reads: () => true,
+      read: async (caller, at, reads) => {
+        most = Math.max(most, ++reading)
+        await new Promise<void>(resolve => gates.push(resolve))
+        reading--
+        return read(caller, at, reads)
+      },
+    })
+    const served = Array.from({ length: 6 }, () => images.serve(images.mint(editor, 'board', 'pics/dot.png')!))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(gates).toHaveLength(4)
+    gates.shift()!()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(gates).toHaveLength(4)
+    while (gates.length > 0) {
+      gates.shift()!()
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    expect((await Promise.all(served)).every(each => each !== null)).toBe(true)
+    expect(most).toBe(4)
+  })
+
+  it('serves any path in the notes with the gate off by the human, as every read is let on then', async () => {
+    const { images, routed } = host()
+    routed.gate.grants.board = []
+    expect(images.mint(editor, 'board', 'Secret/a.png')).toBe(null)
+    routed.pluginsManager.policyJobs.gate = 'off'
+    expect(bytesOf(await images.serve(images.mint(editor, 'board', 'Secret/a.png')!))).toEqual(PNG)
+    // The luoshu's own path rules still hold
+    expect(await images.serve(images.mint(editor, 'board', 'cfg/hidden.png')!)).toBe(null)
   })
 
   it('serves nothing after the editor page unloads or past ten seconds', async () => {
@@ -206,49 +282,57 @@ describe('the image bytes read', () => {
   it('asks reads about the path as spelled and the canonical one, and reads nothing when either is refused', async () => {
     const made = luoshu()
     const asked: string[] = []
-    const got = await readBytes(made.provider, plugin, 'pics/dot.png', at => (asked.push(at), true))
+    const read = bytesReader(() => made.provider)
+    const got = await read(plugin, 'pics/dot.png', (at: string) => (asked.push(at), true))
     expect(got).toEqual({ bytes: PNG, path: 'pics/dot.png' })
     expect(asked).toEqual(['pics/dot.png', 'pics/dot.png'])
-    expect(await readBytes(made.provider, plugin, 'pics/dot.png', () => false)).toBe(null)
+    expect(await read(plugin, 'pics/dot.png', () => false)).toBe(null)
     let first = true
-    expect(await readBytes(made.provider, plugin, 'pics/dot.png', () => (first ? (first = false, true) : false))).toBe(null)
+    expect(await read(plugin, 'pics/dot.png', () => (first ? (first = false, true) : false))).toBe(null)
     expect(made.calls()).toBe(0)
   })
 
   it('reads nothing with the luoshu off', async () => {
-    expect(await readBytes(null, plugin, 'pics/dot.png', () => true)).toBe(null)
+    expect(await bytesReader(() => null)(plugin, 'pics/dot.png', () => true)).toBe(null)
   })
 
-  it('is an action no plugin can call, since the router routes none core/api leaves out', async () => {
+  it('is an action no worker, pair, door or window can call, since the router routes none core/api leaves out', async () => {
     expect(Object.hasOwn(providerActions, 'luoshu.bytes')).toBe(false)
-    const { connect, gate, luoshu: fake } = harness()
+    const { connect, gate, luoshu: fake, router } = harness()
     gate.grants.board = [{ type: 'luoshu.read', paths: ['**'] }]
+    gate.grants['mcp-http-handler'] = [{ type: 'luoshu.read', paths: ['**'] }]
     const board = connect(worker('board'))
-    expect(code(await board.ask('luoshu.bytes', { path: 'pics/dot.png' }))).not.toBe(null)
+    const args = { path: 'pics/dot.png' }
+    expect(code(await board.ask('luoshu.bytes', args))).toBe('invalid')
+    // A pair is the root's call carrying a client's field
+    expect(code(await board.ask('luoshu.bytes', args, { onBehalf: 'client#1' }))).toBe('invalid')
+    // The door is mcp-http-handler's host half in its utility process
+    expect(code(await hostHalf(router, hostCaller('mcp-http-handler')).ask('luoshu.bytes', args))).toBe('invalid')
+    expect(code(await windowWay(router, { page: editor }).ask('page', 'luoshu.bytes', args))).toBe('invalid')
     expect(fake.prepared).toEqual([])
   })
 })
 
-describe('the router\'s reads', () => {
+describe('the router\'s readsNote', () => {
   const board = worker('board')
 
-  it('answers the gate\'s canRead while it is on, yes with it off by the human and no when it is down or shutting down', () => {
+  it('answers the gate\'s canRead while it is on, yes for every path with the gate off by the human as every read is, and no when it is down or shutting down', () => {
     const { router, gate, pluginsManager } = harness()
     gate.grants.board = [{ type: 'luoshu.read', paths: ['pics/**'] }]
-    expect(router.reads(board, 'pics/a.png')).toBe(true)
-    expect(router.reads(board, 'b.png')).toBe(false)
+    expect(router.readsNote(board, 'pics/a.png')).toBe(true)
+    expect(router.readsNote(board, 'b.png')).toBe(false)
     pluginsManager.policyJobs.gate = 'off'
-    expect(router.reads(board, 'b.png')).toBe(true)
+    expect(router.readsNote(board, 'b.png')).toBe(true)
     pluginsManager.policyJobs.gate = 'failed'
-    expect(router.reads(board, 'pics/a.png')).toBe(false)
+    expect(router.readsNote(board, 'pics/a.png')).toBe(false)
     pluginsManager.policyJobs.gate = 'on'
     gate.readable = () => {
       throw new Error('down')
     }
-    expect(router.reads(board, 'pics/a.png')).toBe(false)
+    expect(router.readsNote(board, 'pics/a.png')).toBe(false)
     gate.readable = null
     router.stopping()
-    expect(router.reads(board, 'pics/a.png')).toBe(false)
+    expect(router.readsNote(board, 'pics/a.png')).toBe(false)
   })
 })
 
@@ -260,12 +344,19 @@ describe('the sniff', () => {
     ['webp', Buffer.from('RIFF\x24\x00\x00\x00WEBPVP8 ', 'latin1'), 'image/webp'],
     ['avif', Buffer.from('\x00\x00\x00\x1cftypavif\x00\x00\x00\x00', 'latin1'), 'image/avif'],
     ['bmp', bmp(), 'image/bmp'],
+    ['bmp of its 26 bytes', bmp().subarray(0, 26), 'image/bmp'],
+    ['bmp cut at 25 bytes', bmp().subarray(0, 25), null],
+    ['bmp with a second header of no known size', withByte(bmp(), 14, 41), null],
+    ['bmp with a reserved byte set', withByte(bmp(), 9, 1), null],
     ['svg', Buffer.from(SVG), 'image/svg+xml'],
     ['svg with a byte order mark and a doctype', Buffer.from('﻿<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x.dtd">\n<svg/>'), 'image/svg+xml'],
     ['text', Buffer.from('hello'), null],
     ['text that starts BM', Buffer.from('BMW notes from the garage, nothing more than that here'), null],
     ['html', Buffer.from('<html><svg></svg></html>'), null],
     ['an svg past its first 4 KiB', Buffer.from(`<!--${'x'.repeat(5000)}-->\n<svg/>`), null],
+    // The root and the character after it within the first 4096 bytes, then one byte later
+    ['an svg whose root ends the sniff window', Buffer.from(`<!--${'x'.repeat(4083)}-->\n<svg/>`), 'image/svg+xml'],
+    ['an svg whose root starts at the window\'s edge', Buffer.from(`<!--${'x'.repeat(4084)}-->\n<svg/>`), null],
     ['nothing', Buffer.alloc(0), null],
   ])('reads %s', (_name, bytes, type) => {
     expect(sniffed(bytes)).toBe(type)
