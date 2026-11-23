@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open } from 'node:fs/promises'
+import { mkdir, open } from 'node:fs/promises'
 import path from 'node:path'
 import type { FoundRelease, InstallProblem, StagedProblem, StagedSource } from '../../api/actions.ts'
 import { MAX_STAGED_PLUGINS } from '../../api/changes.ts'
@@ -44,16 +44,15 @@ function digestOf(read: Read): string {
   return createHash('sha256').update(manifest?.bytes ?? Buffer.alloc(0)).digest('hex')
 }
 
-// O_NOFOLLOW where the platform has one, so a zip swapped for a link after the dialog isn't read through the link
-const READ_ONLY = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+// O_NONBLOCK where the platform has one, so a FIFO picked as the zip is refused by the fstat instead of waiting for a
+// writer. A link the human picked is followed, the pick is theirs
+const READ_ONLY = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)
 
-// A picked zip's bytes, read once up to the cap a release zip has. One that isn't a plain file, a link among them, can't
-// be read or is past the cap is refused
+// A picked zip's bytes, opened once, checked through the handle and read up to the cap a release zip has. One that
+// isn't a plain file, can't be read or is past the cap is refused
 async function zipBytes(file: string, cap: number): Promise<Buffer | UnpackProblem> {
   let handle
   try {
-    // A link is refused before it is opened, where the platform has no O_NOFOLLOW
-    if (!(await lstat(file)).isFile()) return 'invalid'
     handle = await open(file, READ_ONLY)
   } catch {
     return 'invalid'
