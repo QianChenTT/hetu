@@ -150,7 +150,8 @@ label {
 }
 
 .startup {
-  padding: 12px 16px;
+  max-width: 44em;
+  padding: 16px 20px;
   border: 1px solid #b9c6d3;
   background: #f1f5f9;
 }
@@ -161,11 +162,42 @@ label {
 
 .startup h3 {
   margin: 12px 0 4px;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .startup p {
   margin: 4px 0;
+}
+
+/* Where the guide stands: each step, the one drawn marked, a done one ticked */
+.guide-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.guide-steps li {
+  padding: 2px 8px;
+  border: 1px solid #b9c6d3;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.guide-steps li[aria-current="step"] {
+  border-color: #1d2b3a;
+  font-weight: 600;
+}
+
+.guide-steps li.done-step {
+  color: #2d6a2d;
+}
+
+.guide-moves {
+  margin-top: 16px;
 }
 
 .done {

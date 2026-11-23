@@ -8,7 +8,8 @@ import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { watchingModuleIds } from '../../api/ids.ts'
 import { installBox, Installer, type InstallBox, type InstallFlow } from './install.ts'
-import { startupScreen, type Startup, type StartupShown } from './startup.ts'
+import { welcomeDue } from '../../api/trusted.ts'
+import { startupScreen, type Startup } from './startup.ts'
 
 export type Bridge = {
   send(message: unknown): void
@@ -28,10 +29,10 @@ export type Part = { text: string, label: boolean }
 export type IdentityRow = { label: string, line: string, change: Change | null }
 
 // The tabs on the left, one drawn at a time on the right. What waits for a Confirm is drawn above whichever is picked
-export const tabs = ['plugins', 'switches', 'notes', 'identities', 'limits'] as const
+export const tabs = ['start', 'plugins', 'switches', 'notes', 'identities', 'limits'] as const
 export type Tab = typeof tabs[number]
 const tabLabels: Readonly<Record<Tab, string>> = Object.freeze({
-  plugins: 'Plugins', switches: 'Switches', notes: 'Notes folder', identities: 'Identities', limits: 'Limits',
+  start: 'Get started', plugins: 'Plugins', switches: 'Switches', notes: 'Notes folder', identities: 'Identities', limits: 'Limits',
 })
 
 export type Limit = { constant: LimitName, fixed: number, all: number | null, plugins: { plugin: string, value: number }[] }
@@ -55,7 +56,7 @@ export type Screen = {
   identities: { rows: IdentityRow[], about: string }
   // The Install button's box, null while nothing is being installed
   installing: InstallBox | null
-  // The startup screen's steps, null while it isn't shown
+  // The welcome guide's steps and the one drawn, null in the stopped mode
   startup: Startup | null
   // The tab drawn and every tab with its name. mark says what on a tab waits for the human, drawn beside its name so
   // nothing waits unseen on a tab not shown
@@ -224,7 +225,9 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
   return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
 }
 
-export function screen(list: SecurityList, flow: InstallFlow | null = null, shown: StartupShown = 'auto', tab: Tab = 'plugins'): Screen {
+// tab is the one the human picked, else Get started while the welcome is due and Plugins after. at is the guide's step
+// the human went to
+export function screen(list: SecurityList, flow: InstallFlow | null = null, tab: Tab | null = null, at: number | null = null): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
@@ -243,8 +246,8 @@ export function screen(list: SecurityList, flow: InstallFlow | null = null, show
     installNote: INSTALL_LINE,
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
     installing: installBox(flow),
-    startup: startupScreen(list, shown),
-    tab,
+    startup: startupScreen(list, at),
+    tab: tab ?? (welcomeDue(list) ? 'start' : 'plugins'),
     tabs: tabs.map(id => ({ id, label: tabLabels[id], mark: id === 'plugins' ? waitingMark(list) : null })),
   }
 }
@@ -278,8 +281,8 @@ export class TrustedPage {
   private readonly pending = new Map<number, (reply: Reply) => void>()
   private last: SecurityList | null = null
   private note: string | null = null
-  private startup: StartupShown = 'auto'
-  private tab: Tab = 'plugins'
+  private tab: Tab | null = null
+  private step: number | null = null
   readonly installer: Installer
 
   constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void) {
@@ -348,14 +351,16 @@ export class TrustedPage {
     this.redraw()
   }
 
-  // The startup screen closed for now or shown again from below the tabs, for this window's life
-  closeStartup(): void {
-    this.startup = 'closed'
+  // The guide's step the human went to with Next or Back, for this window's life
+  guideTo(step: number): void {
+    const last = this.last === null ? 1 : startupScreen(this.last, null)?.steps.length ?? 1
+    this.step = Math.min(Math.max(step, 0), last - 1)
     this.redraw()
   }
 
-  showStartup(): void {
-    this.startup = 'shown'
+  // Away from the guide to the plugin list. Its tab shows it again
+  leaveGuide(): void {
+    this.tab = 'plugins'
     this.redraw()
   }
 
@@ -394,7 +399,9 @@ export class TrustedPage {
   }
 
   private redraw(): void {
-    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.startup, this.tab), this.note)
+    // The first tab is picked once from the first list, so approving a layout mid-guide doesn't move the human away
+    if (this.last !== null && this.tab === null) this.tab = welcomeDue(this.last) ? 'start' : 'plugins'
+    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.tab, this.step), this.note)
   }
 
   private heard(message: unknown): void {
