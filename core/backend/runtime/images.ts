@@ -70,12 +70,14 @@ export class ViewImages {
   }
 
   async serve(url: string): Promise<Served | null> {
+    // Tokens past their time go first, so the one asked for is one still in it
+    this.expired()
     const token = tokenOf(url)
     const held = token === null ? undefined : this.tokens.get(token)
     if (token === null || held === undefined) return null
     this.tokens.delete(token)
     const live = () => this.options.running(held.plugin) === held.incarnation
-    if (held.until < this.expired() || !live()) return null
+    if (!live()) return null
     const caller = callerOf(held.plugin, held.incarnation)
     const got = await this.turn(() => (live() ? this.options.read(caller, held.path, path => this.options.reads(caller, path)) : Promise.resolve(null)))
     const bytes = got?.bytes ?? null
