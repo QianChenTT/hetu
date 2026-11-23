@@ -55,13 +55,15 @@ describe('the include script\'s lock to the current user', () => {
     })
   }
 
-  it('refuses with ERROR_ELEVATION_REQUIRED and quits', async () => {
-    const text = await readFile(script, 'utf8')
-    const body = bodyOf(macros(text), 'hetuRefuseElevation')
-    expect(code(text)).toMatch(/!define\s+HETU_EXIT_ELEVATION_REFUSED\s+740\b/)
-    expect(body).toMatch(/SetErrorLevel\s+\$\{HETU_EXIT_ELEVATION_REFUSED\}/)
-    expect(body).toMatch(/^\s*Quit\s*$/m)
-  })
+  for (const refusal of ['hetuRefuseElevation', 'hetuRefuseFolder']) {
+    it(`refuses with ERROR_ELEVATION_REQUIRED and quits, in ${refusal}`, async () => {
+      const text = await readFile(script, 'utf8')
+      const body = bodyOf(macros(text), refusal)
+      expect(code(text)).toMatch(/!define\s+HETU_EXIT_REFUSED\s+740\b/)
+      expect(body).toMatch(/SetErrorLevel\s+\$\{HETU_EXIT_REFUSED\}/)
+      expect(body).toMatch(/^\s*Quit\s*$/m)
+    })
+  }
 
   // A template that reached the plugin directly, or a new macro around it, would slip past the include
   it('replaces every macro the templates reach UAC\'s elevation through with the refusal', async () => {
@@ -105,5 +107,85 @@ describe('the include script\'s pages and shortcut', () => {
   it('keeps the desktop shortcut through an update and removes it on an uninstall', async () => {
     const body = bodyOf(macros(await readFile(script, 'utf8')), 'customUnInstall')
     expect(body).toMatch(/\$\{IfNot\}\s+\$\{isUpdated\}[\s\S]*Delete\s+"\$newDesktopLink"[\s\S]*\$\{EndIf\}/)
+  })
+})
+
+// The places the templates set $INSTDIR, read from the templates, then where the include sets it back
+describe('the include script\'s lock to one install folder', () => {
+  const read = (...parts: string[]) => readFile(path.join(templates, ...parts), 'utf8')
+  // The code lines of a template, numbered from 1, comments blanked so the numbers hold
+  const lines = async (...parts: string[]) => (await read(...parts)).split(/\r?\n/).map(line => (/^\s*[#;]/.test(line) ? '' : line))
+  const at = (all: string[], pattern: RegExp) => all.findIndex(line => pattern.test(line))
+
+  it('is %LOCALAPPDATA%\\Programs\\hetu, set by one macro', async () => {
+    const text = await readFile(script, 'utf8')
+    expect(code(text)).toMatch(/^!define\s+HETU_INSTALL_DIR\s+"\$LOCALAPPDATA\\Programs\\hetu"\s*$/m)
+    expect(bodyOf(macros(text), 'hetuForceInstallDir').trim()).toBe('StrCpy $INSTDIR "${HETU_INSTALL_DIR}"')
+  })
+
+  // A template that set the folder somewhere new would slip past the include
+  it('knows every place the templates set $INSTDIR', async () => {
+    const sets: string[] = []
+    for (const file of await templateFiles(templates)) {
+      for (const macro of macros(await readFile(file, 'utf8'))) {
+        if (/StrCpy\s+\$INSTDIR\b/.test(macro.body)) sets.push(macro.name)
+      }
+    }
+    expect(sets.sort()).toEqual(['setInstallModePerAllUsers', 'setInstallModePerUser'])
+    // The folder page's fix-up, compiled only with allowToChangeInstallationDirectory, which the setup leaves off
+    const assisted = await lines('assistedInstaller.nsh')
+    const fixup = at(assisted, /StrCpy \$INSTDIR "\$INSTDIR\\\$\{APP_FILENAME\}"/)
+    expect(fixup).toBeGreaterThan(-1)
+    expect(assisted.slice(0, fixup).some(line => /!ifdef allowToChangeInstallationDirectory/.test(line))).toBe(true)
+  })
+
+  it('sets it in the setup after .onInit picked it, which is where a silent run takes it from', async () => {
+    const installer = await lines('installer.nsi')
+    expect(at(installer, /!insertmacro initMultiUser/)).toBeLessThan(at(installer, /!insertmacro customInit/))
+    const body = bodyOf(macros(await readFile(script, 'utf8')), 'customInit')
+    expect(body.indexOf('!insertmacro hetuForceInstallDir')).toBeGreaterThan(body.indexOf('!insertmacro hetuLockToCurrentUser'))
+  })
+
+  // The install mode page's pre function calls setInstallModePerUser again, after .onInit
+  it('sets it again in the progress page\'s pre function, after the install mode page', async () => {
+    const assisted = await lines('assistedInstaller.nsh')
+    const mode = at(assisted, /!insertmacro PAGE_INSTALL_MODE/)
+    const hook = at(assisted, /!insertmacro customPageAfterChangeDir/)
+    const progress = at(assisted, /!insertmacro MUI_PAGE_INSTFILES/)
+    expect(mode).toBeGreaterThan(-1)
+    expect(mode).toBeLessThan(hook)
+    expect(hook).toBeLessThan(progress)
+    // No MUI page between the hook and the progress page takes the pre function first
+    expect(assisted.slice(hook + 1, progress).filter(line => /!insertmacro MUI_PAGE_|MUI_PAGE_CUSTOMFUNCTION/.test(line))).toEqual([])
+    const all = macros(await readFile(script, 'utf8'))
+    const page = bodyOf(all, 'customPageAfterChangeDir')
+    const pre = /!define\s+MUI_PAGE_CUSTOMFUNCTION_PRE\s+(\S+)\s*$/.exec(page.trim())?.[1]
+    expect(pre).toBeDefined()
+    expect(page).toMatch(new RegExp(`Function\\s+${pre}\\s+!insertmacro hetuForceInstallDir\\s+FunctionEnd`))
+  })
+
+  it('refuses an uninstaller started for any other folder, read from $OUTDIR before the templates change $INSTDIR', async () => {
+    const uninstaller = await lines('uninstaller.nsh')
+    const start = at(uninstaller, /^Function un\.onInit/)
+    const first = uninstaller.slice(start + 1).find(line => line.trim() !== '')
+    expect(first?.trim()).toBe('SetOutPath $INSTDIR')
+    const hook = at(uninstaller, /!insertmacro customUnInit/)
+    expect(uninstaller.slice(start + 2, hook).filter(line => /SetOutPath/.test(line))).toEqual([])
+    // Nothing the uninstaller's .onInit runs before the hook moves $OUTDIR
+    const between = macros(await read('multiUser.nsh')).filter(macro => macro.name === 'setInstallModePerUser' || macro.name === 'setInstallModePerAllUsers')
+    for (const macro of between) expect(macro.body, macro.name).not.toMatch(/SetOutPath/)
+    const body = bodyOf(macros(await readFile(script, 'utf8')), 'customUnInit')
+    expect(body).toMatch(/^\s*StrCpy\s+\$R9\s+\$OUTDIR\s*\n\s*!insertmacro hetuLockToCurrentUser\s*\n\s*!insertmacro hetuForceInstallDir\s*\n\s*\$\{If\}\s+\$R9\s+!=\s+\$INSTDIR\s*\n\s*!insertmacro hetuRefuseFolder/)
+  })
+
+  // The uninstall mode page's pre function sets it again after un.onInit
+  it('sets it again inside the uninstall section, before anything is removed', async () => {
+    const uninstaller = await lines('uninstaller.nsh')
+    const hook = at(uninstaller, /!insertmacro customUnInstall\b/)
+    expect(hook).toBeGreaterThan(-1)
+    expect(hook).toBeLessThan(at(uninstaller, /RMDir \/r \$INSTDIR/))
+    expect(hook).toBeLessThan(at(uninstaller, /!insertmacro customRemoveFiles/))
+    const body = bodyOf(macros(await readFile(script, 'utf8')), 'customUnInstall')
+    expect(code(body).trim().split('\n')[0]!.trim()).toBe('!insertmacro hetuForceInstallDir')
   })
 })
