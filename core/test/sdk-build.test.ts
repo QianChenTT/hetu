@@ -13,9 +13,10 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true })
 })
 
-// A plugin folder in a temp directory, from file name to text
-async function folder(files: Record<string, string>): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'hetu-sdk-build-'))
+// A plugin folder in a temp directory, from file name to text. `under` puts it in another folder
+async function folder(files: Record<string, string>, under = tmpdir()): Promise<string> {
+  await mkdir(under, { recursive: true })
+  const dir = await mkdtemp(path.join(under, 'hetu-sdk-build-'))
   dirs.push(dir)
   for (const [name, text] of Object.entries(files)) {
     await mkdir(path.dirname(path.join(dir, name)), { recursive: true })
@@ -64,7 +65,10 @@ export default definePlugin({ start() { (globalThis as { started?: boolean }).st
 
   it('writes no part of the folder\'s absolute path into any file it emits', async () => {
     const sdk = path.join(import.meta.dirname, '..', 'sdk', 'index.ts').split(path.sep).join('/')
-    const base = await folder({})
+    // The folder sits in the repo beside the SDK, as a plugin's folder sits beside what it imports. From the temp folder
+    // the path to the SDK can climb to the root and down through the home folder, as on macOS runners where the repo is
+    // under /Users/runner, and esbuild names each module by that path in a comment
+    const base = await folder({}, path.join(import.meta.dirname, '..', '..', 'node_modules', '.cache'))
     const segments = [`builder-folder-${randomUUID()}`, `plugin-source-${randomUUID()}`]
     const dir = path.join(base, ...segments)
     const files = {
