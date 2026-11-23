@@ -65,11 +65,12 @@ function drawOne(mark: Mark, doc: Text, marks: Range<Decoration>[], hidden: Rang
   }
   if (mark.to > doc.length) return
   if (mark.kind === 'mark') marks.push(styleOf(mark.style).range(mark.from, mark.to))
+  else if (mark.kind === 'link') marks.push(styleOf('link').range(mark.from, mark.to))
   else if (mark.kind === 'hide') hidden.push(hideOf(mark, doc).range(mark.from, mark.to))
   else hidden.push(widgetOf(mark).range(mark.from, mark.to))
 }
 
-// Marks as CodeMirror decorations with the drawer's own classes: styles and line styles in marks, hidden ranges and
+// Marks as CodeMirror decorations with the drawer's own classes: styles, links and line styles in marks, hidden ranges and
 // widgets in hidden, which the drawer's rules for hidden text read. A mark reaching past the end of doc is left out,
 // since the marks a plugin sends were checked for shape and not against the text. So is one CodeMirror still refuses,
 // alone, so the rest of every plugin's marks draw
