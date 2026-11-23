@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import { STAGED_APP, stageInstall } from '../build/stage.ts'
+import { NOTICES_FILE } from '../build/notices.ts'
 
 const made: string[] = []
 
@@ -46,7 +47,7 @@ describe('the stage the package is built from', () => {
     await stageInstall(stage, { locked: true })
     expect(await readdir(stage)).toEqual(['app'])
     const app = await files(path.join(stage, 'app'))
-    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual([DOOR_FILE, 'editor-preload.js', 'main.js', 'package.json', 'utility.js', 'workers-preload.js'])
+    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual([DOOR_FILE, NOTICES_FILE, 'editor-preload.js', 'main.js', 'package.json', 'utility.js', 'workers-preload.js'].sort())
     expect(app.filter(file => file.startsWith('frontend/')).every(file => /^frontend\/(editor|trusted|workers)\/[\w.-]+\.(html|css|js)$/.test(file))).toBe(true)
     expect(app.filter(file => /node_modules|\.map$|\.ts$|(^|\/)log\//.test(file))).toEqual([])
   }, STAGE_MS)
