@@ -172,7 +172,7 @@ function made(over: Partial<UpdaterOptions> = {}) {
     locked: true, running: '0.6.0', platform: 'win32', key: ours.publicKey, dataDir: dir,
     recording: { coreRecord: (event, fields) => records.push({ event, fields }) },
     log: line => lines.push(line), later: () => () => undefined,
-    quit: start => quits.push(start), spawn: (file, args) => started.push({ file, args }),
+    quit: start => (quits.push(start), true), spawn: (file, args) => started.push({ file, args }),
     ...over,
   })
   return { updater, records, lines, quits, started }
@@ -250,6 +250,28 @@ describe('Install, on the human\'s click', () => {
     expect(await a).toEqual({ outcome: 'quitting' })
     expect(await twice.updater.install()).toEqual({ outcome: 'unavailable' })
     expect(twice.quits).toHaveLength(1)
+  })
+
+  it('starts nothing when a quit is already under way', async () => {
+    const { updater, started } = made({ fetch: github().fetch, quit: () => false })
+    await updater.check()
+    expect(await updater.install()).toEqual({ outcome: 'unavailable' })
+    expect(started).toEqual([])
+  })
+
+  it('stops the download on close and quits nothing', async () => {
+    const { fetch } = github()
+    let close = () => undefined as void
+    const closing: Fetch = async (url, init) => {
+      const answer = await fetch(url, init)
+      if (url === download(INSTALLER)) close()
+      return answer
+    }
+    const { updater, quits } = made({ fetch: closing })
+    close = () => updater.close()
+    await updater.check()
+    expect(await updater.install()).toEqual({ outcome: 'failed', problem: 'cancelled' })
+    expect(quits).toEqual([])
   })
 
   it('checks nothing more once installing', async () => {
