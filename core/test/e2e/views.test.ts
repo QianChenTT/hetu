@@ -271,6 +271,44 @@ describe('a layout redrawing to mislead (A-30)', () => {
   })
 })
 
+describe('the real text', () => {
+  // It sat over the whole window, the bar and every view included
+  it('sits over the editor the layout placed, leaving the bar and the views around it in sight', async () => {
+    const { app, editor } = await started({
+      notes: { 'a.md': '**hidden** markers' },
+      plugins: { board: { granted: viewer, manifest: { views: view('cards') } }, tiles: { granted: layoutGrants } },
+    })
+    await pickLayout(editor, 'tiles')
+    const layout = await pluginWorker(app, 'tiles')
+    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    await drive(layout, async scope => {
+      const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
+      await scope.ctx.ui.layout.draw({
+        kind: 'box', id: 'root', style: { display: 'flex', height: '100%' },
+        children: [
+          { kind: 'slot', id: 's', instance: state.views[0]!.instance, style: { width: '300px' } },
+          { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
+        ],
+      })
+    })
+    await open(editor, 'a.md')
+    await until(async () => (await pressed(editor).count()) === 1)
+    const editorBox = (await editor.locator('.editor:not([hidden])').boundingBox())!
+    await editor.keyboard.press('ControlOrMeta+/')
+    await until(async () => editor.locator('#raw').isVisible())
+    expect(await editor.locator('#raw-text').innerText()).toBe('**hidden** markers')
+    expect(await editor.locator('#raw-label').innerText()).toBe('Real text')
+    const rawBox = (await editor.locator('#raw').boundingBox())!
+    for (const side of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(rawBox[side] - editorBox[side])).toBeLessThan(2)
+    const top = (selector: string) => editor.locator(selector).evaluate(element => {
+      const at = element.getBoundingClientRect()
+      return element.contains(document.elementFromPoint(at.left + at.width / 2, at.top + at.height / 2))
+    })
+    expect(await top('#bar')).toBe(true)
+    expect(await top('#editors .hetu-surface:not([hidden]) .hetu-button')).toBe(true)
+  })
+})
+
 describe('notes opened by plugins', () => {
   it('opens a note inside the plugin\'s read scope and refuses one outside', async () => {
     const { app, editor } = await started({
