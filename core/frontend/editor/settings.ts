@@ -6,7 +6,7 @@ import type { CoreLink } from './link.ts'
 // the favorite views and which plugin owns a key two plugins bind. Picking a layout or a theme is a normal setting
 // with no Confirm, since neither gains any reach. Favorites are the drawer's, so they survive a change of layout
 
-// layout is the layout the human picked, null for hetu's own. plain says the human picked the drawer's plain layout
+// layout is the layout the human picked, null for none, which draws the plain layout. plain says the human picked it
 export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keyOwners: Record<string, string> }
 
 const KEY = 'settings'
@@ -36,6 +36,9 @@ const defaults = (): SettingsValue => ({ layout: null, plain: false, theme: null
 export class Settings {
   private readonly link: CoreLink
   private held: SettingsValue = defaults()
+  private loaded = false
+  // The layouts that came before the settings loaded, in the order they came, each with whether it is still connected
+  private early: { id: string, connected: () => boolean }[] = []
   onChange: (() => void) | null = null
 
   constructor(link: CoreLink) {
@@ -50,7 +53,22 @@ export class Settings {
     const got = await this.link.call('storage.get', { key: KEY })
     const parsed = got.ok ? shape.safeParse(renamed(got.result)) : null
     this.held = parsed?.success === true ? { ...parsed.data, keyOwners: { ...parsed.data.keyOwners } } : defaults()
+    this.loaded = true
     this.onChange?.()
+    const first = this.early.find(one => one.connected())
+    this.early = []
+    if (first !== undefined) await this.pickIfNone(first.id)
+  }
+
+  // A layout plugin that came: with no layout picked the first picks itself, so the first layout installed draws. The
+  // human's pick and the plain layout picked stay, and a layout coming later changes no pick. One that came before the
+  // settings loaded waits for them and is picked only while connected says it is still there
+  async pickIfNone(id: string, connected: () => boolean = () => true): Promise<void> {
+    if (!this.loaded) {
+      this.early.push({ id, connected })
+      return
+    }
+    if (this.held.layout === null && !this.held.plain) await this.pickLayout(id)
   }
 
   async favorite(view: string, on: boolean): Promise<void> {

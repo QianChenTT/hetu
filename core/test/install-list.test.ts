@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { FIRST_PARTY_SIGNER, installList, isNewer, MAX_INSTALL_LIST_BYTES, pluginVersion } from '../api/install.ts'
+import { installList, isNewer, MAX_INSTALL_LIST_BYTES, pluginVersion } from '../api/install.ts'
 import { bindFailures, dependencyReason, depsMessage, init, reason, ready, stop, stopped, stopReasons } from '../api/lifecycle.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 
@@ -8,24 +8,20 @@ const hash = 'a'.repeat(64)
 const list = (plugins: object) => ({ format: 1, plugins })
 
 describe('the install list', () => {
-  it('takes core plugins and marked first-party copies', () => {
+  it('takes core plugins', () => {
     const parsed = installList.parse(list({
       'mcp-http-handler': { path: 'plugins/mcp-http-handler', version: '1.0.0', hash },
-      git: { path: 'plugins/git', version: '2.1.0', hash, firstParty: true },
     }))
     expect(parsed.plugins['mcp-http-handler']).toEqual({ path: 'plugins/mcp-http-handler', version: '1.0.0', hash })
-    expect(parsed.plugins.git.firstParty).toBe(true)
     // No prototype, so an id naming one of Object's members finds nothing
     expect(Object.getPrototypeOf(parsed.plugins)).toBe(null)
   })
 
   it.each([
     ['a core module, which the core holds and no list names', { gate: { path: 'plugins/gate', version: '1.0.0', hash } }],
-    ['an install id marked first party', { 'mcp-http-handler': { path: 'g', version: '1.0.0', hash, firstParty: true } }],
-    ['a first-party id left unmarked', { git: { path: 'g', version: '1.0.0', hash } }],
-    ['an id that is neither', { search2: { path: 'g', version: '1.0.0', hash } }],
-    ['a community id marked first party', { 'my-plugin': { path: 'g', version: '1.0.0', hash, firstParty: true } }],
-    ['firstParty false, which marks nothing', { 'mcp-http-handler': { path: 'g', version: '1.0.0', hash, firstParty: false } }],
+    ['the first-party mark an older build wrote', { 'mcp-http-handler': { path: 'g', version: '1.0.0', hash, firstParty: true } }],
+    ['layout, which the install no longer ships', { layout: { path: 'g', version: '1.0.0', hash, firstParty: true } }],
+    ['a plugin-folder id', { 'my-plugin': { path: 'g', version: '1.0.0', hash } }],
     ['a folder named twice', { 'mcp-http-handler': { path: 'p', version: '1.0.0', hash }, log: { path: 'p', version: '1.0.0', hash } }],
     ['a path out of the install', { 'mcp-http-handler': { path: '../mcp-http-handler', version: '1.0.0', hash } }],
     ['an absolute path', { 'mcp-http-handler': { path: '/opt/mcp-http-handler', version: '1.0.0', hash } }],
@@ -49,10 +45,6 @@ describe('the install list', () => {
     expect(() => parseStrict(Buffer.from(text), installList)).toThrow()
   })
 
-  it('keeps the first-party signer apart from anything provenance could pin', () => {
-    expect(FIRST_PARTY_SIGNER).toContain(' ')
-  })
-
   it('orders versions by their numbers, not their text', () => {
     expect(isNewer('1.10.0', '1.9.0')).toBe(true)
     expect(isNewer('2.0.0', '1.99.99')).toBe(true)
@@ -65,7 +57,7 @@ describe('the install list', () => {
 })
 
 describe('the lifecycle messages', () => {
-  const sent = { v: 1, kind: 'init', id: 'search', incarnation: 2, api: 4, deps: { luoshu: 'ready' }, lastStop: 'dependency:luoshu:crashed', previousVersion: '1.0.0' }
+  const sent = { v: 1, kind: 'init', id: 'search', incarnation: 2, api: 5, deps: { luoshu: 'ready' }, lastStop: 'dependency:luoshu:crashed', previousVersion: '1.0.0' }
 
   it('carries the id, the API version, the dependencies, lastStop and previousVersion in init', () => {
     expect(init.parse(sent)).toEqual(sent)

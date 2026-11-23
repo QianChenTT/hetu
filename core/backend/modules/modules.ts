@@ -253,12 +253,13 @@ export class CoreModules implements Holder {
     return this.tell(before, null, ['gate', 'exec'])
   }
 
-  // A new notes folder: the luoshu, history and the lock are handed it. Answers whether a module's state changed with it
+  // A new notes folder: the lock, the luoshu and history are handed it, the lock first so it tells the old folder's
+  // locks unlocked before any module takes the new one. Answers whether a module's state changed with it
   picked(): boolean {
     const before = this.states()
+    this.push('lock')
     this.push('luoshu')
     this.push('history')
-    this.push('lock')
     return this.tell(before, null, ['luoshu', 'history', 'lock'])
   }
 
@@ -397,6 +398,7 @@ export class CoreModules implements Holder {
       any = true
       const change: ModuleChange = now === 'on' ? (was === 'failed' ? 'recovered' : 'started') : now === 'failed' ? 'failed' : 'stopped'
       const reason = now === 'failed' ? this.reason(id) : change === 'stopped' ? (now === 'off' ? 'off' : why) : null
+      if (id === 'lock' && was === 'on') this.release()
       try {
         this.handed?.changed(id, change, reason)
       } catch {
@@ -404,6 +406,16 @@ export class CoreModules implements Holder {
       }
     }
     return any
+  }
+
+  // The lock left on, switched off or failed: no guard holds its locks, so each is told unlocked and it starts empty
+  // when on again
+  private release(): void {
+    try {
+      this.lockOf.role.release()
+    } catch {
+      this.fault('lock', 'release')
+    }
   }
 
   private fault(id: CoreModuleId, step: string): void {

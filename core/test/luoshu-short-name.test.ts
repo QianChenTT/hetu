@@ -11,7 +11,7 @@ import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { cleanup, harness, worker } from './router-fakes.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
+import { coreInstall, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
 
 // What another plugin's write does once a write's temp file is open, after its version check and before its note lands
 const hook = { onTemp: null as null | (() => Promise<void>) }
@@ -59,7 +59,7 @@ async function world(folders: Record<string, Capability[]>) {
   for (const [id, granted] of Object.entries(folders)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }) as never))
-    await store.writePlugin(id, await entryFor(root, { granted, class: 4 } as Partial<Plugin>))
+    await writeApproved(store, id, root, { granted, class: 4 } as Partial<Plugin>)
   }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu({ settleMs: 50 })

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { classCauses, classNumber, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
-import { coreModuleIds, corePluginIds, firstPartyIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { coreModuleIds, corePluginIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
@@ -22,13 +22,9 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
 
 // A core module or an install id, so a state file written while the modules were core plugins still reads
 const coreId = z.enum([...coreModuleIds, ...corePluginIds])
-const firstPartyId = z.enum(firstPartyIds)
-// An id some plugin or module can hold: a core module, install or first-party id, or one the reserved list leaves to
-// community plugins. The namespaces the core serves, cache included, name none
-const anyPlugin = pluginId.refine(
-  id => !isReservedId(id) || coreId.safeParse(id).success || firstPartyId.safeParse(id).success,
-  'an id no plugin holds',
-)
+// An id some plugin or module can hold: a core module or install id, or one the reserved list leaves to community
+// plugins. The namespaces the core serves, cache included, name none
+const anyPlugin = pluginId.refine(id => !isReservedId(id) || coreId.safeParse(id).success, 'an id no plugin holds')
 
 // No entry twice, so a list reads one way
 function list<T extends z.ZodType<string>>(item: T) {
@@ -72,10 +68,9 @@ const limits = z.strictObject({
 const switches = z.strictObject({
   off: list(coreId), // a core module or core plugin not named here is on, so a lost entry can't read as off
   devMode: list(anyPlugin), // load unhashed with live reload
-  skipVerification: z.boolean(),
+  skipVerification: z.boolean(), // core plugins only: allowUnsigned pins a folder plugin's build by its hash
   allowUnsigned: z.array(sha256Hex), // builds pinned by content hash
   confirmOff: z.boolean(), // only for changes made in the trusted window's own plugin list
-  removed: list(firstPartyId), // tombstones, which the reconcile never copies back
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
 })
@@ -83,7 +78,7 @@ const switches = z.strictObject({
 const plugin = z.strictObject({
   version: text,
   contentHash: sha256Hex,
-  signer: text.nullable(), // null only for a plugin on allowUnsigned
+  signer: text.nullable(), // null when written. Until provenance lands an entry naming one is refused
   granted: folderCapabilities, // entries are for folder plugins only, which never hold an install-only type
   class: classNumber.nullable(), // null until classified, which counts as 4
   enabled: z.boolean(), // the human's switch, which no check changes
@@ -119,16 +114,17 @@ function luoshuFor(platform: string) {
 }
 
 const format = z.literal(FORMAT)
+// A list an older build wrote that this one reads and drops, whatever it names
+const dropped = z.array(z.unknown()).max(MAX_LISTED, { abort: true }).optional()
 // recordNothing is how a file from before recording was a core module says recording is off. It is read once as
 // recording in off and never written again. watchdog and leases in off are core plugins that are gone and hidden-marks
 // one that became a first-party plugin, each read with the id dropped and written back without it once, the drop recorded
-// by boot. file-explorer and search in removed are first-party plugins that became community plugins, read with the ids
-// dropped too
+// by boot. removed held the tombstones of the first-party plugins the human removed, which went with the first-party
+// plugins, so it is read and dropped and the switches written back without it once
 const droppedOff = ['watchdog', 'leases', 'hidden-marks'] as const
-const retiredFirstParty: readonly unknown[] = ['file-explorer', 'search']
 const switchesFields = {
   ...switches.shape, recordNothing: z.boolean().optional(), off: list(z.enum([...coreModuleIds, ...corePluginIds, ...droppedOff])),
-  removed: z.preprocess(value => (Array.isArray(value) ? value.filter(id => !retiredFirstParty.includes(id)) : value), switches.shape.removed),
+  removed: dropped,
 }
 const switchesFile = z.strictObject({ format, ...switchesFields })
 // ui.keystream was ui.keys until the rename. An entry written then reads the item under the new name in each of its
@@ -144,7 +140,6 @@ const pluginFile = z.strictObject({ format, ...pluginFields })
 // Format 2 held items and revoked labels by label on one plugin's entry (agents, revoked) and revoked labels in the
 // switches while that entry was gone (revokedAgents). A pair's items now last for one run, so the reader drops them
 // and reads the rest as this format. Read only at boot and written back in this format once
-const dropped = z.array(z.unknown()).max(MAX_LISTED, { abort: true }).optional()
 const switchesOlder = z.strictObject({ format: z.literal(OLDER), ...switchesFields, revokedAgents: dropped })
   .transform(({ revokedAgents, ...rest }) => ({ ...rest, format: FORMAT }))
 const pluginOlder = z.strictObject({ format: z.literal(OLDER), ...pluginFields, agents: dropped, revoked: dropped })
@@ -166,10 +161,8 @@ export type Check = {
 }
 
 // state is what to run with. After a failed check state differs from the files and must not be written back as is.
-// removedKnown is true only when removed came from a switches file that checked out. With that file absent, failed or
-// newer the defaults name no tombstone, so a first-party plugin with no entry may be one the human removed
 // dropped is the ids the switches named in off that are no core plugin any more
-export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean, dropped: string[] }
+export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], dropped: string[] }
 
 // Loosens nothing: every core module and core plugin on, empty lists, false switches and no raised limits
 export function defaultSwitches(): Switches {
@@ -179,7 +172,6 @@ export function defaultSwitches(): Switches {
     skipVerification: false,
     allowUnsigned: [],
     confirmOff: false,
-    removed: [],
     execAnyCommand: [],
     limits: { all: table({}), plugins: table({}) },
   }
@@ -246,9 +238,9 @@ function withoutFormat<T extends { format: typeof FORMAT }>(file: T): Omit<T, 'f
 }
 
 // The switches as a file holds them, recordNothing from before recording was a core module read as recording in off,
-// with the ids off names that are no core plugin any more
-function switchesOf(read: Omit<Switches, 'off'> & { off: string[], recordNothing?: boolean }): { switches: Switches, dropped: string[] } {
-  const { recordNothing, ...rest } = read
+// with the ids off names that are no core plugin any more and with no removed
+function switchesOf(read: Omit<Switches, 'off'> & { off: string[], recordNothing?: boolean, removed?: unknown[] }): { switches: Switches, dropped: string[] } {
+  const { recordNothing, removed, ...rest } = read
   const isDropped = (id: string) => (droppedOff as readonly string[]).includes(id)
   const off = rest.off.filter(id => !isDropped(id)) as Switches['off']
   if (recordNothing === true && !off.includes('recording')) off.push('recording')
@@ -402,7 +394,7 @@ export class StateStore {
     checks.push({ check: 'switches', result: switchesRead.result })
     let dropped: string[] = []
     if (switchesRead.value) ({ switches: state.switches, dropped } = switchesOf(withoutFormat(switchesRead.value)))
-    if (switchesRead.older === true || dropped.length > 0) this.older.push({ check: 'switches' })
+    if (switchesRead.older === true || dropped.length > 0 || switchesRead.value?.removed !== undefined) this.older.push({ check: 'switches' })
 
     // Absent is a luoshu not picked yet
     const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile, this.luoshuOlder)
@@ -414,7 +406,7 @@ export class StateStore {
 
     // A newer file is a newer build's state under an older build, which the banner shows, not tampering
     const suspect = checks.some(c => c.result !== 'ok' && c.result !== 'absent' && c.result !== 'newer')
-    return { state, suspect, checks, removedKnown: switchesRead.result === 'ok', dropped }
+    return { state, suspect, checks, dropped }
   }
 
   // Entries only. The plugin files check is the plugins manager's, which reads the bytes that run, so nothing here changes

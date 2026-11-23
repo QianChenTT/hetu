@@ -35,6 +35,61 @@ describe('the window\'s settings', () => {
     expect(space.get('settings')).toMatchObject({ layout: 'layout', plain: false })
   })
 
+  // Installing a first layout draws with it. A later layout, the human's own pick and the plain layout picked stay
+  it('picks the first layout that comes while none is picked, and no later one', async () => {
+    const { settings, space } = made()
+    await settings.load()
+    await settings.pickIfNone('tiles')
+    expect(settings.value).toMatchObject({ layout: 'tiles', plain: false })
+    expect(space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
+    await settings.pickIfNone('columns')
+    expect(settings.value).toMatchObject({ layout: 'tiles', plain: false })
+  })
+
+  it('leaves the layout the human picked and the plain layout picked as they are', async () => {
+    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keyOwners: {} })
+    await picked.settings.load()
+    await picked.settings.pickIfNone('tiles')
+    expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
+    const plain = made()
+    await plain.settings.load()
+    await plain.settings.pickLayout(null)
+    await plain.settings.pickIfNone('tiles')
+    expect(plain.settings.value).toMatchObject({ layout: null, plain: true })
+  })
+
+  it('holds a layout that came before the settings loaded until they show whether one is picked', async () => {
+    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keyOwners: {} })
+    await picked.settings.pickIfNone('tiles')
+    await picked.settings.load()
+    expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
+    expect(picked.space.get('settings')).toMatchObject({ layout: 'other' })
+    const none = made()
+    await none.settings.pickIfNone('tiles')
+    await none.settings.pickIfNone('columns')
+    expect(none.space.get('settings')).toBe(undefined)
+    await none.settings.load()
+    expect(none.settings.value).toMatchObject({ layout: 'tiles', plain: false })
+    expect(none.space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
+  })
+
+  // A layout whose port ended before the settings loaded is gone, so the next that came and is still there is picked
+  it('picks no layout that came before the settings loaded and left before they did', async () => {
+    const { settings, space } = made()
+    let here = true
+    await settings.pickIfNone('gone', () => false)
+    await settings.pickIfNone('tiles', () => here)
+    here = false
+    await settings.load()
+    expect(settings.value).toMatchObject({ layout: null, plain: false })
+    expect(space.get('settings')).toBe(undefined)
+    const other = made()
+    await other.settings.pickIfNone('gone', () => false)
+    await other.settings.pickIfNone('tiles', () => true)
+    await other.settings.load()
+    expect(other.settings.value).toMatchObject({ layout: 'tiles', plain: false })
+  })
+
   it('keeps each change under settings in the window\'s storage and reads it back', async () => {
     const { settings, space, core } = made()
     await settings.load()

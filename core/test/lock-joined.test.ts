@@ -11,7 +11,7 @@ import { createLock, type Lock } from '../backend/lock/lock.ts'
 import { wireCore } from '../backend/wire.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import {
-  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Half, type Message,
+  allowAll, coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Half, type Message, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -38,7 +38,7 @@ async function joined(options: { off?: string[], lock?: Lock, before?: (dataDir:
   for (const id of ['alpha', 'beta']) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id)))
-    await store.writePlugin(id, await entryFor(root))
+    await writeApproved(store, id, root)
   }
   await options.before?.(dataDir)
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
@@ -116,6 +116,7 @@ function breaking(): Lock & { throws: boolean } {
         if (made.throws) throw new Error('the lock crashed')
         real.role.open(opening)
       },
+      release: () => real.role.release(),
     },
   }
   return made
@@ -133,7 +134,7 @@ describe('the lock module through the joined core', () => {
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('as it was')
     expect(refusal(await write(alpha, folder, 'alpha'))).toBe('ok')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('alpha')
-    expect((await ask(beta, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toEqual({ paths: ['a.md'] })
+    expect((await ask(beta, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toMatchObject({ locks: [{ path: 'a.md' }] })
     expect(refusal(await ask(alpha, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
     expect(refusal(await write(beta, folder, 'beta'))).toBe('ok')
   })
@@ -159,7 +160,36 @@ describe('the lock module through the joined core', () => {
     expect(refusal(await windowAsk(router, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
     expect(refusal(await save())).toBe('ok')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('human')
-    expect((await windowAsk(router, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toEqual({ paths: ['b.md'] })
+    const before = Date.now()
+    const { locks } = (await windowAsk(router, 'lock.held', { paths: ['a.md', 'b.md'] })).result as { locks: { path: string, until: number }[] }
+    expect(locks.map(entry => entry.path)).toEqual(['b.md'])
+    expect(locks[0].until).toBeGreaterThan(before + 50_000)
+    expect(locks[0].until).toBeLessThanOrEqual(Date.now() + 60_000 + 1)
+  })
+
+  // The module's own publish as wireCore wires it, the gate here letting every plugin read every note
+  it('tells a subscribed plugin each note locked, renewed and cleared with its end in wall time and no holder', async () => {
+    const { runtime, router } = await joined()
+    const alpha = runtime.half('alpha')
+    const beta = runtime.half('beta')
+    expect(refusal(await ask(alpha, 'events.subscribe', { topics: ['lock.changed'] }))).toBe('ok')
+    const before = Date.now()
+    expect(refusal(await ask(beta, 'lock.set', { paths: ['a.md', 'new.md'], ms: 60_000 }, { onBehalf: 'client#1' }))).toBe('ok')
+    expect(refusal(await ask(beta, 'lock.set', { paths: ['a.md'], ms: 120_000 }, { onBehalf: 'client#1' }))).toBe('ok')
+    expect(refusal(await windowAsk(router, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
+    const told = () => alpha.inbox.filter(message => message.kind === 'event' && message.topic === 'lock.changed')
+    for (let waited = 0; told().length < 4 && waited < 3000; waited += 5) await tick(5)
+    const after = Date.now()
+    const events = told()
+    expect(events.map(({ path, locked }) => [path, locked])).toEqual([['a.md', true], ['new.md', true], ['a.md', true], ['a.md', false]])
+    expect(events.map(event => Object.keys(event).sort())).toEqual(Array(4).fill(['kind', 'locked', 'path', 'seq', 'topic', 'until', 'v']))
+    const ends = events.map(event => event.until as number | null)
+    for (const [i, ms] of [[0, 60_000], [1, 60_000], [2, 120_000]]) {
+      expect(ends[i]).toBeGreaterThanOrEqual(before + ms - 1)
+      expect(ends[i]).toBeLessThanOrEqual(after + ms + 1)
+    }
+    expect(ends[3]).toBeNull()
+    expect(JSON.stringify(events)).not.toMatch(/client|beta/)
   })
 
   it('lets every write past with the lock switched off, as if its step did not exist', async () => {

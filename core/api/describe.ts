@@ -28,6 +28,14 @@ export function describeChange(change: Change): Described {
   switch (change.kind) {
     case 'plugin.approve':
       return { text: `Approve ${change.plugin} with the grants its manifest asks for`, notes: [] }
+    // What each plugin asks for, its class and where it came from are the plugins manager's to add, from the staging
+    case 'plugin.install': {
+      const one = change.plugins.length === 1
+      return {
+        text: `Install ${change.plugins.map(plugin => plugin.id).join(', ')} into the plugin folder and approve ${one ? 'it' : 'each'} with the grants its manifest asks for`,
+        notes: [],
+      }
+    }
     case 'plugin.update':
       return { text: `Update ${change.plugin} to the version staged beside it`, notes: ['It stops with the plugins that need it and starts again on the new version'] }
     case 'plugin.on':
@@ -38,8 +46,6 @@ export function describeChange(change: Change): Described {
       return { text: `Switch ${change.plugin} off`, notes: [whileOff[change.plugin] ?? `Writes then pass without ${change.plugin}'s check`, RECOMMEND] }
     case 'plugin.remove':
       return { text: `Remove ${change.plugin} with its code, storage and cache`, notes: ['This can\'t be undone'] }
-    case 'plugin.restore':
-      return { text: `Restore ${change.plugin} from the copy hetu ships`, notes: [] }
     case 'plugin.clearStorage':
       return { text: `Delete everything ${change.plugin} keeps in its storage`, notes: ['This can\'t be undone'] }
     case 'plugin.reset':
@@ -124,7 +130,7 @@ function why(change: ClassRaised): string {
     case 'approve':
       return `the approval of ${by} without a Confirm`
     case 'copy':
-      return `the copy of ${by} hetu ships, made at start`
+      return `the copy of ${by} hetu shipped, made at start`
     case 'update':
       return `the update of ${by} without a Confirm`
     case 'widen':

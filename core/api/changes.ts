@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { folderCapability, pairCapability, screenText, seenText } from './capabilities.ts'
-import { label } from './envelope.ts'
+import { label, token } from './envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
 import { isSecurityControl, pluginId, watchingModuleIds } from './ids.ts'
 import { frozen } from './plain.ts'
@@ -16,22 +16,32 @@ const on = z.boolean()
 // plugin.reset is Recover's reset: the plugin's storage and cache cleared and a plugin-folder plugin's entry removed, so
 // it waits for approval again. A core module has none
 const pluginKinds = [
-  'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
-  'plugin.reset',
+  'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.clearStorage', 'plugin.reset',
 ] as const
 const grantKinds = ['grant.widen', 'grant.narrow', 'item.on', 'item.off'] as const
 const perPluginSwitches = ['devMode', 'exec.anyCommand'] as const
+// The most plugins one install takes
+export const MAX_STAGED_PLUGINS = 64
 const switches = ['skipVerification', 'confirmOff'] as const
 
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'identity.revoke',
+  ...pluginKinds, 'plugin.install', ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'identity.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
   // plugin.off covers core modules, install and folder plugins alike
   z.strictObject({ kind: z.literal(pluginKinds), plugin: pluginId }),
+  // The Install button's Confirm: the plugins ticked of a staging the core holds, each with the digest of its manifest
+  // as the staging answered it, so the Confirm names what the human was shown. Applying it installs them into the plugin
+  // folder and approves each with the hash of what it wrote, all or none
+  z.strictObject({
+    kind: z.literal('plugin.install'),
+    staged: token,
+    plugins: z.array(z.strictObject({ id: pluginId, digest: sha256Hex })).min(1).max(MAX_STAGED_PLUGINS)
+      .refine(plugins => new Set(plugins.map(plugin => plugin.id)).size === plugins.length, 'an id twice'),
+  }),
   // Only folder plugins have grants to change, a core plugin's grants are its manifest
   z.strictObject({ kind: z.literal(grantKinds), plugin: pluginId, capability: folderCapability }),
   z.strictObject({ kind: z.literal('luoshu.pick'), folder }),
@@ -53,7 +63,8 @@ export const change = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('identity.revoke'), root: pluginId, field: label }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
-// and for the grant risk classifier switched on again
+// and for the grant risk classifier switched on again. Retired: copy and restore, the first-party copy at start and its
+// restore, which nothing causes any more. Read only, so a notice an older build owed still reads and is answered
 export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
 // A class as a state file or a notice holds it, from 0 to 4
 export const classNumber = z.int().min(0).max(4)
@@ -142,7 +153,7 @@ export function changeEffect(change: Change): ChangeEffect {
   switch (change.kind) {
     case 'plugin.approve':
     case 'plugin.update':
-    case 'plugin.restore':
+    case 'plugin.install':
     case 'grant.widen':
     case 'item.on':
     case 'luoshu.pick':

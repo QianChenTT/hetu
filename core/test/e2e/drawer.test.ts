@@ -1,14 +1,13 @@
-import { cp, readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { held, type Run, type Sitting, summary } from '../../../scripts/measure-bridge.ts'
 import type { Capability } from '../../api/capabilities.ts'
-import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, firstPartyEntry, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, records, repo, temp, tick, until, workersPage } from './helpers.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
+import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -150,8 +149,7 @@ export default definePlugin({
 `
 
 type Load = { granted: Capability[], manifest?: object }
-// marksOff is hidden marks switched off by the human: the install's own copy in the plugin folder with its entry off
-type Setup = { notes: Record<string, string>, plugins?: Record<string, Capability[]>, loads?: Record<string, Load>, marksOff?: boolean }
+type Setup = { notes: Record<string, string>, plugins?: Record<string, Capability[]>, loads?: Record<string, Load> }
 
 async function built(code: string): Promise<string> {
   const source = await temp()
@@ -166,13 +164,6 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
-  if (setup.marksOff === true) {
-    const install = path.join(repo, 'core', 'dist')
-    const listed = (JSON.parse(await readFile(path.join(install, INSTALL_LIST), 'utf8')) as { plugins: Record<string, { version: string, hash: string }> }).plugins['hidden-marks']!
-    await cp(path.join(install, 'plugins', 'hidden-marks'), path.join(dataDir, 'plugins', 'hidden-marks'), { recursive: true })
-    const granted: Capability[] = [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }]
-    await store.writePlugin('hidden-marks', firstPartyEntry(listed.hash, { version: listed.version, granted, enabled: false }))
-  }
   await store.writeLuoshu({ folder })
   const plugins: [string, Load, string][] = []
   if (setup.plugins !== undefined) {
@@ -186,7 +177,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   for (const [id, { granted, manifest }, code] of plugins) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted, ...manifest }), { 'worker.js': code }))
-    await store.writePlugin(id, await entryFor(root, { granted }))
+    await writeApproved(store, id, root, { granted })
   }
   return { dataDir, folder }
 }
@@ -257,11 +248,11 @@ describe('the drawer', () => {
     await until(async () => (await shown(editor).innerText()) === 'original mine')
   })
 
-  it('hides markers with hidden marks and shows the real text in the raw view over the whole window', async () => {
+  // Hiding the markers is the hidden-marks plugin's, proved with it in hetu-plugins
+  it('shows the real text in the raw view over the whole window', async () => {
     const { editor } = await started({ notes: { 'a.md': '# Title\n\n**bold** text' } })
     await open(editor, 'a.md')
-    await until(async () => (await shown(editor).innerText()).includes('bold text'))
-    expect(await shown(editor).innerText()).not.toContain('**')
+    await until(async () => (await shown(editor).innerText()).includes('**bold** text'))
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+/')
     await until(async () => editor.locator('#raw').isVisible())
@@ -275,8 +266,8 @@ describe('the drawer', () => {
     await until(async () => !(await editor.locator('#raw').isVisible()))
   })
 
-  it('shows the markers with hidden-marks switched off', async () => {
-    const { editor } = await started({ notes: { 'a.md': '**bold** text' }, marksOff: true })
+  it('shows the markers with no hidden marks installed', async () => {
+    const { editor } = await started({ notes: { 'a.md': '**bold** text' } })
     await open(editor, 'a.md')
     await tick(500)
     expect(await shown(editor).innerText()).toBe('**bold** text')
@@ -331,7 +322,7 @@ describe('the drawer', () => {
   })
 
   it('takes outside text into a clean buffer without moving the cursor, adding to undo or marking it unsaved', async () => {
-    const { editor, folder } = await started({ notes: { 'a.md': 'line one\nline two\nline three' }, marksOff: true })
+    const { editor, folder } = await started({ notes: { 'a.md': 'line one\nline two\nline three' } })
     await open(editor, 'a.md')
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+Home')
@@ -397,7 +388,7 @@ describe('the drawer', () => {
   it("lets a Backspace beside a plugin's hidden text take only the visible character before it, naming no plugin on the save", async () => {
     const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
     const text = 'Keep: do NOT pay Bob until the audit ends. Then sign.'
-    const { app, editor, dataDir, folder } = await started({ notes: { 'a.md': text }, plugins: { painter: granted }, marksOff: true })
+    const { app, editor, dataDir, folder } = await started({ notes: { 'a.md': text }, plugins: { painter: granted } })
     await open(editor, 'a.md')
     const worker = await pluginWorker(app, 'painter')
     await until(async () => (await drive(worker, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
@@ -578,7 +569,9 @@ describe('the drawer', () => {
   // #73, #154: how long a keystroke takes to reach the screen and to come back from a worker as a decoration, on a large
   // note, with nothing else running and under three loads in turn, in one app. HETU_MEASURE names a file for the numbers,
   // which npm run measure:bridge takes three times and writes under docs/measurements
-  it('measures the bridge from a key to the text and to a decoration, quiet and under three loads', async () => {
+  // Skipped: the big note is marked by the real hidden-marks plugin, which no longer ships with hetu. The measure moves to
+  // hetu-plugins with the plugin
+  it.skip('measures the bridge from a key to the text and to a decoration, quiet and under three loads', async () => {
     const reader: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
     // The last line is plain, so its text on screen is the text typed. Each line above it is an item of a list, as a long
     // note's lines sit in blocks of their own: one paragraph of 2,000 lines would have every key parse all its links again
@@ -729,8 +722,9 @@ describe('the drawer', () => {
 
 // The answers of 2026-11-09 that only the window shows, against the real hidden-marks plugin: the mouse with Alt and
 // without it, where Chromium puts typed text at a run's end, the system clipboard and the plugin's settings popover.
-// The rest are proved against the real plugin in hidden-marks-joined.test.ts
-describe('hidden marks in the window', () => {
+// The rest were proved against the real plugin in a joined test. Skipped: hidden marks no longer ships with hetu, these
+// run with the plugin in hetu-plugins
+describe.skip('hidden marks in the window', () => {
   it('reveals on Alt+click only, keeps typing in a run until its key, copies the markdown and hides by its settings', async () => {
     const text = 'x **bold** y\nx **bold text** y\nx [link](https://e.com) y'
     const { app, editor, folder } = await started({ notes: { 'a.md': text } })

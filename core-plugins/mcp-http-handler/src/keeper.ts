@@ -10,8 +10,8 @@ import { type Door, type DoorTimes, openDoor } from './server.ts'
 // pipe is the local pipe's name, served beside the door when given
 export type HttpOptions = { port: number, token: TokenSeam, pipe?: string, limits?: Partial<DoorTimes> }
 
-// http's host half: the door and the pipe are open exactly while mcp is there, opened on start and on every change the
-// core tells. A bind that fails tells the core why, port-taken when the port is held and bind-failed otherwise, the
+// http's host half: the door and the pipe are open exactly while door.handle is served, opened on start and on every
+// change the core tells. A bind that fails tells the core why, port-taken when the port is held and bind-failed otherwise, the
 // pipe's included. No other port or name is tried, since every URL a harness keeps names this one. The core then
 // ends the half and http reads failed. Refusals at the door and the pipe go to the core counted by reason, at most one
 // report a reason a second
@@ -19,19 +19,19 @@ export function httpPlugin(options: HttpOptions): Plugin {
   return definePlugin({
     start(ctx) {
       const counter = refusalCounter((reason, count) => ctx.call('core', 'refused', { reason, count }))
-      const serve = mcpServe((args, call) => ctx.call('mcp', 'handle', args, call))
+      const serve = mcpServe((args, call) => ctx.call('door', 'handle', args, call))
       const take = rate(doorLimits.perSecond, () => performance.now())
       const clients = clientsOf({ call: (name, args) => ctx.call('core', name, args) })
       let door: Door | null = null
       let pipe: Pipe | null = null
       let failed = false
       let stopping = false
-      // One change at a time, so an open still under way when mcp goes is closed once it lands
+      // One change at a time, so an open still under way when door.handle's holder goes is closed once it lands
       let turn: Promise<void> = Promise.resolve()
 
       const step = async () => {
         if (failed || stopping) return
-        const wanted = ctx.has('mcp')
+        const wanted = ctx.has('door.handle')
         if (wanted && door === null) {
           try {
             door = await openDoor({ port: options.port, token: options.token, serve, take, refused: reason => counter.hit(reason), ...(options.limits === undefined ? {} : { limits: options.limits }) })

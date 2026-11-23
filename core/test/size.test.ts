@@ -128,7 +128,7 @@ const sources = new Map(files.map(file => [file, readFileSync(path.join(repo, fi
 
 describe('the size ratchet', () => {
   it('has files to check in every shipped folder', () => {
-    for (const dir of ['core/api/', 'core/lib/', 'core/sdk/', 'core/frontend/', 'core/backend/', 'core-plugins/layout/src/']) {
+    for (const dir of ['core/api/', 'core/lib/', 'core/sdk/', 'core/frontend/', 'core/backend/', 'core-plugins/mcp-http-handler/src/']) {
       expect(files.some(file => file.startsWith(dir)), dir).toBe(true)
     }
     expect(files.filter(file => /\/(test|testing)\/|^core\/sdk\/build\/|\.test\.ts$/.test(file))).toEqual([])

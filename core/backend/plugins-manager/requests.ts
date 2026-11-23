@@ -69,10 +69,11 @@ function canonical(value: unknown): string {
 
 // What the records say of a change: its kind, its target and the hash of the change as stored. Never a folder or a
 // scope, which the hash stands for. An ask for a pair and its revoke name the root plugin and the field, a connect the
-// plugin that asked and the field it would set
+// plugin that asked and the field it would set, an install the plugins it installs and never its staging
 function fieldsOf(change: Change, key: string): Record<string, Field> {
   const root = change.kind === 'identity.ask' || change.kind === 'identity.revoke' ? change.root : null
-  const target = root ?? ('plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null)
+  const named = change.kind === 'plugin.install' ? change.plugins.map(plugin => plugin.id).join(',') : null
+  const target = root ?? named ?? ('plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null)
   const fields: Record<string, Field> = {
     kind: change.kind,
     target: change.kind === 'limit.set' ? `${change.constant}:${change.plugin ?? 'all'}` : target,

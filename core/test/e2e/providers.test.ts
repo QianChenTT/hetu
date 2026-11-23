@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hashOf, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -47,7 +47,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
       const root = path.join(dataDir, 'plugins', id)
       await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built.text }))
       // Approved with each item's first use confirmed, which the entry records. The start classes it again
-      await store.writePlugin(id, await entryFor(root, { granted, class: 4, confirmed: granted }))
+      await writeApproved(store, id, root, { granted, class: 4, confirmed: granted })
     }
   }
   const app = await launch(dataDir)
@@ -274,11 +274,11 @@ self.onmessage = event => {
     const store = new StateStore(dataDir)
     const listener = path.join(dataDir, 'plugins', 'listener')
     await writeFolder(listener, filesFor(workerManifest('listener', { capabilities: [fetchOne, hears] }), { 'worker.js': idle }))
-    await store.writePlugin('listener', await entryFor(listener, { granted: [fetchOne, hears], class: 3 }))
+    await writeApproved(store, 'listener', listener, { granted: [fetchOne, hears], class: 3 })
     const reader = path.join(dataDir, 'plugins', 'reader')
     await writeFolder(reader, filesFor(workerManifest('reader', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': idle }))
     // An approval writes no signer until plugin provenance, so this build is trusted as the human would trust one
-    await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(reader)] })
+    await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(listener), await hashOf(reader)] })
     await store.writeLuoshu({ folder: await temp() })
     const app = await launch(dataDir)
     const editor = await editorPage(app)
@@ -320,23 +320,22 @@ self.onmessage = event => {
     return page
   }
 
-  // A bundled reader of every note, in an install of the test's own under a first-party id hetu doesn't build yet
-  it('shows the screen and the plugin\'s own Raises line on the Confirm of a restore of a bundled plugin the human narrowed', async () => {
+  // A reader of every note the human narrowed to nothing, whose read given back raises it
+  it('shows the screen and the plugin\'s own Raises line on the Confirm of a widen of a plugin the human narrowed', async () => {
     const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
-    const installDir = await temp()
-    await writeInstall(installDir, { git: { files: filesFor(workerManifest('git', { capabilities: [readAll] }), { 'worker.js': idle }), firstParty: true } })
     const dataDir = await temp()
     const store = new StateStore(dataDir)
     await store.writeSwitches(defaultSwitches())
     await store.writeLuoshu({ folder: await temp() })
-    const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
+    const root = path.join(dataDir, 'plugins', 'reader')
+    await writeFolder(root, filesFor(workerManifest('reader', { capabilities: [readAll] }), { 'worker.js': idle }))
+    await writeApproved(store, 'reader', root, { granted: [], class: 0 })
+    const app = await launch(dataDir)
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'git' }))
-    expect((await ask(editor, 'security.request', { change: { kind: 'grant.narrow', plugin: 'git', capability: readAll } })).ok).toBe(true)
-    expect((await new StateStore(dataDir).load()).state.plugins.git).toMatchObject({ class: 0 })
-    expect((await ask(editor, 'security.request', { change: { kind: 'plugin.restore', plugin: 'git' } })).ok).toBe(true)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'reader' }))
+    expect((await ask(editor, 'security.request', { change: { kind: 'grant.widen', plugin: 'reader', capability: readAll } })).ok).toBe(true)
     const page = await trustedWindow(app, editor)
-    await until(async () => (await page.locator('#root').innerText()).includes('Raises git from class 0, Contained to class 1, Reader'))
+    await until(async () => (await page.locator('#root').innerText()).includes('Raises reader from class 0, Contained to class 1, Reader'))
     expect(await page.locator('#root').innerText()).toContain('Class 1, Reader')
   })
 
@@ -345,12 +344,11 @@ self.onmessage = event => {
     const store = new StateStore(dataDir)
     const listener = path.join(dataDir, 'plugins', 'listener')
     await writeFolder(listener, filesFor(workerManifest('listener', { capabilities: [fetchOne, hears] }), { 'worker.js': idle }))
-    await store.writePlugin('listener', await entryFor(listener, { granted: [fetchOne, hears], class: 0 }))
+    await writeApproved(store, 'listener', listener, { granted: [fetchOne, hears], class: 0 })
     const reader = path.join(dataDir, 'plugins', 'reader')
     const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
     await writeFolder(reader, filesFor(workerManifest('reader', { capabilities: [readAll], provides: { topics: ['done'] } }), { 'worker.js': idle }))
-    await store.writePlugin('reader', await entryFor(reader, { granted: [readAll], class: 1 }))
-    await store.writeSwitches(defaultSwitches())
+    await writeApproved(store, 'reader', reader, { granted: [readAll], class: 1 })
     await store.writeLuoshu({ folder: await temp() })
     const app = await launch(dataDir)
     const editor = await editorPage(app)

@@ -36,12 +36,31 @@ afterEach(async () => {
   await rm(base, { recursive: true, force: true })
 })
 
+// The wall clock stands this far ahead of the module's, so an end told in wall time shows it was turned
+const WALL = 1_700_000_000_000
+
+// told holds each lock.changed the module published, once the step that noticed it ended. publish throws while throws
+// is set
 function made() {
   let now = 1_000_000
-  const lock = createLock({ clock: () => now })
+  const told: { path: string, change: unknown }[] = []
+  const state = { throws: false }
+  const lock = createLock({
+    clock: () => now,
+    wall: () => WALL + now,
+    publish: (path, change) => {
+      if (state.throws) throw new Error('the bus broke')
+      told.push({ path, change })
+    },
+  })
   lock.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
-  return { lock, pass: (ms: number) => { now += ms } }
+  return { lock, told, state, pass: (ms: number) => { now += ms } }
 }
+
+// The step that noticed a change ended, so what it told has gone out
+const flushed = () => new Promise<void>(resolve => { setImmediate(resolve) })
+const locked = (path: string, until: number) => ({ path, change: { locked: true, until: WALL + until } })
+const unlocked = (path: string) => ({ path, change: { locked: false, until: null } })
 
 const callOf = (action: string, args: unknown, chain: Chain): Call => ({
   callId: `c${++n}`, caller: chain.caller ?? chain.root, root: chain.root,
@@ -291,14 +310,45 @@ describe('lock.clear', () => {
 })
 
 describe('lock.held', () => {
-  it('names the paths asked about that any holder locks, as the caller spelled them with no holder named', async () => {
+  it('answers one entry per lock asked about, its path as the caller spelled it with its end and no holder named', async () => {
     const { lock, pass } = made()
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
     await ask(lock, 'lock.set', { paths: ['b.md'], ms: 5000 }, { root: leases })
     const asked = { paths: ['Projects/Plan.md', 'b.md', 'free.md'] }
-    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toEqual({ paths: ['Projects/Plan.md', 'b.md'] })
+    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toStrictEqual({
+      locks: [{ path: 'Projects/Plan.md', until: WALL + 1_001_000 }, { path: 'b.md', until: WALL + 1_005_000 }],
+    })
     pass(1000)
-    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toEqual({ paths: ['b.md'] })
+    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toStrictEqual({ locks: [{ path: 'b.md', until: WALL + 1_005_000 }] })
+  })
+
+  it('leaves out a path no lock holds and an expired lock, answering an empty list when none is held', async () => {
+    const { lock, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, { root: leases })
+    expect(await ask(lock, 'lock.held', { paths: ['free.md', 'a.md'] }, { root: plugin('git') }))
+      .toStrictEqual({ locks: [{ path: 'a.md', until: WALL + 1_001_000 }] })
+    pass(1000)
+    expect(await ask(lock, 'lock.held', { paths: ['free.md', 'a.md'] }, { root: plugin('git') })).toStrictEqual({ locks: [] })
+  })
+
+  it('answers in the order the call names the paths, each spelling of one note an entry of its own', async () => {
+    const { lock } = made()
+    await ask(lock, 'lock.set', { paths: ['b.md'], ms: 2000 }, { root: leases })
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
+    expect(await ask(lock, 'lock.held', { paths: ['a.md', 'free.md', 'b.md', 'A.md'] }, { root: plugin('git') })).toStrictEqual({
+      locks: [{ path: 'a.md', until: WALL + 1_001_000 }, { path: 'b.md', until: WALL + 1_002_000 }, { path: 'A.md', until: WALL + 1_001_000 }],
+    })
+  })
+
+  it('reads each end off the wall clock when asked, not the end told when the lock was set', async () => {
+    let now = 0
+    let wall = WALL
+    const lock = createLock({ clock: () => now, wall: () => wall })
+    lock.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, { root: leases })
+    now = 400
+    wall = WALL + 60_000
+    expect(await ask(lock, 'lock.held', { paths: ['a.md'] }, { root: plugin('git') })).toStrictEqual({ locks: [{ path: 'a.md', until: WALL + 60_600 }] })
   })
 })
 
@@ -322,5 +372,140 @@ describe('the guard', () => {
   it('throws on a call with no paths, which the router counts as guard-down', () => {
     const { lock } = made()
     expect(() => lock.guard.check({ callId: 'x', caller: editor, root: editor, action: 'luoshu.write', scope: {} })).toThrow()
+  })
+})
+
+describe('lock.changed', () => {
+  it('tells each path a set locks with when its lock ends in wall time and never who holds it', async () => {
+    const { lock, told } = made()
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md', 'new.md', 'NEW.md'], ms: 60_000 }, agent('claude-code#1'))
+    await flushed()
+    expect(told).toEqual([locked('projects/plan.md', 1_060_000), locked('new.md', 1_060_000)])
+    expect(JSON.stringify(told)).not.toMatch(/claude-code|mcp-http-handler|holder|onBehalf/)
+  })
+
+  // A clock reads fractions of a millisecond, so two renewals a moment apart end at different readings that tell the
+  // same whole millisecond
+  it('tells a renewal that moves the end by a whole millisecond and nothing for one whose end rounds to the one told', async () => {
+    const { lock, told, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
+    pass(0.3)
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
+    // The renewal not told still moved the end past the first one
+    pass(999.9)
+    expect(check(lock, ['projects/plan.md'], { root: editor })).toBe('deny')
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 5000 }, agent('claude-code#1'))
+    await flushed()
+    expect(told).toEqual([locked('projects/plan.md', 1_001_000), locked('projects/plan.md', 1_006_000)])
+  })
+
+  it('tells nothing for a set refused locked, quota or invalid', async () => {
+    const { lock, told } = made()
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
+    expect(await ask(lock, 'lock.set', { paths: ['other.md', 'projects/plan.md'], ms: 1000 }, agent('claude-code#2')))
+      .toEqual({ refused: { code: 'locked' } })
+    expect(await ask(lock, 'lock.set', { paths: ['other.md'], ms: 0 }, agent('claude-code#2'))).toEqual({ refused: { code: 'invalid' } })
+    await fill(lock, 'q', MAX_LOCKS_PER_CLIENT, { root: leases })
+    await flushed()
+    told.length = 0
+    expect(await ask(lock, 'lock.set', { paths: ['other.md'], ms: 1000 }, { root: leases })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    await flushed()
+    expect(told).toEqual([])
+  })
+
+  it('tells each path a clear unlocks and nothing for a path the clear leaves or no one locked', async () => {
+    const { lock, told } = made()
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 60_000 }, agent('claude-code#1'))
+    await ask(lock, 'lock.set', { paths: ['mine.md'], ms: 60_000 }, agent('claude-code#2'))
+    await flushed()
+    told.length = 0
+    await ask(lock, 'lock.clear', { paths: ['projects/plan.md', 'free.md', 'mine.md'] }, agent('claude-code#2'))
+    await flushed()
+    expect(told).toEqual([unlocked('mine.md')])
+    await ask(lock, 'lock.clear', { paths: ['projects/plan.md', 'free.md'] }, { root: editor })
+    await flushed()
+    expect(told).toEqual([unlocked('mine.md'), unlocked('projects/plan.md')])
+  })
+
+  it('tells an expiry once, when a check, a look or a set on the note notices it and not before', async () => {
+    const { lock, told, pass } = made()
+    for (const name of ['a.md', 'b.md', 'c.md']) await ask(lock, 'lock.set', { paths: [name], ms: 1000 }, agent('claude-code#1'))
+    await flushed()
+    told.length = 0
+    pass(1000)
+    await flushed()
+    expect(told).toEqual([])
+    expect(check(lock, ['a.md'], { root: editor })).toBe('allow')
+    expect(check(lock, ['a.md'], { root: editor })).toBe('allow')
+    await flushed()
+    expect(told).toEqual([unlocked('a.md')])
+    await ask(lock, 'lock.held', { paths: ['b.md'] }, { root: plugin('git') })
+    await ask(lock, 'lock.set', { paths: ['c.md'], ms: 1000 }, agent('claude-code#2'))
+    await flushed()
+    expect(told).toEqual([unlocked('a.md'), unlocked('b.md'), unlocked('c.md'), locked('c.md', 1_002_000)])
+  })
+
+  it('tells nothing from inside the guard\'s step, only once that step ended', async () => {
+    const { lock, told, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
+    await flushed()
+    told.length = 0
+    pass(1000)
+    check(lock, ['a.md'], { root: editor })
+    expect(told).toEqual([])
+    await flushed()
+    expect(told).toEqual([unlocked('a.md')])
+  })
+
+  // Every lock it held named a note of the folder before, so each is told unlocked, expired ones not yet told included
+  // At once, while the grants that applied to the old folder's notes still stand
+  it('tells every lock another folder frees unlocked at once and nothing when the same folder opens again', async () => {
+    const { lock, told, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
+    await ask(lock, 'lock.set', { paths: ['b.md'], ms: 60_000 }, { root: editor })
+    pass(1000)
+    await flushed()
+    told.length = 0
+    const opening = { folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') }
+    lock.role.open(opening)
+    await flushed()
+    expect(told).toEqual([])
+    lock.role.open({ ...opening, folder: path.join(base, 'data') })
+    expect(told).toEqual([unlocked('a.md'), unlocked('b.md')])
+    await flushed()
+    expect(told).toHaveLength(2)
+  })
+
+  it('answers every lock action as before when its publish throws', async () => {
+    const { lock, state } = made()
+    state.throws = true
+    expect(await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))).toEqual({ ms: 1000 })
+    expect(check(lock, ['a.md'], { root: editor })).toBe('deny')
+    expect(await ask(lock, 'lock.clear', { paths: ['a.md'] }, agent('claude-code#1'))).toBeNull()
+    await flushed()
+    expect(check(lock, ['a.md'], { root: editor })).toBe('allow')
+  })
+})
+
+describe('the lock released', () => {
+  // Its module switched off or failed: no guard holds any lock, so each is told unlocked at once, an expired one not yet
+  // told included, and the table starts empty
+  it('tells every lock unlocked at once, frees them all and tells nothing locked again', async () => {
+    const { lock, told, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
+    await ask(lock, 'lock.set', { paths: ['b.md'], ms: 60_000 }, { root: editor })
+    pass(1000)
+    await flushed()
+    told.length = 0
+    lock.role.release()
+    expect(told).toEqual([unlocked('a.md'), unlocked('b.md')])
+    await flushed()
+    expect(told).toHaveLength(2)
+    expect(check(lock, ['b.md'], agent('claude-code#1'))).toBe('allow')
+    expect(await ask(lock, 'lock.held', { paths: ['a.md', 'b.md'] }, { root: plugin('git') })).toStrictEqual({ locks: [] })
+    lock.role.release()
+    await flushed()
+    expect(told).toHaveLength(2)
   })
 })

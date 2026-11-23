@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, records, temp, until, workersPage } from './helpers.ts'
 
 // History and exec as the install ships them, called by a folder plugin's worker and by the editor window
@@ -45,7 +45,7 @@ async function started(setup: { notes?: Record<string, string>, plugins: Record<
   for (const [id, granted] of Object.entries(setup.plugins)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }))
-    await store.writePlugin(id, await entryFor(root, { granted, class: 4, confirmed: granted, off: setup.off?.[id] ?? [] }))
+    await writeApproved(store, id, root, { granted, class: 4, confirmed: granted, off: setup.off?.[id] ?? [] })
   }
   const app = await launch(dataDir)
   const editor = await editorPage(app)

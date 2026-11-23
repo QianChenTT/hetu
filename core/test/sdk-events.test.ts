@@ -175,3 +175,57 @@ describe('an ack the router lost', () => {
     await until(() => seen.includes('notes/after.md'), 2000)
   })
 })
+
+describe('lock.changed through the SDK', () => {
+  it('hands a lock.changed handler the path and the lock state, and a luoshu.changed handler the path alone', async () => {
+    const { ctx, gate, router, publish } = await listening()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'lock.changed'] }]
+    const locks: { path: string, locked: boolean, until: number | null }[] = []
+    const heard: object[] = []
+    await ctx.events.on('lock.changed', event => { locks.push({ path: event.path, locked: event.locked, until: event.until }) })
+    await ctx.events.on(['lock.changed', 'luoshu.changed'], event => { heard.push(event) })
+    router.publishCore('lock', 'changed', 'notes/a.md', { locked: true, until: 1_700_000_060_000 })
+    router.publishCore('lock', 'changed', 'notes/a.md', { locked: false, until: null })
+    await publish('notes/b.md')
+    await until(() => heard.length === 3)
+    expect(locks).toEqual([
+      { path: 'notes/a.md', locked: true, until: 1_700_000_060_000 },
+      { path: 'notes/a.md', locked: false, until: null },
+    ])
+    expect(heard).toStrictEqual([
+      { topic: 'lock.changed', path: 'notes/a.md', locked: true, until: 1_700_000_060_000 },
+      { topic: 'lock.changed', path: 'notes/a.md', locked: false, until: null },
+      { topic: 'luoshu.changed', path: 'notes/b.md' },
+    ])
+  })
+})
+
+describe('lock.changed shaped by the SDK', () => {
+  it('narrows a handler of a mixed topic list by the topic', async () => {
+    const { ctx, gate, router, publish } = await listening()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'lock.changed'] }]
+    const heard: string[] = []
+    await ctx.events.on(['lock.changed', 'luoshu.changed'], event => {
+      if (event.topic === 'lock.changed') heard.push(`${event.path} ${event.locked} ${event.until}`)
+      else heard.push(`${event.topic} ${event.path}`)
+    })
+    router.publishCore('lock', 'changed', 'notes/a.md', { locked: true, until: 5 })
+    await publish('notes/b.md')
+    await until(() => heard.length === 2)
+    expect(heard).toEqual(['notes/a.md true 5', 'luoshu.changed notes/b.md'])
+  })
+
+  // No core sends one, so a change of the core's fields shows as a fault rather than events that never arrive
+  it('acks a lock.changed with no lock state, runs no handler and reports it once', async () => {
+    const { ctx, gate, router, sent } = await listening()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['lock.changed'] }]
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const heard: unknown[] = []
+    await ctx.events.on('lock.changed', event => { heard.push(event) })
+    router.send(worker('search'), { v: 1, kind: 'event', seq: 1, topic: 'lock.changed', path: 'notes/a.md' })
+    router.send(worker('search'), { v: 1, kind: 'event', seq: 2, topic: 'lock.changed', path: 'notes/a.md', locked: true, until: null })
+    await until(() => sent().some(message => message.kind === 'ack' && message.seq === 2))
+    expect(heard).toEqual([])
+    expect(errors.mock.calls.filter(call => String(call[0]).includes('lock.changed'))).toHaveLength(1)
+  })
+})

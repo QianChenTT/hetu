@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeEffect, changeKinds, identityAsk, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
+import { change, changeEffect, changeKinds, identityAsk, MAX_FOLDER_LENGTH, MAX_STAGED_PLUGINS, type Change } from '../api/changes.ts'
 import { isSecurityControl } from '../api/ids.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../api/limits.ts'
 
@@ -13,7 +13,6 @@ const everyKind = [
   { kind: 'plugin.on', plugin: 'search' },
   { kind: 'plugin.off', plugin: 'gate' },
   { kind: 'plugin.remove', plugin: 'search' },
-  { kind: 'plugin.restore', plugin: 'git' },
   { kind: 'plugin.clearStorage', plugin: 'mcp' },
   { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
@@ -28,13 +27,14 @@ const everyKind = [
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
   { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' },
+  { kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }] },
 ]
 
 describe('the change kinds', () => {
-  it("are the twenty-one change kinds the trusted window applies", () => {
+  it("are the twenty change kinds the trusted window applies", () => {
     expect(changeKinds).toEqual([
-      'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
-      'plugin.reset',
+      'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.clearStorage',
+      'plugin.reset', 'plugin.install',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.pick', 'devMode', 'exec.anyCommand', 'skipVerification',
       'confirmOff', 'allowUnsigned', 'limit.set', 'identity.revoke',
     ])
@@ -64,7 +64,7 @@ describe('the change kinds', () => {
     expect(change.parse(one)).toEqual(one)
   })
 
-  it.each(['plugin.install', 'security.confirm', 'switches.set', 'watchdog.control', ''])('refuses the kind %j', kind => {
+  it.each(['core.install', 'security.confirm', 'switches.set', 'watchdog.control', ''])('refuses the kind %j', kind => {
     expect(change.safeParse({ kind, plugin: 'search' }).success).toBe(false)
   })
 
@@ -92,6 +92,24 @@ describe('what each kind holds', () => {
     for (const plugin of ['my.plugin', 'Search', 'con', '', '../search']) {
       expect(change.safeParse({ kind: 'plugin.on', plugin }).success).toBe(false)
     }
+  })
+
+  // The Install button's Confirm: a staging's handle and each plugin ticked with the digest of the manifest drawn, which
+  // the core checks against what it staged
+  it.each([
+    [{ staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }, { id: 'layout', digest: 'b'.repeat(64) }] }, true],
+    [{ staged: 'stage-1', plugins: [] }, false],
+    [{ staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }, { id: 'search', digest: 'b'.repeat(64) }] }, false],
+    [{ staged: 'stage-1', plugins: [{ id: 'Search', digest: HASH }] }, false],
+    [{ staged: 'stage-1', plugins: ['search'] }, false],
+    [{ staged: 'stage-1', plugins: [{ id: 'search' }] }, false],
+    [{ staged: 'stage-1', plugins: [{ id: 'search', digest: HASH, path: '/tmp/x' }] }, false],
+    [{ staged: 'stage-1', plugins: [{ id: 'search', digest: 'A'.repeat(64) }] }, false],
+    [{ staged: 'stage-1', plugins: Array.from({ length: MAX_STAGED_PLUGINS + 1 }, (_, i) => ({ id: `p${i}`, digest: HASH })) }, false],
+    [{ staged: 'a b', plugins: [{ id: 'search', digest: HASH }] }, false],
+    [{ staged: 'stage-1', plugin: 'search', plugins: [{ id: 'search', digest: HASH }] }, false],
+  ])('checks plugin.install with %j', (fields, ok) => {
+    expect(change.safeParse({ kind: 'plugin.install', ...fields }).success).toBe(ok)
   })
 
   it('holds a grant to the capability list and its scopes', () => {
@@ -191,7 +209,7 @@ describe('whether a change widens', () => {
   it.each([
     ['a new entry', { kind: 'plugin.approve', plugin: 'search' }],
     ['an update', { kind: 'plugin.update', plugin: 'search' }],
-    ['a first-party copy brought back', { kind: 'plugin.restore', plugin: 'git' }],
+    ['plugins installed', { kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }] }],
     ['a plugin switched on', { kind: 'plugin.on', plugin: 'search' }],
     ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
     ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],

@@ -8,7 +8,7 @@ import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { luoshuModule } from './modules-fakes.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message } from './plugins-manager-fakes.ts'
+import { coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -52,7 +52,7 @@ async function world(granted: Record<string, string[]>) {
     const items = grants(...paths)
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: items }) as never))
-    await store.writePlugin(id, await entryFor(root, { granted: items, class: 4 } as Partial<Plugin>))
+    await writeApproved(store, id, root, { granted: items, class: 4 } as Partial<Plugin>)
   }
   await store.writeLuoshu({ folder })
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })

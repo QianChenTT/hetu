@@ -1,13 +1,14 @@
 import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { capabilityText } from '../../api/trusted.ts'
+import { capabilityText, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
-import { coreModuleIds, failSafeControls, firstPartyIds, isSecurityControl } from '../../api/ids.ts'
+import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
+import type { Staging } from './header.ts'
 import type { Served } from '../router/header.ts'
 import { clearStartMarker, readFailedOnce, readStartMarkers, writeStartMarker } from './folders.ts'
 import { type ConnectAsked } from './connects.ts'
@@ -111,7 +112,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { state, reason } = this.moduleRow(id)
       return {
         id, from: 'core', place: 'core', state, reason,
-        security: isSecurityControl(id), firstParty: false, on: !isOne(switches.off, id), items: [], class: null,
+        security: isSecurityControl(id), on: !isOne(switches.off, id), items: [], class: null,
       }
     })
     const listed: ListedPlugin[] = this.list().map(row => {
@@ -122,7 +123,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       return {
         id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
         security: row.from === 'install' && isSecurityControl(row.id),
-        firstParty: row.from === 'folder' && isOne(firstPartyIds, row.id),
         on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
@@ -171,6 +171,15 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         ...this.classes('approve', change.plugin, this.approval(k), true).lines,
       ]
     }
+    if (change.kind === 'plugin.install') {
+      const staging = this.heldStaging(change.staged)
+      if (staging === null) return []
+      const asks = new Map(change.plugins.flatMap(({ id }) => {
+        const manifest = staging.plugins.find(plugin => plugin.id === id)?.manifest
+        return manifest === undefined || manifest === null ? [] : [[id, manifest.capabilities ?? []] as const]
+      }))
+      return [sourceLine(staging.source), UNSIGNED, ...change.plugins.flatMap(({ id }) => this.installWords(id, staging, asks))]
+    }
     if (change.kind === 'plugin.update') {
       const read = this.staged.get(change.plugin)?.read
       const to = read?.manifest?.version
@@ -185,18 +194,31 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const after: Plugin = { ...entry, granted: [...entry.granted, change.capability] }
       return [...this.classes('widen', change.plugin, after, true).lines]
     }
-    if (change.kind === 'plugin.restore') {
-      const read = this.bundled.get(change.plugin)
-      const listed = this.install?.plugins[change.plugin]
-      if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
-      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
-      return [...this.classes('restore', change.plugin, after, true).lines]
-    }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
       const k = this.known.get(change.plugin)
       return k?.from === 'folder' && k.entry !== null ? [...this.classes(change.kind === 'plugin.remove' ? 'remove' : 'reset', change.plugin, null, true).lines] : []
     }
     return []
+  }
+
+  // One plugin an install takes: its name as its author wrote it in quotes with its id and version and the version it
+  // replaces, then each grant as a plain sentence and the grant risk classifier's lines, each under the plugin's id so
+  // no line reads as another plugin's. Classed as the approval or update it is, from the manifest staged, with the other
+  // plugins the install takes counted as installed with what their manifests ask for (asks holds every plugin taken),
+  // so links between them show on the one Confirm. A plugin installed alone is classed against the plugins installed
+  protected installWords(id: string, staging: Staging, asks: ReadonlyMap<string, readonly Capability[]>): string[] {
+    const staged = staging.plugins.find(plugin => plugin.id === id)
+    const manifest = staged?.manifest
+    if (staged === undefined || manifest === undefined || manifest === null) return []
+    const own = manifest.capabilities ?? []
+    const before = this.known.get(id)?.from === 'folder' ? this.state.plugins[id] : undefined
+    const after: Plugin = { version: manifest.version, contentHash: staged.digest, signer: null, granted: [...own], class: null, enabled: true }
+    const others = new Map([...asks].filter(([other]) => other !== id))
+    const lines = this.classes(before === undefined ? 'approve' : 'update', id, after, true, { staged: others }).lines
+    return [
+      `${JSON.stringify(manifest.name)} (${id}), version ${manifest.version}${before === undefined ? '' : `, replacing version ${before.version}`}`,
+      ...[...(own.length === 0 ? ['It asks for nothing'] : own.map(grantSentence)), ...lines].map(line => `${id}: ${line}`),
+    ]
   }
 
   // What a window's banner shows, from the plugins manager's own states and the state it runs with
@@ -231,9 +253,9 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
 
   // ---- boot
 
-  // In boot's order: the install checked, the core modules started, the install's plugins started, the first-party
-  // reconcile, every plugin-folder entry classed again, the plugin folder scanned and its plugins started in graph
-  // order. core.ready closes it with every policy job's state, unless a shutdown began on the way
+  // In boot's order: the install checked, the core modules started, the install's plugins started, every plugin-folder
+  // entry classed again, the plugin folder scanned and its plugins started in graph order. core.ready closes it with
+  // every policy job's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.failedBefore = await readFailedOnce(this.dataDir)
@@ -281,8 +303,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     this.replan()
     await this.settled()
     await this.saveInstalled()
-    await this.reconcile()
-    // In the changes' turn, since a restore needs no plugin the scan found and could write an entry under the pass
+    // In the changes' turn, so no change writes an entry under the pass
     await this.serial(() => this.classAll('start'))
     this.classedAtStart = true
     await this.scan()

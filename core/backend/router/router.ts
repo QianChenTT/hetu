@@ -1,4 +1,4 @@
-import type { Caller } from '../../api/envelope.ts'
+import { moduleTopics, type Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
 import { actionPathProblem, coreTopic } from '../../api/actions.ts'
 import type { Part } from '../../api/ids.ts'
@@ -6,8 +6,9 @@ import { Bus } from './bus.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Asks, RouterDoor, RouterOptions, Heard, Port, Served, WayClosed } from './header.ts'
 import { topicsOf, whoOf, Context } from './context.ts'
-import { busState, listable, recheck, rejudge, revokeAll } from './provide.ts'
+import { busState, listable, readable, recheck, rejudge, revokeAll } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
+import { endMovedRoles } from './route.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
 // Policy comes from the policy jobs it asks: the gate decides and the router enforces
@@ -18,6 +19,7 @@ export class Router implements RouterDoor {
     this.c = new Context(options, c => new Bus({
       state: () => busState(c),
       canList: (caller, path) => listable(c, caller, path),
+      canRead: (caller, path) => readable(c, caller, path),
       recheck: (caller, topic) => recheck(c, caller, topic),
       limit: (plugin, name) => c.limits.of(plugin, name),
       // Coalesced, since a publisher's pace or a subscriber's own can make them
@@ -56,24 +58,31 @@ export class Router implements RouterDoor {
     if (!this.c.closed) this.c.bus.emit(coreTopic.quitting)
   }
 
-  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path. A path the contract's path
+  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path, with the fields the contract's
+  // moduleTopics gives the topic. A topic not there, fields that don't parse as its own or a path the contract's path
   // schema refuses, a dot segment among them, reaches nobody whatever the gate's state, since no shape step checks it
-  // here. The module names its own topics, so no manifest is read. No call carries it, so it makes no audit record of
-  // an events.publish
-  publishCore(owner: string, topic: string, path: string): void {
-    if (this.c.closed || actionPathProblem(path) !== null) return
-    this.c.bus.publish(`${owner}.${topic}`, path)
+  // here. The topic's hears says whether a subscriber the gate lets list the path hears it or only one that reads it.
+  // No manifest is read. No call carries it, so it makes no audit record of an events.publish
+  publishCore(owner: string, topic: string, path: string, fields?: Record<string, unknown>): void {
+    const named = `${owner}.${topic}`
+    const spec = Object.hasOwn(moduleTopics, named) ? moduleTopics[named] : undefined
+    if (this.c.closed || spec === undefined || actionPathProblem(path) !== null) return
+    const parsed = spec.fields === null ? { success: fields === undefined, data: undefined } : spec.fields.safeParse(fields)
+    if (!parsed.success) return
+    this.c.bus.publish(named, path, { hears: spec.hears, ...(parsed.data === undefined ? {} : { fields: parsed.data }) })
   }
 
   // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
   // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
-  // core.security once a new grants snapshot applied a security change. A new grants snapshot also has the gate judge
+  // core.security once a new grants snapshot applied a security change. An open role call whose holder the table no
+  // longer names ends. A new grants snapshot also has the gate judge
   // every open call with power again, stopping the ones it no longer lets on. The first grants snapshot the router
   // reads is where it starts, not a change. A grants snapshot it can't read is none, so it moves nothing
   changed(): void {
     if (this.c.closed || this.c.shutting) return
     this.c.bus.sync()
     this.c.bus.emit(coreTopic.status)
+    endMovedRoles(this.c)
     const view = this.c.view()
     if (view === null || view === this.c.announced) return
     const first = this.c.announced === undefined

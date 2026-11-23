@@ -190,9 +190,9 @@ export class MemoryStorage implements Provider {
   }
 }
 
-// lock.* and the lock guard of the lock module itself, its table, holder, caps and expiry on the clock given, with the
-// paths taken as spelled where the module makes them canonical on the disk. The folder it is handed is one no prepare
-// here reads
+// lock.* and the lock guard of the lock module itself, its table, holder, caps and expiry on the clock given and its
+// lock.changed through the publish given, with the paths taken as spelled where the module makes them canonical on the
+// disk. The folder it is handed is one no prepare here reads
 export function memoryLock(options: LockOptions): { provider: Provider, guard: Guard } {
   const lock = createLock(options)
   lock.role.open({ folder: 'memory', dataDir: '', installDir: '' })

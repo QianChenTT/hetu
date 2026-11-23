@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { roleActions } from '../../api/actions.ts'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import { grantKeyOf, type Caller, type Refusal, type RefusalCode } from '../../api/envelope.ts'
@@ -35,11 +36,13 @@ export type Delivered = { action: string, args: unknown, caller: Caller, onBehal
 export type StandInState = DepState
 // A plugin the fake core plays for the plugin under test: its actions with their from lists, which the real router
 // enforces, and handle, which answers each call delivered. What handle returns is the result and a throw of { code }
-// is the refusal. Without handle every call answers null. state is ready unless named
+// is the refusal. Without handle every call answers null. state is ready unless named. roles are the role actions it
+// holds the item of, each delivered to it as the role's own action, one stand-in to a role
 export type StandInOptions = {
   actions: Record<string, { from?: string[] }>
   handle?: (call: Delivered) => unknown
   state?: StandInState
+  roles?: string[]
 }
 // Each call delivered to the stand-in, oldest first
 export type StandIn = { readonly id: string, readonly delivered: readonly Delivered[] }
@@ -51,7 +54,8 @@ export type CoreCall = { action: string, args: unknown, caller: Caller }
 // read that takes time. limits are the human's values for all, read each time, so a test may change them while the
 // plugin runs
 // drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs. clock is
-// the lock's, performance.now() unless named, so a test moves a lock past its end
+// the lock's, performance.now() unless named, so a test moves a lock past its end. A named clock is the one
+// lock.changed tells each end on too, Date.now() otherwise
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
   limits?: Partial<Record<LimitName, number>>, drawer?: FakeDrawer, clock?: () => number,
@@ -126,6 +130,8 @@ class Way {
 // core plays
 class FakePluginsManager implements PluginTable {
   readonly infos = new Map<string, PluginInfo>()
+  // The plugin holding each role, by the role's action
+  readonly roles = new Map<string, string>()
   private readonly gateState: PolicyJobState
   private readonly all: Partial<Record<LimitName, number>>
   private readonly listeners = new Set<(caller: Caller, kind: string) => void>()
@@ -148,6 +154,10 @@ class FakePluginsManager implements PluginTable {
 
   plugin(id: string): PluginInfo | null {
     return this.infos.get(id) ?? null
+  }
+
+  holderOf(action: string): string | null {
+    return this.roles.get(action) ?? null
   }
 
   limits(): HumanLimits {
@@ -212,7 +222,7 @@ function transportOf(router: Router, caller: Caller): Transport {
 }
 
 // A core for a plugin's tests: the real router with its eleven steps, a gate as the mode says, the luoshu, storage,
-// cache and history in memory, the lock module's own table and guard, test callers with the grants each test names and
+// cache and history in memory, the lock module's own table, guard and lock.changed, test callers with the grants each test names and
 // stand-ins for other plugins. One plugin runs on it at a time, placed as the plugins manager would place it:
 // mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
@@ -274,7 +284,12 @@ export class FakeCore {
     this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     this.history = new MemoryHistory(this.memory.notes, options.latencyMs ?? 0)
-    this.lock = memoryLock({ clock: options.clock ?? (() => performance.now()) })
+    // lock.changed goes out through the router as the core wires it, to a plugin that reads the note
+    this.lock = memoryLock({
+      clock: options.clock ?? (() => performance.now()),
+      wall: options.clock ?? (() => Date.now()),
+      publish: (path, change) => this.router.publishCore('lock', 'changed', path, change),
+    })
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     // Flood control counts by the limits the fake core was given, as the core's does by the human's
     const limits = new Limits(() => this.pluginsManager.limits())
@@ -402,6 +417,10 @@ export class FakeCore {
     if (id === this.manifest.id || id in providers || this.testers.has(id) || this.standIns.has(id)) {
       throw new Error(`${id} is a plugin the fake core runs already`)
     }
+    for (const role of options.roles ?? []) {
+      if (!Object.hasOwn(roleActions, role)) throw new Error(`${role} is no role`)
+      if (this.pluginsManager.roles.has(role)) throw new Error(`${role} is held by ${this.pluginsManager.roles.get(role)} already`)
+    }
     const delivered: Delivered[] = []
     const caller: Caller = { kind: 'plugin', id, half: 'worker', incarnation: 1 }
     const handle = this.router.handle(caller, message => {
@@ -420,6 +439,7 @@ export class FakeCore {
       })()
     })
     this.standIns.set(id, { state: options.state ?? 'ready', actions: options.actions })
+    for (const role of options.roles ?? []) this.pluginsManager.roles.set(role, id)
     this.missing.delete(id)
     this.placeStandIn(id)
     return { id, delivered }
@@ -481,14 +501,20 @@ export class FakeCore {
     return { state: 'ready' }
   }
 
-  // Its requires and plugin.call targets: ready or starting as the fake core runs it or a stand-in's state, else
-  // unavailable
+  // Its requires and plugin.call targets, and for a utility half each role a utility half calls, by the role's
+  // action: ready or starting as the fake core runs it or a stand-in's state, else unavailable
   private deps(): Record<string, DepState> {
     const targets = (this.manifest.capabilities ?? []).flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
+    const stateOf = (id: string | undefined): DepState => {
+      const state = id === undefined ? undefined : this.pluginsManager.infos.get(id)?.state
+      return state === 'ready' ? 'ready' : state === 'starting' ? 'starting' : 'unavailable'
+    }
     const deps: Record<string, DepState> = {}
-    for (const id of [...(this.manifest.requires ?? []), ...targets]) {
-      const state = this.pluginsManager.infos.get(id)?.state
-      deps[id] = state === 'ready' ? 'ready' : state === 'starting' ? 'starting' : 'unavailable'
+    for (const id of [...(this.manifest.requires ?? []), ...targets]) deps[id] = stateOf(id)
+    if (this.pluginsManager.infos.get(this.manifest.id)?.place === 'utility') {
+      for (const [role, spec] of Object.entries(roleActions)) {
+        if (spec.from === 'utility') deps[role] = stateOf(this.pluginsManager.roles.get(role))
+      }
     }
     return deps
   }

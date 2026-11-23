@@ -25,13 +25,16 @@ export type PluginContext = Client & {
   // Runs each time the core tells a change to the state of its requires and plugin.call targets, a key or a state,
   // starting to ready included. It is handed nothing and reads has again. Never for init's own map nor once stopping
   onDeps(fn: () => void | Promise<void>): void
-  // Serves <id>.<name>, an action the manifest declares under provides.actions
+  // Serves <id>.<name>, an action the manifest declares under provides.actions, or a role's action such as door.handle,
+  // which the router delivers while the plugin holds the role's item
   provide(name: string, handler: Handler): void
   // The paths of these the call's own caller may read too, only while the call is live
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]>
   // Subscriptions to other plugins' topics and the core's. publish sends its own <id>.<name>
   readonly events: {
-    on(topics: string | readonly string[], handler: EventHandler, options?: EventOptions): Promise<Subscription>
+    // A handler of lock.changed hears the note's lock state too, typed when the topics are named literally. A handler
+    // of a mixed list narrows by event.topic, one of topics held in a string[] checks 'locked' in event
+    on<T extends string>(topics: T | readonly T[], handler: EventHandler<T>, options?: EventOptions): Promise<Subscription>
     publish(name: string, path?: string): Promise<void>
   }
   readonly try: typeof attempt

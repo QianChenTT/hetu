@@ -34,15 +34,17 @@ export const qualifiedName = z.string()
 
 // How the router reaches the part serving a namespace. provider: a core module, or a core plugin in a utility process,
 // through prepare and perform with the gate judging. action: an action of the core table, which the floor decides and
-// never the gate. bus: the event bus inside the router. served: a part that keeps its own checks
-export type Route = 'provider' | 'action' | 'bus' | 'served'
+// never the gate. bus: the event bus inside the router. served: a part that keeps its own checks. role: the one plugin
+// the plugin table names as holding the role's item, delivered to as a plugin's action, the floor deciding the caller
+export type Route = 'provider' | 'action' | 'bus' | 'served' | 'role'
 
 // A namespace's server: the part handed to the router under this name and the route to it. each: every call is an
 // audit record of its own, never coalesced
 export type Server = { readonly part: string, readonly route: Route, readonly each?: true }
 
 // Every namespace the core keeps with its server, never a plugin. log.* reads the event log the core writes, ui.* is the
-// drawer's and plugin names plugin.call, an action of none. Any other namespace is a plugin's id
+// drawer's and plugin names plugin.call, an action of none. door.* names roles, each served by the one plugin holding
+// its item. Any other namespace is a plugin's id
 export const namespaces = table({
   core: { part: 'plugins-manager', route: 'action' },
   security: { part: 'plugins-manager', route: 'action', each: true },
@@ -53,6 +55,7 @@ export const namespaces = table({
   editor: { part: 'runtime', route: 'action' },
   gate: { part: 'gate', route: 'action' },
   app: { part: 'runtime', route: 'action', each: true },
+  door: { part: 'plugins-manager', route: 'role' },
   luoshu: { part: 'luoshu', route: 'provider' },
   lock: { part: 'lock', route: 'provider' },
   history: { part: 'history', route: 'provider' },
@@ -137,10 +140,6 @@ export const corePluginIds = frozen(['net', 'mcp-http-handler'] as const)
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
 export const utilityIds = frozen(['mcp-http-handler'] as const)
 
-// First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
-// the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
-export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'] as const)
-
 const reserved = new Set<string>([
   ...coreNamespaces,
   ...Object.keys(providers),
@@ -148,10 +147,9 @@ const reserved = new Set<string>([
   ...Object.values(guards).flat(),
   ...coreModuleIds,
   ...corePluginIds,
-  ...firstPartyIds,
 ])
 
-// Ids a plugin-folder plugin can't take, apart from the first-party copies
+// Ids a plugin-folder plugin can't take
 export const reservedIds = frozen([...reserved].sort())
 
 // Titles and owner strips in the editor window show a plugin by its id, so no plugin is called hetu

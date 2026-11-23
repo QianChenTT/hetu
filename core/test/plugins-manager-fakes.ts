@@ -7,7 +7,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { Part } from '../api/ids.ts'
-import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
+import { INSTALL_LIST } from '../api/install.ts'
 import type { ClassTable, GrantRiskClassifier } from '../api/classes.ts'
 import type { ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
@@ -198,10 +198,10 @@ export class Half {
     return this.inbox.filter(message => message.kind === kind)
   }
 
-  // A call from this half through the router, its reply or null when none came within ms
-  async ask(action: string, args: unknown = {}, ms = 1000): Promise<Message | null> {
+  // A call from this half through the router, its reply or null when none came within ms. extra adds envelope fields
+  async ask(action: string, args: unknown = {}, ms = 1000, extra: object = {}): Promise<Message | null> {
     const id = 1000 + this.id++
-    this.post({ v: 1, kind: 'call', id, action, args })
+    this.post({ v: 1, kind: 'call', id, action, args, ...extra })
     const end = Date.now() + ms
     while (Date.now() < end) {
       const reply = this.inbox.find(message => message.kind === 'reply' && message.id === id)
@@ -445,7 +445,7 @@ export async function plant(file: string, body: string): Promise<void> {
   await writeFile(file, `${body}\n${createHash('sha256').update(`${body}\n`).digest('hex')}\n`)
 }
 
-export type Listing = { files: Files, firstParty?: boolean, version?: string, hash?: string }
+export type Listing = { files: Files, version?: string, hash?: string }
 
 // Writes an install folder: each plugin under plugins/<id> and the install list with each one's version and hash, as
 // the Electron build is to. hash replaces the real one, for a list that doesn't match its files
@@ -455,20 +455,35 @@ export async function writeInstall(dir: string, plugins: Record<string, Listing>
     const root = path.join(dir, 'plugins', id)
     await writeFolder(root, plugin.files)
     const version = plugin.version ?? (JSON.parse(plugin.files['hetu-plugin.json']) as { version: string }).version
-    listed[id] = {
-      path: `plugins/${id}`, version, hash: plugin.hash ?? await hashOf(root), ...(plugin.firstParty ? { firstParty: true } : {}),
-    }
+    listed[id] = { path: `plugins/${id}`, version, hash: plugin.hash ?? await hashOf(root) }
   }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify({ format: 1, plugins: listed }, null, 2)}\n`)
 }
 
-// An approved entry for the folder at root
+// An approved entry for the folder at root, unsigned as an approval writes it. It runs once allowUnsigned names its
+// hash, which allowed adds
 export async function entryFor(root: string, extra: Partial<Plugin> = {}): Promise<Plugin> {
-  return { version: '1.0.0', contentHash: await hashOf(root), signer: 'sigstore:someone', granted: [], class: 1, enabled: true, ...extra }
+  return { version: '1.0.0', contentHash: await hashOf(root), signer: null, granted: [], class: 1, enabled: true, ...extra }
 }
 
-export const firstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
-  ({ version: '1.0.0', contentHash: hash, signer: FIRST_PARTY_SIGNER, granted: [], class: null, enabled: true, ...extra })
+// The switches with each entry's build added to allowUnsigned, as the human's approval and allow leave them
+export function allowed(switches: Switches, ...entries: Plugin[]): Switches {
+  const hashes = entries.filter(entry => entry.signer === null).map(entry => entry.contentHash)
+  return { ...switches, allowUnsigned: [...new Set([...switches.allowUnsigned, ...hashes])] }
+}
+
+// An approved plugin written into a store: its entry and its build added to the allowUnsigned the switches file holds
+export async function writeApproved(store: StateStore, id: string, root: string, extra: Partial<Plugin> = {}): Promise<Plugin> {
+  const entry = await entryFor(root, extra)
+  await store.writePlugin(id, entry)
+  const { state } = await store.load()
+  await store.writeSwitches(allowed(state.switches, entry))
+  return entry
+}
+
+// The entry an older build wrote for a first-party copy it shipped, which carried this signer
+export const oldFirstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
+  ({ version: '1.0.0', contentHash: hash, signer: 'hetu first-party', granted: [], class: null, enabled: true, ...extra })
 
 // The install the core needs to come up: nothing, the gate and the other core modules ship inside the core as the log
 // does
@@ -483,7 +498,7 @@ export function coreModules(
   dirs: { dataDir: string, installDir: string }, link: FakeLink, fakes: ModuleFakes = {}, limit?: (plugin: string | null, name: LimitName) => number,
 ): CoreModules {
   return realModules({
-    ...dirs, ...fakes, publish: (topic, path) => link.router?.publishCore('luoshu', topic, path), ...(limit !== undefined ? { limit } : {}),
+    ...dirs, ...fakes, publish: (owner, topic, path, fields) => link.router?.publishCore(owner, topic, path, fields), ...(limit !== undefined ? { limit } : {}),
   })
 }
 
@@ -519,16 +534,15 @@ export async function tempBase(): Promise<string> {
 }
 
 // A plugins manager over a real StateStore, the core modules and a real router, with the fake runtime. state writes the
-// entries and switches the boot hands over. removedKnown stands in for what boot found. The gate allows everything
-// unless modules hands another, as the gate the install held did, and every other core module is the real one unless
-// modules hands a fake
+// entries and switches the boot hands over, each unsigned entry's build added to allowUnsigned unless the test names
+// allowUnsigned itself, a base used again keeping what it allowed. The gate allows everything unless modules hands another, as the gate the
+// install held did, and every other core module is the real one unless modules hands a fake
 export async function harness(options: {
   base?: string
   install?: Record<string, Listing> | null
   folder?: Record<string, Files>
   entries?: Record<string, Plugin | ((root: string) => Promise<Plugin>)>
   switches?: Partial<Switches>
-  removedKnown?: boolean
   behave?: FakeRuntime['behave']
   modules?: ModuleFakes
   limits?: FakeLink['limits']
@@ -545,11 +559,17 @@ export async function harness(options: {
   if (options.install !== null) await writeInstall(installDir, options.install ?? coreInstall())
   for (const [id, files] of Object.entries(options.folder ?? {})) await writeFolder(path.join(dataDir, 'plugins', id), files)
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), ...options.switches })
+  const written: Plugin[] = []
   for (const [id, entry] of Object.entries(options.entries ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
-    await store.writePlugin(id, typeof entry === 'function' ? await entry(root) : entry)
+    const one = typeof entry === 'function' ? await entry(root) : entry
+    written.push(one)
+    await store.writePlugin(id, one)
   }
+  // A base used again keeps the builds a run before allowed, as a restart keeps the human's switches
+  const kept = options.base !== undefined ? (await store.load()).state.switches.allowUnsigned : []
+  const switches = { ...defaultSwitches(), allowUnsigned: kept, ...options.switches }
+  await store.writeSwitches(options.switches?.allowUnsigned === undefined ? allowed(switches, ...written) : switches)
   await options.before?.({ dataDir, installDir })
   const loaded = await store.load()
   const link = new FakeLink()
@@ -565,7 +585,7 @@ export async function harness(options: {
   // No guard expected unless a test names its own, the same list for the plugins manager and the router
   const guardsFor = options.pluginsManager?.guardsFor ?? (() => [])
   const pluginsManager = new PluginsManager({
-    booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir },
+    booted: { state: loaded.state, checks: loaded.checks, store, dataDir },
     installDir,
     link,
     // The link stands in for recording, so a test sees each record the plugins manager makes and decides how it lands

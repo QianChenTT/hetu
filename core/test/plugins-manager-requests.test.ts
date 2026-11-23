@@ -6,7 +6,7 @@ import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
-import { allowAll, cleanup, entryFor, filesFor, harness, reasonOf, stateOf, workerManifest, type Files } from './plugins-manager-fakes.ts'
+import { allowAll, cleanup, entryFor, filesFor, harness, hashOf, reasonOf, stateOf, workerManifest, type Files } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -491,7 +491,7 @@ describe('the core actions the plugins manager serves', () => {
       id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', root: null, field: null,
     }])
     expect(list.switches).toEqual({
-      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false,
+      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))], confirmOff: false,
     })
     expect(list.limits).toEqual({ all: {}, plugins: {} })
     expect(list.luoshu).toBe(null)

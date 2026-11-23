@@ -6,7 +6,7 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Call } from '../api/policy-jobs.ts'
 import { EventLog } from '../lib/event-log.ts'
-import { allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, until, workerManifest, type FakeLink } from './plugins-manager-fakes.ts'
+import { allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, until, workerManifest, type FakeLink } from './plugins-manager-fakes.ts'
 
 // A pair's items as the plugins manager holds them: asked for by the plugin the root of a chain called, confirmed by the
 // human, kept in memory for the run and handed to the gate keyed by the root plugin and the field
@@ -37,12 +37,12 @@ async function started(base?: string) {
   const made = await harness({
     ...(base !== undefined ? { base } : {}),
     install: {
-      ...coreInstall(), mcp: { files: mcpFiles, firstParty: true },
+      ...coreInstall(),
       'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp: mcpFiles, beta: betaFiles, gamma: gammaFiles },
     entries: {
-      mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1 }),
+      mcp: root => entryFor(root, { signer: null, granted: [read], class: 1 }),
       beta: root => entryFor(root, { granted: [{ type: 'plugin.call', targets: ['gamma'] }] }),
       gamma: root => entryFor(root, { granted: [read] }),
     },

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 export const electronPath = createRequire(import.meta.url)('electron') as string
@@ -81,8 +81,8 @@ export async function editorPage(app: ElectronApplication): Promise<Page> {
   await until(async () => (await visibleWindows(app)).includes('hetu://editor/'))
   return page
 }
-// A plugin's worker host page: each community plugin has a renderer of its own and the first-party plugins share one
-export const workersPage = (app: ElectronApplication, group: string) => pageAt(app, `hetu://workers/?for=${encodeURIComponent(group)}`)
+// A plugin's worker host page, each plugin in a renderer of its own
+export const workersPage = (app: ElectronApplication, id: string) => pageAt(app, `hetu://workers/?for=${encodeURIComponent(id)}`)
 
 // The windows a human sees, by URL
 export const visibleWindows = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) =>
@@ -131,7 +131,7 @@ export async function dataWith(workers: Record<string, string>, limits: Record<s
   for (const [id, code] of Object.entries(workers)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id), { 'worker.js': code }))
-    await store.writePlugin(id, await entryFor(root))
+    await writeApproved(store, id, root)
   }
   return dataDir
 }

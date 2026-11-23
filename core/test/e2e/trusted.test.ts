@@ -4,7 +4,7 @@ import type { ElectronApplication, Page, Worker as PageWorker } from 'playwright
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -46,7 +46,7 @@ async function data(options: { switches?: Partial<Switches>, workers?: Record<st
   for (const [id, worker] of Object.entries(options.workers ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, worker.manifest ?? {}), { 'worker.js': worker.code }))
-    await store.writePlugin(id, await entryFor(root, worker.entry ?? {}))
+    await writeApproved(store, id, root, worker.entry ?? {})
   }
   await options.before?.(dataDir)
   return dataDir
@@ -446,7 +446,9 @@ describe('a plugin’s class', () => {
           'worker.js': lifecycle('send({ v: 1, kind: \'call\', id: 1, action: \'target.hello\', args: {} })'),
         }))
         // An approval writes no signer until plugin provenance, so this build is trusted as the human would trust one
-        await new StateStore(dir).writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(root)] })
+        const store = new StateStore(dir)
+        const { switches } = (await store.load()).state
+        await store.writeSwitches({ ...switches, allowUnsigned: [...switches.allowUnsigned, await hashOf(root)] })
       },
     })
     const app = await start(dataDir, await install())
@@ -484,5 +486,57 @@ describe('a plugin', () => {
     }
     expect(await logged(dataDir, 'security.request')).toBe(false)
     expect(await visibleWindows(app)).toEqual(['hetu://editor/'])
+  })
+})
+
+// hetu ships no plugin, so the trusted window opens on its four steps until a layout is approved
+describe('the startup screen', () => {
+  it('shows its four steps above the rest with the release link to edit, closes for now and shows again from the menu', async () => {
+    const app = await start(await data(), await install())
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    const startup = page.getByRole('region', { name: 'Start with hetu in four steps' })
+    await until(async () => await startup.count() === 1)
+    expect(await startup.getByRole('heading', { level: 3 }).allInnerTexts()).toEqual([
+      'Pick the notes folder', 'Install the plugins you want', 'Approve them', 'What a grant is',
+    ])
+    expect(await startup.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
+    // Above the plugin list, not over it
+    expect(await page.locator('#root > section').first().getAttribute('class')).toBe('startup')
+    expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
+    await tick(PAST_DELAY)
+    await startup.getByRole('button', { name: 'Close for now' }).click()
+    await until(async () => await startup.count() === 0)
+    await page.getByText('Menu', { exact: true }).click()
+    await page.getByRole('button', { name: 'Show the startup screen again' }).click()
+    await until(async () => await startup.count() === 1)
+  })
+})
+
+// The page draws itself anew on every event, so focus and the caret are put back on the control drawn in its place
+describe('the trusted page across a redraw', () => {
+  it('keeps a link being typed focused with its caret when an event redraws the page, beside a status line read aloud', async () => {
+    const app = await start(await data(), await install())
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    const field = page.locator('.plugins input[data-key="link:list"]')
+    await until(async () => await field.count() === 1)
+    await field.fill('https://github.com/someone/plu')
+    await field.evaluate(input => {
+      (input as HTMLInputElement).setSelectionRange(8, 8)
+      ;(input as unknown as { drawnBefore: boolean }).drawnBefore = true
+    })
+    // A request from the editor makes the core tell every window, so the trusted page reads its list and draws again
+    await ask(editor, 'security.request', { change: { kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null } })
+    await showing(page, 'Set readyMs to 20000 for every plugin')
+    expect(await page.evaluate(() => {
+      const active = document.activeElement as HTMLInputElement & { drawnBefore?: boolean }
+      return { key: active.dataset.key, drawnBefore: active.drawnBefore === true, value: active.value, start: active.selectionStart }
+    })).toEqual({ key: 'link:list', drawnBefore: false, value: 'https://github.com/someone/plu', start: 8 })
+    expect(await page.getByRole('status').count()).toBe(1)
   })
 })

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { firstPartyIds, corePluginIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
+import { corePluginIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
 import { plain } from './plain.ts'
 import { pathProblem } from './scope.ts'
 
@@ -9,11 +9,6 @@ export const INSTALL_LIST = 'hetu-install.json'
 export const INSTALL_LIST_FORMAT = 1
 // Refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_INSTALL_LIST_BYTES = 256 * 1024
-
-// The signer a first-party copy's entry carries until provenance lands. The plugins manager accepts it only while the copy's
-// bytes equal the install's. The space keeps it apart from any signer identity provenance could pin, which is a URI or
-// an address
-export const FIRST_PARTY_SIGNER = 'hetu first-party'
 
 // The manifest's version grammar: three whole numbers and no ranges, since everything in v1 ships together
 export const pluginVersion = z.string()
@@ -37,22 +32,19 @@ const installPath = z.string().superRefine((value, ctx) => {
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
 })
 
-// One plugin the install holds: where its folder is, its version and the hash of its files as hashFiles gives it.
-// firstParty marks a bundled copy of a first-party folder plugin, which the reconcile copies into the plugin folder.
-// Every other entry is a core plugin, whose grants are its manifest
+// One core plugin the install holds: where its folder is, its version and the hash of its files as hashFiles gives it.
+// Its grants are its manifest
 const listed = z.strictObject({
   path: installPath,
   version: pluginVersion,
   hash: z.string().regex(/^[0-9a-f]{64}$/),
-  firstParty: z.literal(true).optional(),
 })
 export type Listed = z.infer<typeof listed>
 
 const isOne = (list: readonly string[], value: string) => list.includes(value)
 
-// Read with the strict parser, so a duplicate key or a __proto__ refuses the whole list. An install id is never marked
-// first party and a first-party id always is, so the mark can't move a plugin from the folder into the install or the
-// other way. Each folder is named once
+// Read with the strict parser, so a duplicate key or a __proto__ refuses the whole list. Only a core plugin's id, so no
+// list moves a plugin from the plugin folder into the install. Each folder is named once
 export const installList = plain(
   z.strictObject({
     format: z.literal(INSTALL_LIST_FORMAT),
@@ -60,8 +52,7 @@ export const installList = plain(
   }).superRefine((list, ctx) => {
     const paths = new Set<string>()
     for (const [id, entry] of Object.entries(list.plugins)) {
-      const fits = entry.firstParty === true ? isOne(firstPartyIds, id) : isOne(corePluginIds, id)
-      if (!fits) ctx.addIssue({ code: 'custom', message: `${id} is not ${entry.firstParty ? 'a first-party' : 'an install'} id` })
+      if (!isOne(corePluginIds, id)) ctx.addIssue({ code: 'custom', message: `${id} is not an install id` })
       if (paths.has(entry.path)) ctx.addIssue({ code: 'custom', message: `a folder named twice: ${entry.path}` })
       paths.add(entry.path)
     }

@@ -1,5 +1,4 @@
 import { type ClassRaised } from '../../api/changes.ts'
-import { FIRST_PARTY_SIGNER, type Listed } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import { checkedAnswer, highestClass, type ClassAnswer, type ClassCause, type ClassTable, type ClassVerdict } from '../../api/classes.ts'
@@ -22,25 +21,14 @@ type Decided = { readonly id: string, readonly entry: Plugin | null, readonly ch
 // shows and for an update asked so whether it loads unasked
 type Classed = { readonly own: Decided | null, readonly others: readonly Decided[], readonly lines: readonly string[], readonly unasked: boolean }
 
+// What a class change may hand the classifier past the change: what an update's new version asks for when asked whether
+// it loads unasked, and the other plugins an install takes with what each asks for
+type ClassExtras = { readonly requested?: readonly Capability[], readonly staged?: ReadonlyMap<string, readonly Capability[]> }
+
 // The same items whatever their order, an item being its type with its scope
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
   const keys = new Set(others.map(capabilityKey))
   return items.length === others.length && items.every(item => keys.has(capabilityKey(item)))
-}
-
-// The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
-// off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
-// off unless it is exactly an item that was on. An item no longer granted goes with its switch
-function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
-  const off = old?.off ?? []
-  if (off.length === 0) return []
-  const offKeys = new Set(off.map(capabilityKey))
-  const offTypes = new Set<string>(off.map(item => item.type))
-  const onKeys = new Set((old?.granted ?? []).map(capabilityKey).filter(key => !offKeys.has(key)))
-  return granted.filter(item => {
-    const key = capabilityKey(item)
-    return offKeys.has(key) || (offTypes.has(item.type) && !onKeys.has(key))
-  })
 }
 
 // The classes: the table handed to the grant risk classifier, its answer stored by the one function every class change
@@ -57,16 +45,21 @@ export abstract class PluginsClasses extends PluginsIdentities {
   }
 
   // What the classifier is handed: every plugin the plugins manager knows with what it holds and what its entry stores
-  // (a core plugin with none) and the change to one plugin, copied so nothing the classifier does reaches the state
+  // (a core plugin with none) and the change to one plugin, copied so nothing the classifier does reaches the state.
+  // staged is the other plugins one install takes, each holding what its staged manifest asks for as if installed: a
+  // new one with no entry, so nothing answers for it, and one it updates with its entry
   protected classTable(
-    cause: ClassCause, id: string | null, granted: readonly Capability[] | null, confirm: boolean, requested?: readonly Capability[],
+    cause: ClassCause, id: string | null, granted: readonly Capability[] | null, confirm: boolean,
+    { requested, staged = new Map() }: ClassExtras = {},
   ): ClassTable {
-    const ids = new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id)])
+    const ids = new Set([
+      ...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), ...staged.keys(),
+    ])
     const plugins = [...ids].map(other => {
       const entry = this.known.get(other)?.from === 'install' ? null : this.state.plugins[other] ?? null
       const stored = entry === null ? null
         : { class: entry.class, firstUse: entry.firstUse ?? [], unclassed: entry.unclassed === true, owed: entry.owed ?? null }
-      return { id: other, granted: this.grantsOf(other), stored }
+      return { id: other, granted: staged.get(other) ?? this.grantsOf(other), stored }
     })
     return frozen(structuredClone({ cause, change: id === null ? null : { id, granted }, confirm, plugins, ...(requested === undefined ? {} : { requested }) }))
   }
@@ -94,12 +87,13 @@ export abstract class PluginsClasses extends PluginsIdentities {
   // change as below. Switched off, a pass leaves each as stored and a change passes: the class the last one classed, the
   // entry marked as not classed and every item not confirmed listed, which the gate is handed only once the classifier
   // is on again. Down, a throw or an answer the check refuses, the class is not known and every item asks. Whether an
-  // entry rises is read here from the class numbers stored, never from the classifier. requested is what an update's new
-  // version asks for when the classifier is asked whether it loads unasked, which it never does while off or down
-  protected classes(cause: ClassCause, id: string | null, after: Plugin | null, confirm: boolean, requested?: readonly Capability[]): Classed {
+  // entry rises is read here from the class numbers stored, never from the classifier. extras.requested is what an
+  // update's new version asks for when the classifier is asked whether it loads unasked, which it never does while off or
+  // down, and extras.staged the other plugins an install takes
+  protected classes(cause: ClassCause, id: string | null, after: Plugin | null, confirm: boolean, extras: ClassExtras = {}): Classed {
     let classing = this.classing()
     if (id === null && classing === 'off') return { own: null, others: [], lines: [], unasked: false }
-    const answer = classing === 'on' ? this.askClasses(this.classTable(cause, id, after?.granted ?? null, confirm, requested)) : null
+    const answer = classing === 'on' ? this.askClasses(this.classTable(cause, id, after?.granted ?? null, confirm, extras)) : null
     if (answer === null && classing === 'on') classing = 'down'
     const verdicts = new Map(answer?.plugins.map(verdict => [verdict.id, verdict]))
     const notice = { cause, by: id }
@@ -165,9 +159,26 @@ export abstract class PluginsClasses extends PluginsIdentities {
   // before the write and one that falls after, then each notice owed raised
   protected async writeClassed(id: string, change: Classed): Promise<void> {
     const entry = change.own!.entry!
+    await this.withClassChange(change, async () => {
+      await this.store.writePlugin(id, entry)
+      this.putEntry(id, entry)
+    })
+  }
+
+  // A plugin-folder entry gone with the class change its going makes, then gone run
+  protected async entryGone(id: string, change: Classed, gone: () => void = () => {}): Promise<void> {
+    await this.withClassChange(change, async () => {
+      await this.store.removePlugin(id)
+      delete this.state.plugins[id]
+      gone()
+    })
+  }
+
+  // The changed plugin's own write with the entries the change moves: those that rise written before it and the rest
+  // after, then the notices owed raised
+  protected async withClassChange(change: Classed, write: () => Promise<void>): Promise<void> {
     await this.settle(change.others, true)
-    await this.store.writePlugin(id, entry)
-    this.putEntry(id, entry)
+    await write()
     await this.settle(change.others, false)
     this.raiseOwed(this.touched(change))
   }
@@ -210,17 +221,6 @@ export abstract class PluginsClasses extends PluginsIdentities {
   protected approval(k: Known): Plugin {
     const manifest = k.read.manifest!
     return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
-  }
-
-  // A first-party copy's entry before it is classed, with the human's item switches carried over
-  protected copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
-    const granted = read.manifest!.capabilities ?? []
-    const before = this.state.plugins[id] ?? null
-    const off = carriedOff(before, granted)
-    return {
-      version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}),
-    }
   }
 
   // Every plugin-folder entry classed again at start from the graph as it stands, before any plugin-folder plugin runs:

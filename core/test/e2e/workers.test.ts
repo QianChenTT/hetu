@@ -1,8 +1,5 @@
-import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { StateStore } from '../../backend/boot/state.ts'
-import { filesFor, firstPartyEntry, hashOf, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
-import { cleanup, dataWith, exited, launch, logged, records, temp, until, visibleWindows, workersPage } from './helpers.ts'
+import { cleanup, dataWith, exited, launch, logged, records, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -41,7 +38,6 @@ describe('sandboxed plugins as workers', () => {
     const dataDir = await dataWith({ one: lifecycle(), two: lifecycle() })
     const app = await launch(dataDir)
     await until(async () => await logged(dataDir, 'plugin.started', { plugin: 'one' }) && await logged(dataDir, 'plugin.started', { plugin: 'two' }))
-    // The first-party plugins' renderer runs beside them, the layout's among them
     const pids = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
       .filter(window => ['hetu://workers/?for=one', 'hetu://workers/?for=two'].includes(window.webContents.getURL()))
       .map(window => window.webContents.getOSProcessId()))
@@ -112,31 +108,6 @@ describe('sandboxed plugins as workers', () => {
     await until(() => closedAt > 0, 5000)
     const crashed = (await records(dataDir)).find(record => record.event === 'plugin.crashed' && record.plugin === 'spins')!
     expect(closedAt - at(crashed)).toBeLessThan(1500)
-  })
-
-  it('ends a first-party worker that hangs before ready with terminate(), its shared renderer running on', async () => {
-    // git ships in this install as a first-party copy, so it runs in the renderer the first-party plugins share, which
-    // stays open. Chromium forces a busy worker's end about 2 s after terminate()
-    const installDir = await temp()
-    const files = filesFor(workerManifest('git'), { 'worker.js': 'setTimeout(() => { for (;;) {} }, 300)' })
-    await writeInstall(installDir, { git: { files, firstParty: true } })
-    const dataDir = await dataWith({}, { readyMs: 1500 })
-    // A first boot copies a first-party plugin only once the copy's record lands within the plugin's readyMs. A slow
-    // Windows runner's first log write can take longer than 1.5 s, which leaves git uncopied and unstarted for the run.
-    // The copy is in place beforehand, so the short readyMs times only the worker's start
-    const copy = path.join(dataDir, 'plugins', 'git')
-    await writeFolder(copy, files)
-    await new StateStore(dataDir).writePlugin('git', firstPartyEntry(await hashOf(copy)))
-    const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
-    const page = await workersPage(app, 'first-party')
-    await until(() => page.workers().length === 1)
-    let closed = false
-    page.workers()[0].on('close', () => {
-      closed = true
-    })
-    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'git', reason: 'start-timeout' }))
-    await until(() => closed, 3500)
-    expect(page.isClosed()).toBe(false)
   })
 
   it('records a renderer that crashed, with the plugins it held, and each of their workers as crashed', async () => {

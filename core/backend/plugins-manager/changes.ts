@@ -2,8 +2,7 @@ import path from 'node:path'
 import type { PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
 import { grantKeyOf, type Caller } from '../../api/envelope.ts'
-import { firstPartyIds } from '../../api/ids.ts'
-import { FIRST_PARTY_SIGNER, isNewer } from '../../api/install.ts'
+import { isNewer } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
@@ -11,6 +10,7 @@ import type { Plugin, StateStore } from '../boot/header.ts'
 import { clear, clearFailedOnce, clearStartMarker, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
+import type { Staging } from './header.ts'
 import { readPlugin, type Read } from './verify.ts'
 import { PluginsInstall } from './install.ts'
 import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, toggled, bare } from './base.ts'
@@ -22,16 +22,42 @@ export abstract class PluginsChanges extends PluginsInstall {
 
   // A security request from a window, which the security view decides. The router has checked the caller is a window.
   // A revoke naming one session's field is taken as the revoke of its client, so its record names what it revokes
+  // An install is checked against its staging first, so no Confirm is drawn for what wouldn't install
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
+    // A widen to a role another plugin holds could never apply, so no Confirm asks for it
+    if (parsed.data.kind === 'grant.widen' && this.roleTaken(parsed.data.plugin, [parsed.data.capability])) {
+      return Promise.reject({ code: 'invalid', reason: 'role-taken' })
+    }
     const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
+    if (change.kind === 'plugin.install') {
+      try {
+        this.stagingOf(change)
+      } catch (refusal) {
+        return Promise.reject(refusal)
+      }
+    }
     return this.requests.request(change, from)
   }
 
+  // The staging a plugin.install names with each plugin ticked in it under the digest the human was shown and nothing
+  // that keeps it out, checked when it is asked for and again as it applies: not-found for a staging the core doesn't
+  // hold, stale for a plugin it doesn't hold or holds under another digest, invalid for one that can't be installed
+  protected stagingOf(change: Extract<Change, { kind: 'plugin.install' }>): Staging {
+    const staging = this.heldStaging(change.staged)
+    if (staging === null) throw { code: 'not-found' }
+    for (const { id, digest } of change.plugins) {
+      const staged = staging.plugins.find(plugin => plugin.id === id)
+      if (staged === undefined || staged.digest !== digest) throw { code: 'stale' }
+      if (staged.problem !== null || staged.manifest === null) throw { code: 'invalid' }
+    }
+    return staging
+  }
+
   // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
-  confirm(id: string, options: { typed?: string }): Promise<void> {
-    return this.requests.confirm(id, options)
+  confirm(...args: Parameters<Requests['confirm']>): Promise<void> {
+    return this.requests.confirm(...args)
   }
 
   cancel(id: string): Promise<void> {
@@ -68,10 +94,12 @@ export abstract class PluginsChanges extends PluginsInstall {
         return this.approve(change.plugin, confirm)
       case 'plugin.remove':
         return this.remove(change.plugin, confirm)
-      case 'plugin.restore':
-        return this.restore(change.plugin, confirm)
       case 'plugin.update':
         return this.applyStaged(change.plugin, confirm)
+      // The install lands the plugins from the bytes the human was shown, checked once more here
+      case 'plugin.install':
+        this.stagingOf(change)
+        return this.stagings!.install(change.staged, change.plugins.map(({ id, digest }) => ({ id, digest })))
       case 'devMode':
         return this.writeSwitches({ ...this.state.switches, devMode: toggled(this.state.switches.devMode, change.plugin, change.on) })
       case 'exec.anyCommand':
@@ -130,6 +158,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const k = this.known.get(id)
     const entry = k?.from === 'folder' ? k.entry : null
     if (entry === null) throw new Error(`no plugin entry for ${id}`)
+    if (add && this.roleTaken(id, [capability])) throw new Error(`another plugin holds ${capability.type}`)
     const key = capabilityKey(capability)
     const has = entry.granted.some(granted => capabilityKey(granted) === key)
     if (add && has) return
@@ -187,12 +216,7 @@ export abstract class PluginsChanges extends PluginsInstall {
         await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
       }
       if (k.from === 'folder' && k.entry !== null) {
-        const change = this.classes('reset', id, null, confirm)
-        await this.settle(change.others, true)
-        await this.store.removePlugin(id)
-        delete this.state.plugins[id]
-        await this.settle(change.others, false)
-        this.raiseOwed(this.touched(change))
+        await this.entryGone(id, this.classes('reset', id, null, confirm))
         this.entryChecks.set(id, 'absent')
         k.entry = null
         this.bump()
@@ -322,29 +346,25 @@ export abstract class PluginsChanges extends PluginsInstall {
   }
 
   // The entry goes first so nothing can run, then the plugin stops with its dependents, then its code, storage and
-  // cache. A first-party plugin leaves a tombstone, written before anything else
+  // cache
   protected async remove(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder') throw new Error(`${id} is not a plugin-folder plugin`)
-    const change = this.classes('remove', id, null, confirm)
-    await this.settle(change.others, true)
-    if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
-      await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
-    }
-    await this.store.removePlugin(id)
-    delete this.state.plugins[id]
-    this.pairsGone(id)
-    await this.settle(change.others, false)
-    this.raiseOwed(this.touched(change))
-    // What the human let this plugin do goes with it, so a plugin added later under the id asks again
+    const builds = [k.entry?.contentHash ?? null, k.read.hash].filter(hash => hash !== null)
+    await this.entryGone(id, this.classes('remove', id, null, confirm), () => this.pairsGone(id))
+    // What the human let this plugin do goes with it, so a plugin added later under the id asks again. Its build's allow
+    // too, unless another entry names the same build
     const { switches } = this.state
     const plugins = bare({ ...switches.limits.plugins })
     delete plugins[id]
-    if (isOne(switches.execAnyCommand, id) || isOne(switches.devMode, id) || id in switches.limits.plugins) {
+    const named = new Set(Object.values(this.state.plugins).map(entry => entry.contentHash))
+    const allowUnsigned = switches.allowUnsigned.filter(hash => named.has(hash) || !builds.includes(hash))
+    if (isOne(switches.execAnyCommand, id) || isOne(switches.devMode, id) || id in switches.limits.plugins || allowUnsigned.length < switches.allowUnsigned.length) {
       await this.writeSwitches({
         ...switches,
         execAnyCommand: switches.execAnyCommand.filter(held => held !== id),
         devMode: switches.devMode.filter(held => held !== id),
+        allowUnsigned,
         limits: { all: switches.limits.all, plugins },
       })
     }
@@ -354,44 +374,32 @@ export abstract class PluginsChanges extends PluginsInstall {
     this.bump()
     this.replan()
     await this.pumped()
-    await clear(folders.plugins(this.dataDir, id)).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
+    const cleared = await clear(folders.plugins(this.dataDir, id)).then(() => true, () => {
+      this.note('fault', { plugin: id, step: 'remove' })
+      return false
+    })
     for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
-    this.known.delete(id)
-    this.replan()
-  }
-
-  // Copies the install's bytes again and clears the tombstone. Never over a community plugin holding the id
-  protected async restore(id: string, confirm: boolean): Promise<void> {
-    const read = this.bundled.get(id)
-    const listed = this.install?.plugins[id]
-    if (read === undefined || listed === undefined || read.problem !== null || read.hash !== listed.hash) {
-      throw new Error(`no install copy of ${id} to restore`)
-    }
-    const entry = this.state.plugins[id] ?? null
-    if (entry !== null && entry.signer !== FIRST_PARTY_SIGNER) throw new Error(`${id} is held by another plugin`)
-    if (isOne(this.state.switches.removed, id)) {
-      await this.writeSwitches({ ...this.state.switches, removed: this.state.switches.removed.filter(other => other !== id) })
-    }
-    const k = this.known.get(id)
-    if (k?.live) {
-      k.held = { kind: 'held', state: 'stopped', reason: 'update' }
-      this.replan()
-      await this.pumped()
-    }
-    const copied = await this.copy(id, read, listed, 'restore', entry?.enabled ?? true, entry?.version ?? null, confirm)
-    if (!copied) throw new Error('the restore record did not land')
-    const now = this.know(id, 'folder', folders.plugins(this.dataDir, id), read, null, this.state.plugins[id])
-    if (k !== undefined) now.lastStop = k.lastStop
+    // A folder that can't be cleared keeps its row for the human to remove again. With its entry and its build's allow
+    // gone it can't run, and it waits for approval as a start finds it
+    if (cleared) this.known.delete(id)
     this.replan()
   }
 
   // ---- staged updates
 
+  // The build an update put in allowed in the old build's place, written after the entry, so a stop between the two
+  // leaves the plugin refused unsigned. The old build stays allowed while another entry names it
+  protected async allowBuild(old: string, next: string): Promise<void> {
+    const named = Object.values(this.state.plugins).some(entry => entry.contentHash === old)
+    const allowUnsigned = [...this.state.switches.allowUnsigned.filter(hash => named || hash !== old), next]
+    await this.writeSwitches({ ...this.state.switches, allowUnsigned: [...new Set(allowUnsigned)] })
+  }
+
   // An update staged beside the old version, resolved against the live graph before anything changes. One that closes
   // a cycle is refused, and so is a version that isn't newer, so an old release with a known hole can't be swapped
   // back in. Every other one waits for the human's Confirm, raised as plugin.update naming the running plugins it
-  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked. The signer is checked against the pin once provenance exists. A
-  // first-party copy changes only with the install
+  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked and
+  // allowUnsigned names the new build already. The Confirm allows the build it puts in, so the plan judges it allowed
   update(id: string, dir: string): Promise<UpdateOutcome> {
     // No plugin starts once shutdown began, so an update has nothing to restart into
     if (this.closing) return Promise.reject({ code: 'stopped' })
@@ -401,14 +409,15 @@ export abstract class PluginsChanges extends PluginsInstall {
   protected async updateNow(id: string, dir: string): Promise<UpdateOutcome> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder' || k.entry === null) return { outcome: 'refused', reason: 'missing' }
-    if (isOne(firstPartyIds, id)) return { outcome: 'refused', reason: 'reserved-id' }
+    // An entry naming a signer is refused signer as the folder check refuses it, so no update carries one on
+    if (k.entry.signer !== null) return { outcome: 'refused', reason: 'signer' }
     const read = await readPlugin(dir, id, 'folder')
     if (read.problem !== null) return { outcome: 'refused', reason: read.problem }
     if (!isNewer(read.manifest!.version, k.entry.version)) return { outcome: 'refused', reason: 'not-newer' }
     const nodes: Node[] = [...this.known.values()].map(other => {
       const entry = { ...k.entry!, contentHash: read.hash!, version: read.manifest!.version }
       const next = other === k ? { ...k, read, entry, held: null } : other
-      return { id: other.id, status: this.status(next), requires: next.read.manifest?.requires ?? [], rank: this.rank(other) }
+      return { id: other.id, status: this.status(next, other === k ? read.hash : null), requires: next.read.manifest?.requires ?? [], rank: this.rank(other) }
     })
     const after = plan(nodes)
     const verdict = after.verdicts.get(id)!
@@ -421,8 +430,10 @@ export abstract class PluginsChanges extends PluginsInstall {
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
     // An update loads on its own only when the grant risk classifier answers that it does, so never while it is off or
-    // down. Its record lands first as any update's does
-    if (this.classes('update', id, k.entry, false, read.manifest!.capabilities ?? []).unasked) {
+    // down, and only for a build allowUnsigned names, since no Confirm allows it. Its record lands first as any update's
+    // does
+    const allowed = isOne(this.state.switches.allowUnsigned, read.hash!)
+    if (allowed && this.classes('update', id, k.entry, false, { requested: read.manifest!.capabilities ?? [] }).unasked) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }
@@ -441,6 +452,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const staged = this.staged.get(id)
     const k = this.known.get(id)
     if (staged === undefined || k === undefined || k.entry === null) throw new Error(`no update staged for ${id}`)
+    if (k.entry.signer !== null) throw { code: 'signer' }
     this.staged.delete(id)
     const { read } = staged
     const old = k.entry
@@ -473,6 +485,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     k.entry = entry
     k.read = read
     k.place = placeOf(k.id, read, 'folder')
+    await this.allowBuild(old.contentHash, entry.contentHash)
     if (k.held?.reason === 'update') k.held = null
     this.bump()
     this.replan()

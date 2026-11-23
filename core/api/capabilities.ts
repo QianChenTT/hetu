@@ -39,10 +39,12 @@ function scopes<T extends z.ZodType>(item: T) {
 // The fixed list. A new type needs a new core API version and a plugin can't invent one. Version 2 put ui.view, a view
 // of either kind, and ui.layout, the right to be picked as the layout, in place of ui.panel and ui.statusBar. ui.edit
 // is the right to change an open note through the editor, which the human then saves, and ui.read its twin, the right
-// to read through the editor a note the human opened. Version 4 added lock.set, the right to lock notes
+// to read through the editor a note the human opened. Version 4 added lock.set, the right to lock notes. Version 5
+// added door.handle, the role of serving what comes through the door, which one plugin at a time holds
 export const capabilityTypes = frozen([
   'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream',
   'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
+  'door.handle',
 ] as const)
 
 // An update of a plugin holding one of these waits for the human's Confirm whatever its class: a layout draws the whole
@@ -79,6 +81,8 @@ export const capability = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('log.read') }),
   // The notes a plugin may lock against every other writer, the human included until he takes one over
   z.strictObject({ type: z.literal('lock.set'), paths: scopes(scope) }),
+  // The role the door calls: the plugin holding it answers each request the door passes on
+  z.strictObject({ type: z.literal('door.handle') }),
 ])
 export type Capability = z.infer<typeof capability>
 export type CapabilityType = Capability['type']

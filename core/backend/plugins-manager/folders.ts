@@ -167,8 +167,8 @@ export async function writeInstalled(dataDir: string, plugins: Installed): Promi
   await replaceFile(folders.installed(dataDir), withHash(body))
 }
 
-// A piece of first-party code, which loads only from the install
-export function firstPartyPath(installDir: string, relative: string, platform: string = process.platform): string {
+// A piece of the install's own code, which loads only from inside the install
+export function insideInstall(installDir: string, relative: string, platform: string = process.platform): string {
   const paths = platform === 'win32' ? path.win32 : path.posix
   if (relative === '' || paths.isAbsolute(relative)) throw new Error(`not a path inside the install: ${relative}`)
   const resolved = paths.resolve(installDir, relative)

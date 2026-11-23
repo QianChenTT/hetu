@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, temp, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -55,7 +55,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
     for (const [id, plugin] of Object.entries(setup.plugins)) {
       const root = path.join(dataDir, 'plugins', id)
       await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built.text, ...plugin.files }))
-      await store.writePlugin(id, await entryFor(root, { granted: plugin.granted }))
+      await writeApproved(store, id, root, { granted: plugin.granted })
     }
   }
   return { dataDir, folder }
@@ -106,10 +106,11 @@ const view = (name: string, extra: object = {}) => ({ [name]: { title: name[0]!.
 const viewer: Capability[] = [{ type: 'ui.view' }]
 const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
 const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-content')
-// The fixture's buttons on screen and not hidden marks' Marks button, its settings item in the status row of every run
+// The fixture's buttons on screen
 const pressed = (editor: Page) => editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button', { hasText: 'Press ' })
 
-describe("hetu's layout", () => {
+// Skipped: these drive the real layout plugin, which hetu no longer ships. They run with the plugin in hetu-plugins
+describe.skip("hetu's layout", () => {
   it("draws the editor and a plugin's view, titled under the plugin's name", async () => {
     const { editor } = await started({ notes: { 'a.md': 'alpha' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('hetu') } } } })
     await until(async () => (await pressed(editor).count()) === 1)

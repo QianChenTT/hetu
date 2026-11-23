@@ -46,17 +46,18 @@ describe('a manifest', () => {
     expect(installManifest.parse(leases)).toEqual(leases)
   })
 
-  it('leaves reserved ids to the plugins manager, which takes the first-party copies', () => {
-    expect(folderManifest.safeParse({ ...minimal, id: 'git' }).success).toBe(true)
+  it('leaves reserved ids to the plugins manager', () => {
+    expect(folderManifest.safeParse({ ...minimal, id: 'luoshu' }).success).toBe(true)
     expect(installManifest.safeParse({ ...minimal, id: 'gate' }).success).toBe(true)
   })
 
   it('parses an api range outside this core, which the plugins manager refuses with api', () => {
-    expect(API_VERSION).toBe(4)
+    expect(API_VERSION).toBe(5)
+    expect(supportsApi('^5')).toBe(true)
     expect(supportsApi('^4')).toBe(true)
     expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
-    expect(supportsApi('^5')).toBe(false)
+    expect(supportsApi('^6')).toBe(false)
     expect(supportsApi('^0')).toBe(false)
     // A prefix of this version is another version
     expect(supportsApi('^10')).toBe(false)
@@ -124,6 +125,14 @@ describe('a manifest', () => {
       expect(supportsApi('^3', ['luoshu.write', 'ui.edit'])).toBe(true)
       expect(supportsApi('^3', ['lock.set'])).toBe(false)
       expect(supportsApi('^4', ['lock.set'])).toBe(true)
+    })
+
+    // door.handle came with the role's action. Nothing an older plugin called changed
+    it('keeps version 4 under version 5, which added door.handle, unless the manifest names door.handle', () => {
+      expect(apiChanges[5]).toEqual({ added: ['door.handle'], removed: [], reshaped: [], actionsChanged: false })
+      expect(supportsApi('^4', ['luoshu.read', 'lock.set'])).toBe(true)
+      expect(supportsApi('^4', ['door.handle'])).toBe(false)
+      expect(supportsApi('^5', ['door.handle'])).toBe(true)
     })
   })
 
@@ -244,7 +253,7 @@ describe('install-only fields and types', () => {
     expect(installManifest.safeParse(value).success).toBe(true)
   })
 
-  // No plugin's code runs in the editor page, hidden marks included, which runs as a first-party worker
+  // No plugin's code runs in the editor page, hidden marks included, which runs as a worker
   it('refuses a page entry from the install and the plugin folder alike', () => {
     const value = { ...minimal, entries: { worker: 'w.js', page: 'page.js' } }
     expect(folderManifest.safeParse(value).success).toBe(false)

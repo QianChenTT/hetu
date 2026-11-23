@@ -10,7 +10,7 @@ import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
 import {
-  coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, throwingClassifier, tick, workerManifest, writeFolder,
+  coreInstall, entryFor, FakeRuntime, filesFor, hashOf, hostManifest, tempBase, throwingClassifier, tick, workerManifest, writeFolder,
   writeInstall, type Half, type Message,
 } from './plugins-manager-fakes.ts'
 
@@ -26,9 +26,9 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), version })
 
 // One folder of notes and one install, booted as often as the proof needs: the real boot, plugins manager, router, gate and
-// luoshu, mcp-http-handler the install's utility plugin the test drives as the root of each chain and mcp the install's
-// own copy, a worker the test answers for, holding read on every note unless items names its own. history adds hetu's
-// history as it ships
+// luoshu, mcp-http-handler the install's utility plugin the test drives as the root of each chain and mcp a
+// plugin-folder plugin approved unsigned by its hash, a worker the test answers for, holding read on every note unless
+// items names its own. history adds hetu's history as it ships
 async function world(options: { items?: Capability[], history?: boolean } = {}) {
   const items = options.items ?? [everything]
   const base = await tempBase()
@@ -39,26 +39,40 @@ async function world(options: { items?: Capability[], history?: boolean } = {}) 
   await mkdir(path.join(folder, 'private'), { recursive: true })
   await writeFile(path.join(folder, 'inbox', 'a.md'), 'inbox text')
   await writeFile(path.join(folder, 'private', 'b.md'), 'private text')
-  const install = (mcpVersion: string) => writeInstall(installDir, {
+  await writeInstall(installDir, {
     ...coreInstall(),
     'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
-    mcp: { files: mcpOf(mcpVersion, items), firstParty: true },
   })
-  await install('1.0.0')
   const store = new StateStore(dataDir)
-  // History switched off unless the test asks for it, as when the install held none
-  await store.writeSwitches({ ...defaultSwitches(), off: options.history === true ? [] : ['history'] })
-  await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'mcp')
-  await writeFolder(root, mcpOf('1.0.0', items))
-  await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: items, class: 1 }))
+  // mcp's bytes at a version in the plugin folder, its entry and allowUnsigned naming the hash of those bytes, as the
+  // human approves a build
+  const place = async (mcpVersion: string, allowed: readonly string[]) => {
+    await rm(root, { recursive: true, force: true })
+    await writeFolder(root, mcpOf(mcpVersion, items))
+    const hash = await hashOf(root)
+    await store.writeSwitches({ ...defaultSwitches(), off: options.history === true ? [] : ['history'], allowUnsigned: [...allowed, hash] })
+    await store.writePlugin('mcp', await entryFor(root, { version: mcpVersion, signer: null, granted: items, class: 1 }))
+  }
+  // History switched off unless the test asks for it, as when the install held none
+  await place('1.0.0', [])
+  await store.writeLuoshu({ folder })
   open.push(() => rm(base, { recursive: true, force: true }))
+  // An update of mcp the next start applies once the run before it has ended
+  let next: string | null = null
+  const update = (mcpVersion: string) => {
+    next = mcpVersion
+  }
 
   // One run of hetu over that folder, ended by the next start or the test's end. The grant risk classifier is the one
   // the core makes unless the run hands another
   let end: (() => Promise<void>) | null = null
   async function start(grantRiskClassifier?: GrantRiskClassifier) {
     await end?.()
+    if (next !== null) {
+      await place(next, (await store.load()).state.switches.allowUnsigned)
+      next = null
+    }
     const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
     const runtime = new FakeRuntime()
     // The core modules the core makes, closed at the plugins manager's shutdown
@@ -81,7 +95,7 @@ async function world(options: { items?: Capability[], history?: boolean } = {}) 
     const list = async () => await pluginsManager.serve({ callId: 'list', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 } as Call) as SecurityList
     return { pluginsManager, runtime, list, door: runtime.half('mcp-http-handler', 1, 'utility') }
   }
-  return { start, install, stored: async () => (await new StateStore(dataDir).load()).state.plugins.mcp }
+  return { start, update, stored: async () => (await new StateStore(dataDir).load()).state.plugins.mcp }
 }
 
 let next = 1
@@ -171,7 +185,7 @@ describe('a pair\'s items in the joined core', () => {
 
     // The next run of hetu, an update of mcp with it, holds no pair: beta reads nothing and asks again, alpha too since its
     // revoke held for the run. The grant risk classifier fails each call in this run
-    await proof.install('1.1.0')
+    proof.update('1.1.0')
     run = await proof.start(throwingClassifier())
     mcp = run.runtime.half('mcp')
     expect((await proof.stored()).version).toBe('1.1.0')

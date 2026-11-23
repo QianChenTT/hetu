@@ -14,7 +14,6 @@ const everyKind = [
   { kind: 'plugin.on', plugin: 'search' },
   { kind: 'plugin.off', plugin: 'gate' },
   { kind: 'plugin.remove', plugin: 'search' },
-  { kind: 'plugin.restore', plugin: 'git' },
   { kind: 'plugin.clearStorage', plugin: 'mcp' },
   { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
@@ -29,6 +28,7 @@ const everyKind = [
   { kind: 'allowUnsigned', hash: HASH, on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
   { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' },
+  { kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }] },
 ]
 
 describe("the core's words for a change", () => {
@@ -46,6 +46,15 @@ describe("the core's words for a change", () => {
   it('quotes what a plugin wrote as data, so a scope reads as text and not as a sentence', () => {
     const { text } = describeChange(one({ kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['save note'] } }))
     expect(text).toBe('Give search luoshu.read on "save note"')
+  })
+
+  // What each plugin asks for, its class and the source are the plugins manager's to add from the staging it holds
+  it('names each plugin an install takes and says each is approved with what its manifest asks for', () => {
+    expect(describeChange(one({ kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }] }))).toEqual({
+      text: 'Install search into the plugin folder and approve it with the grants its manifest asks for', notes: [],
+    })
+    expect(describeChange(one({ kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: HASH }, { id: 'layout', digest: HASH }] })).text)
+      .toBe('Install search, layout into the plugin folder and approve each with the grants its manifest asks for')
   })
 
   it('names the paths a list grant reaches', () => {
@@ -169,7 +178,7 @@ describe("the core's words for a class moved up with no Confirm", () => {
 
   it.each([
     ['approve', 'the approval of "reader" without a Confirm'],
-    ['copy', 'the copy of "reader" hetu ships, made at start'],
+    ['copy', 'the copy of "reader" hetu shipped, made at start'],
     ['update', 'the update of "reader" without a Confirm'],
     ['widen', 'a grant given to "reader" without a Confirm'],
     ['restore', 'the restore of "reader" without a Confirm'],
