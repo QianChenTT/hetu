@@ -18,6 +18,20 @@ describe('when the page arms its Confirm buttons', () => {
     expect(arming.wait()).toBe(1000)
   })
 
+  // As main's own delay does, which a request the page sends inside counts for nothing
+  it('says the delay since the window showed or gained focus still runs, a new request drawn not counting', () => {
+    const { arming, at } = armed()
+    expect(arming.focusDelayRuns()).toBe(true)
+    at(1000)
+    expect(arming.focusDelayRuns()).toBe(false)
+    arming.show('request', 'r1')
+    expect(arming.focusDelayRuns()).toBe(false)
+    arming.focused()
+    expect(arming.focusDelayRuns()).toBe(true)
+    at(2000)
+    expect(arming.focusDelayRuns()).toBe(false)
+  })
+
   it('waits the delay again when a new staging or request is drawn, and not for one drawn again', () => {
     const { arming, at } = armed()
     at(2000)
