@@ -7,6 +7,8 @@ import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { watchingModuleIds } from '../../api/ids.ts'
+import { installBox, Installer, type InstallBox, type InstallFlow } from './install.ts'
+import { startupScreen, type Startup, type StartupShown } from './startup.ts'
 
 export type Bridge = {
   send(message: unknown): void
@@ -41,9 +43,13 @@ export type Screen = {
   dev: Switch[]
   limits: Limit[]
   luoshu: string
-  install: string
+  installNote: string
   // Each pair with its Revoke, a revoked one with none, then what the list holds
   identities: { rows: IdentityRow[], about: string }
+  // The Install button's box, null while nothing is being installed
+  installing: InstallBox | null
+  // The startup screen's steps, null while it isn't shown
+  startup: Startup | null
 }
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
@@ -207,7 +213,7 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
   return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
 }
 
-export function screen(list: SecurityList): Screen {
+export function screen(list: SecurityList, flow: InstallFlow | null = null, shown: StartupShown = 'auto'): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
@@ -223,8 +229,10 @@ export function screen(list: SecurityList): Screen {
     dev: devOf(list),
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
-    install: INSTALL_LINE,
+    installNote: INSTALL_LINE,
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
+    installing: installBox(flow),
+    startup: startupScreen(list, shown),
   }
 }
 
@@ -249,10 +257,17 @@ export class TrustedPage {
   private readonly pending = new Map<number, (reply: Reply) => void>()
   private last: SecurityList | null = null
   private note: string | null = null
+  private startup: StartupShown = 'auto'
+  readonly installer: Installer
 
   constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void) {
     this.bridge = bridge
     this.draw = draw
+    this.installer = new Installer({
+      call: (action, args, then) => this.call(action, args, then),
+      settle: (reply, note) => this.settle(reply, 'other', note),
+      redraw: () => this.redraw(),
+    })
   }
 
   start(): void {
@@ -305,6 +320,17 @@ export class TrustedPage {
     })
   }
 
+  // The startup screen closed for now or shown again from the menu, for this window's life
+  closeStartup(): void {
+    this.startup = 'closed'
+    this.redraw()
+  }
+
+  showStartup(): void {
+    this.startup = 'shown'
+    this.redraw()
+  }
+
   // A note of the page's own, such as a value that isn't a number, drawn until the next answer
   say(note: string): void {
     this.note = note
@@ -315,10 +341,12 @@ export class TrustedPage {
     this.call('app.quit')
   }
 
-  private settle(reply: Reply, sent: 'request' | 'other' = 'other'): void {
+  // said is a note of the caller's own for an answer the core gave
+  private settle(reply: Reply, sent: 'request' | 'other' = 'other', said?: string): void {
     const code = reply.ok === true ? null : reply.refusal?.code
     // A request answers throttled when its sender's places are full, a Confirm when it came too soon
-    if (code === 'throttled' && sent === 'request') this.note = 'Too many requests are waiting. Answer or cancel some first'
+    if (said !== undefined) this.note = said
+    else if (code === 'throttled' && sent === 'request') this.note = 'Too many requests are waiting. Answer or cancel some first'
     else this.note = typeof code === 'string' ? notes[code] ?? `Refused: ${code}` : null
     this.refresh()
   }
@@ -333,8 +361,12 @@ export class TrustedPage {
     this.call('security.list', undefined, reply => {
       if (reply.ok !== true) return
       this.last = reply.result as SecurityList
-      this.draw(screen(this.last), this.note)
+      this.redraw()
     })
+  }
+
+  private redraw(): void {
+    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.startup), this.note)
   }
 
   private heard(message: unknown): void {

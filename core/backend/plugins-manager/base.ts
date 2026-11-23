@@ -19,7 +19,7 @@ import { plan, type Plan, type Status, type Verdict } from './graph.ts'
 import { Connects, type PairOf } from './connects.ts'
 import type { Beating } from '../heartbeat/header.ts'
 import type { Failure, Runtime } from '../runtime/header.ts'
-import type { PluginsRecording } from './header.ts'
+import type { PluginsRecording, Staging, Stagings } from './header.ts'
 import { Requests } from './requests.ts'
 import { type Read } from './verify.ts'
 import { infoOf } from './reads.ts'
@@ -56,6 +56,9 @@ export type PluginsManagerOptions = {
   // A clock no change of the wall clock moves, for how long a request is first in line and how long an ask for a pair
   // waits. performance.now unless a test names another
   clock?: () => number
+  // The stagings the Install button made, which a plugin.install installs from. With none, every plugin.install
+  // answers not-found
+  stagings?: Stagings
 }
 
 // What an update staged beside the old version came to
@@ -206,6 +209,7 @@ export abstract class PluginsBase {
   // The connects utility halves ask for: the one waiting, the answers not yet collected and the client ids paused
   protected readonly connects: Connects
   protected readonly clock: () => number
+  protected readonly stagings: Stagings | null
   // The pass at start has classed every entry, so the grant risk classifier switched on from here on classes them again
   protected classedAtStart = false
 
@@ -231,6 +235,7 @@ export abstract class PluginsBase {
       }
     }
     this.clock = options.clock ?? (() => performance.now())
+    this.stagings = options.stagings ?? null
     this.state = booted.state
     for (const check of booted.checks) {
       if (check.check === 'plugin-entry' && check.id !== undefined) this.entryChecks.set(check.id, check.result as FileResult)
@@ -247,6 +252,7 @@ export abstract class PluginsBase {
       fingerprint: change => {
         if (change.kind === 'class.raised' || change.kind === 'consent.ask') return Promise.resolve(change.kind)
         if (change.kind === 'identity.ask') return Promise.resolve(`${change.kind}\n${change.root}\n${change.field}\n${this.pairCount(change)}`)
+        if (change.kind === 'plugin.install') return this.installPrint(change)
         return this.store.fingerprint('plugin' in change ? change.plugin : null)
       },
       exclusive: work => this.serial(work),
@@ -255,6 +261,14 @@ export abstract class PluginsBase {
         if (change.kind === 'class.raised') return this.answered(change.plugin)
         if (change.kind === 'identity.ask') this.askPaused.set(`${change.root}\n${change.field}`, this.clock() + IDENTITY_ASK_PAUSE_MS)
         if (change.kind === 'consent.ask') this.connects.cancelled(change)
+        // Nobody installs from it any more
+        if (change.kind === 'plugin.install') {
+          try {
+            this.stagings?.unstage(change.staged)
+          } catch {
+            // A staging that can't be dropped installs nothing without a Confirm, and core.stage may collect it
+          }
+        }
         return Promise.resolve()
       },
       record: (event, fields, signal) => this.record(event, fields, signal),
@@ -282,6 +296,26 @@ ${capabilityKey(change.capability)}`)
       },
       inUse: pair => this.pairHeld(pair),
     })
+  }
+
+  // What the core staged under a handle, null for one it doesn't hold and with no stagings. One that throws counts as
+  // gone, so the trusted window still draws and nothing installs from it
+  protected heldStaging(handle: string): Staging | null {
+    try {
+      return this.stagings?.held(handle) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  // What a plugin.install reads: the switches, the notes folder and the entry of each plugin it installs, then the
+  // staging's plugins as the core holds them. An entry written, or the staging dropped or holding another manifest,
+  // between the request and the Confirm stales it
+  protected async installPrint(change: Extract<Change, { kind: 'plugin.install' }>): Promise<string> {
+    const files = await Promise.all([null, ...change.plugins.map(plugin => plugin.id)].map(id => this.store.fingerprint(id)))
+    const staging = this.heldStaging(change.staged)
+    const staged = staging === null ? 'gone' : JSON.stringify(staging.plugins.map(plugin => [plugin.id, plugin.digest, plugin.problem]))
+    return [change.kind, ...files, staged].join('\n')
   }
 
   // ---- the router's seam

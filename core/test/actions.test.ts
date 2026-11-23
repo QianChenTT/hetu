@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LOCK_PATHS, MAX_REFUSAL_COUNT,
-  providerActions, refusedReasons, roleActions,
+  coreActions, coreTopics, eventActions, installProblems, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LINK_LENGTH, MAX_LOCK_PATHS,
+  MAX_REFUSAL_COUNT, providerActions, refusedReasons, roleActions,
 } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers, serverOf } from '../api/ids.ts'
@@ -30,6 +30,10 @@ describe('the core actions', () => {
       'app.quit': 'windows',
       'app.relaunch': 'trusted',
       'app.pickFolder': 'trusted',
+      'app.pickPlugins': 'trusted',
+      'core.findRelease': 'trusted',
+      'core.stage': 'trusted',
+      'core.unstage': 'trusted',
       'gate.reach': 'windows',
       'core.views': 'windows',
       'editor.frame': 'windows',
@@ -41,6 +45,14 @@ describe('the core actions', () => {
       'core.consentAsk': 'utility',
       'core.consentAnswer': 'utility',
     })
+  })
+
+  it('names why a link or a source found nothing to install, fixed and frozen', () => {
+    expect(installProblems).toEqual([
+      'not-github', 'no-release', 'no-zip', 'rate-limited', 'offline', 'invalid', 'name', 'duplicate', 'special', 'encrypted', 'too-many',
+      'too-big', 'not-a-folder', 'same-id', 'none',
+    ])
+    expect(Object.isFrozen(installProblems)).toBe(true)
   })
 
   it('names the eight reasons an agent is refused at the door for, fixed and frozen', () => {
@@ -130,6 +142,27 @@ describe('the core actions', () => {
     // A half speaks only about itself, so no plugin is named
     ['core.bindFailed', { reason: 'port-taken', plugin: 'gate' }, false],
     ['core.bindFailed', { reason: 'port-taken', port: 4748 }, false],
+    // The Install button's flow: a picked zip or folder or a link's release zip staged, then dropped. Its Confirm is a
+    // security request
+    ['app.pickPlugins', { source: 'zip' }, true],
+    ['app.pickPlugins', { source: 'folder' }, true],
+    ['app.pickPlugins', { source: 'link' }, false],
+    ['app.pickPlugins', undefined, false],
+    ['core.findRelease', { link: 'https://github.com/someone/plugins' }, true],
+    ['core.findRelease', { link: 'x'.repeat(MAX_LINK_LENGTH) }, true],
+    ['core.findRelease', { link: 'x'.repeat(MAX_LINK_LENGTH + 1) }, false],
+    ['core.findRelease', { link: '' }, false],
+    ['core.findRelease', { link: 'https://github.com/someone/plugins' + String.fromCharCode(0x202e) }, false],
+    ['core.stage', { source: { kind: 'zip', path: 'C:\\Users\\someone\\plugins.zip' } }, true],
+    ['core.stage', { source: { kind: 'folder', path: '/Users/someone/plugins' } }, true],
+    ['core.stage', { source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip' } }, true],
+    ['core.stage', { source: { kind: 'link', link: 'https://github.com/someone/plugins' } }, false],
+    ['core.stage', { source: { kind: 'zip', path: '' } }, false],
+    ['core.stage', { source: { kind: 'url', path: 'a.zip' } }, false],
+    ['core.stage', { source: { kind: 'zip', path: 'a.zip', asset: 'b.zip' } }, false],
+    ['security.request', { change: { kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: 'a'.repeat(64) }] } }, true],
+    ['core.unstage', { staged: 'stage-1' }, true],
+    ['core.unstage', {}, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(coreActions[action].args.safeParse(args).success).toBe(ok)
   })

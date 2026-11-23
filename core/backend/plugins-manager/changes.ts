@@ -10,6 +10,7 @@ import type { Plugin, StateStore } from '../boot/header.ts'
 import { clear, clearFailedOnce, clearStartMarker, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
+import type { Staging } from './header.ts'
 import { readPlugin, type Read } from './verify.ts'
 import { PluginsInstall } from './install.ts'
 import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, toggled, bare } from './base.ts'
@@ -21,6 +22,7 @@ export abstract class PluginsChanges extends PluginsInstall {
 
   // A security request from a window, which the security view decides. The router has checked the caller is a window.
   // A revoke naming one session's field is taken as the revoke of its client, so its record names what it revokes
+  // An install is checked against its staging first, so no Confirm is drawn for what wouldn't install
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
@@ -29,12 +31,33 @@ export abstract class PluginsChanges extends PluginsInstall {
       return Promise.reject({ code: 'invalid', reason: 'role-taken' })
     }
     const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
+    if (change.kind === 'plugin.install') {
+      try {
+        this.stagingOf(change)
+      } catch (refusal) {
+        return Promise.reject(refusal)
+      }
+    }
     return this.requests.request(change, from)
   }
 
+  // The staging a plugin.install names with each plugin ticked in it under the digest the human was shown and nothing
+  // that keeps it out, checked when it is asked for and again as it applies: not-found for a staging the core doesn't
+  // hold, stale for a plugin it doesn't hold or holds under another digest, invalid for one that can't be installed
+  protected stagingOf(change: Extract<Change, { kind: 'plugin.install' }>): Staging {
+    const staging = this.heldStaging(change.staged)
+    if (staging === null) throw { code: 'not-found' }
+    for (const { id, digest } of change.plugins) {
+      const staged = staging.plugins.find(plugin => plugin.id === id)
+      if (staged === undefined || staged.digest !== digest) throw { code: 'stale' }
+      if (staged.problem !== null || staged.manifest === null) throw { code: 'invalid' }
+    }
+    return staging
+  }
+
   // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
-  confirm(id: string, options: { typed?: string }): Promise<void> {
-    return this.requests.confirm(id, options)
+  confirm(...args: Parameters<Requests['confirm']>): Promise<void> {
+    return this.requests.confirm(...args)
   }
 
   cancel(id: string): Promise<void> {
@@ -73,6 +96,10 @@ export abstract class PluginsChanges extends PluginsInstall {
         return this.remove(change.plugin, confirm)
       case 'plugin.update':
         return this.applyStaged(change.plugin, confirm)
+      // The install lands the plugins from the bytes the human was shown, checked once more here
+      case 'plugin.install':
+        this.stagingOf(change)
+        return this.stagings!.install(change.staged, change.plugins.map(({ id, digest }) => ({ id, digest })))
       case 'devMode':
         return this.writeSwitches({ ...this.state.switches, devMode: toggled(this.state.switches.devMode, change.plugin, change.on) })
       case 'exec.anyCommand':
@@ -406,7 +433,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     // down, and only for a build allowUnsigned names, since no Confirm allows it. Its record lands first as any update's
     // does
     const allowed = isOne(this.state.switches.allowUnsigned, read.hash!)
-    if (allowed && this.classes('update', id, k.entry, false, read.manifest!.capabilities ?? []).unasked) {
+    if (allowed && this.classes('update', id, k.entry, false, { requested: read.manifest!.capabilities ?? [] }).unasked) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }
