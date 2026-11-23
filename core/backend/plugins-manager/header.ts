@@ -2,6 +2,7 @@ import type { StagedProblem, StagedSource } from '../../api/actions.ts'
 import type { FolderManifest } from '../../api/manifest.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { Landing, Recording } from '../recording/header.ts'
+import type { Read } from './verify.ts'
 
 // Recording says what became of a core record, so the type lives with it
 export type { Landing }
@@ -18,17 +19,16 @@ export type PluginsRecording = Pick<Recording, 'drain' | 'resume' | 'coalesced'>
 }
 
 // One plugin of a staging as the core read it when it staged it: its id, the SHA-256 of its manifest's bytes, the
-// manifest when it checked out and why it can't be installed, null when it can
+// manifest when it parsed as a plugin folder's and why it can't be installed, null when it can
 export type StagedRead = { id: string, digest: string, manifest: FolderManifest | null, problem: StagedProblem | null }
 export type Staging = { source: StagedSource, plugins: readonly StagedRead[] }
 
-// The stagings core.stage made, which the plugins manager reads to word a plugin.install and to check it, and which it
-// hands the confirmed install. held is what the core staged under a handle, from memory, null for one it doesn't hold.
-// install lands the named plugins from the bytes staged: each written into the plugin folder, approved with the hash
-// of what was written and that hash allowed, all or none, refusing a digest that isn't the one of the manifest it
-// writes, then drops the staging. unstage drops one nobody installed
+// The Install button's stagings, which the plugins manager reads to word a plugin.install and to check it and installs
+// from once the Confirm counts. held is what the core staged under a handle, from memory, null for one it doesn't hold.
+// read is one plugin's bytes read again from the staging, null when they no longer hash to what was staged and shown.
+// unstage drops a staging, once installed, failed or cancelled
 export type Stagings = {
   held(handle: string): Staging | null
-  install(handle: string, plugins: readonly { id: string, digest: string }[]): Promise<void>
+  read(handle: string, id: string): Promise<Read | null>
   unstage(handle: string): void
 }

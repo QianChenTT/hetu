@@ -174,10 +174,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     if (change.kind === 'plugin.install') {
       const staging = this.heldStaging(change.staged)
       if (staging === null) return []
-      const asks = new Map(change.plugins.flatMap(({ id }) => {
-        const manifest = staging.plugins.find(plugin => plugin.id === id)?.manifest
-        return manifest === undefined || manifest === null ? [] : [[id, manifest.capabilities ?? []] as const]
-      }))
+      const asks = this.installAsks(change, staging)
       return [sourceLine(staging.source), UNSIGNED, ...change.plugins.flatMap(({ id }) => this.installWords(id, staging, asks))]
     }
     if (change.kind === 'plugin.update') {
@@ -203,18 +200,15 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
 
   // One plugin an install takes: its name as its author wrote it in quotes with its id and version and the version it
   // replaces, then each grant as a plain sentence and the grant risk classifier's lines, each under the plugin's id so
-  // no line reads as another plugin's. Classed as the approval or update it is, from the manifest staged, with the other
-  // plugins the install takes counted as installed with what their manifests ask for (asks holds every plugin taken),
-  // so links between them show on the one Confirm. A plugin installed alone is classed against the plugins installed
+  // no line reads as another plugin's. Classed as the install stores it, so links between the plugins it takes show on
+  // the one Confirm
   protected installWords(id: string, staging: Staging, asks: ReadonlyMap<string, readonly Capability[]>): string[] {
     const staged = staging.plugins.find(plugin => plugin.id === id)
     const manifest = staged?.manifest
     if (staged === undefined || manifest === undefined || manifest === null) return []
     const own = manifest.capabilities ?? []
-    const before = this.known.get(id)?.from === 'folder' ? this.state.plugins[id] : undefined
-    const after: Plugin = { version: manifest.version, contentHash: staged.digest, signer: null, granted: [...own], class: null, enabled: true }
-    const others = new Map([...asks].filter(([other]) => other !== id))
-    const lines = this.classes(before === undefined ? 'approve' : 'update', id, after, true, { staged: others }).lines
+    const before = this.installedEntry(id)
+    const { lines } = this.installClassed(id, manifest, staged.digest, asks, true)
     return [
       `${JSON.stringify(manifest.name)} (${id}), version ${manifest.version}${before === undefined ? '' : `, replacing version ${before.version}`}`,
       ...[...(own.length === 0 ? ['It asks for nothing'] : own.map(grantSentence)), ...lines].map(line => `${id}: ${line}`),

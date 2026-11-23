@@ -246,13 +246,7 @@ export abstract class PluginsBase {
         if (change.kind === 'identity.ask') this.askPaused.set(`${change.root}\n${change.field}`, this.clock() + IDENTITY_ASK_PAUSE_MS)
         if (change.kind === 'consent.ask') this.connects.cancelled(change)
         // Nobody installs from it any more
-        if (change.kind === 'plugin.install') {
-          try {
-            this.stagings?.unstage(change.staged)
-          } catch {
-            // A staging that can't be dropped installs nothing without a Confirm, and core.stage may collect it
-          }
-        }
+        if (change.kind === 'plugin.install') this.dropStaging(change.staged)
         return Promise.resolve()
       },
       record: (event, fields, signal) => this.record(event, fields, signal),
@@ -292,15 +286,18 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // What a plugin.install reads: the switches, the notes folder and the entry of each plugin it installs, then the
-  // staging's plugins as the core holds them. An entry written, or the staging dropped or holding another manifest,
-  // between the request and the Confirm stales it
-  protected async installPrint(change: Extract<Change, { kind: 'plugin.install' }>): Promise<string> {
-    const files = await Promise.all([null, ...change.plugins.map(plugin => plugin.id)].map(id => this.store.fingerprint(id)))
-    const staging = this.heldStaging(change.staged)
-    const staged = staging === null ? 'gone' : JSON.stringify(staging.plugins.map(plugin => [plugin.id, plugin.digest, plugin.problem]))
-    return [change.kind, ...files, staged].join('\n')
+  // A staging nobody installs from any more. One that can't be dropped installs nothing without a Confirm and goes at
+  // the next start
+  protected dropStaging(handle: string): void {
+    try {
+      this.stagings?.unstage(handle)
+    } catch {
+      // Left to the sweep at the next start
+    }
   }
+
+  // What a plugin.install's request is fingerprinted by, the changes' to say
+  protected abstract installPrint(change: Extract<Change, { kind: 'plugin.install' }>): Promise<string>
 
   // ---- the router's seam
 
