@@ -27,8 +27,8 @@ export type ViewHooks = {
   key(instance: string, event: KeyboardEvent): boolean
   // The human moved into another open note
   focused?(instance: string): void
-  // A Ctrl+click, Cmd+click on macOS, on a link mark: the link it landed on, null when two tied for it
-  link(instance: string, hit: LinkHit | null): void
+  // A Ctrl+click, Cmd+click on macOS, on a link mark: the link it landed on or tied when two tied for it
+  link(instance: string, hit: LinkHit | 'tied'): void
   // The range of the text the editor draws moved, told once as it is made and again each time it moves. CodeMirror's
   // viewport: the lines on screen with a margin past them and any hidden stretch inside it whole
   viewport(instance: Instance, from: number, to: number): void
@@ -145,8 +145,9 @@ function hiddenBy(owned: Owned, changes: ChangeSet): string[] {
   return owners
 }
 
-// The character under the point: the one whose box holds it, after or before the place nearest it. Null off the text
-function charAt(view: EditorView, x: number, y: number): number | null {
+// The index of the character under the point: the one whose box holds it, after or before the place nearest it. Null off
+// the text
+function charIndexUnder(view: EditorView, x: number, y: number): number | null {
   const pos = view.posAtCoords({ x, y })
   if (pos === null) return null
   for (const at of [pos, pos - 1]) {
@@ -172,7 +173,7 @@ export class EditorViews implements Editors {
 
   // nonce is the one the page's policy names for its style elements, so CodeMirror's own style sheet applies. mac says
   // Mod is Cmd, as the page names keys
-  constructor(host: HTMLElement, hooks: ViewHooks, nonce: string, mac = false) {
+  constructor(host: HTMLElement, hooks: ViewHooks, nonce: string, mac: boolean) {
     this.host = host
     this.hooks = hooks
     this.nonce = nonce
@@ -263,11 +264,11 @@ export class EditorViews implements Editors {
   }
 
   private linkClick(id: string, view: EditorView, event: MouseEvent): boolean {
-    const char = charAt(view, event.clientX, event.clientY)
+    const char = charIndexUnder(view, event.clientX, event.clientY)
     const hit = char === null ? null : linkAt(view.state.field(pluginMarks).owned, char)
     if (hit === null) return false
     event.preventDefault()
-    this.hooks.link(id, hit === 'tied' ? null : hit)
+    this.hooks.link(id, hit)
     return true
   }
 

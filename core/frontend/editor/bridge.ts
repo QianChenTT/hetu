@@ -263,11 +263,12 @@ export class Drawer {
   // A Ctrl+click, Cmd+click on macOS, on a link mark the page took, the human's input as a key is. The owner of the link
   // hears it with the note's version at the click only while it reads the note and holds ui.decoration, checked at the
   // send. A tie tells no one
-  linkClicked(instance: string, hit: LinkHit | null): void {
+  linkClicked(instance: string, hit: LinkHit | 'tied'): void {
     this.closeAnswering()
+    if (hit === 'tied') return
     const open = this.find(instance)
-    const conn = hit === null ? undefined : this.connections.get(hit.owner)
-    if (open === undefined || conn === undefined || hit === null) return
+    const conn = this.connections.get(hit.owner)
+    if (open === undefined || conn === undefined) return
     const body: EventBody = { topic: 'editor.link', instance, version: open.versions.version, id: hit.id }
     void this.reachOf(conn.plugin, open.path).then(reach => {
       if (reach.verbs.includes('ui.decoration')) void this.tell(conn, open, body)
