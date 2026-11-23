@@ -83,6 +83,60 @@ describe("the caret's rest beside hidden text", () => {
   })
 })
 
+// A callout whose marker "> [!note] " at 0-10 is hidden with an icon at a point after it, then ab cd at 16-21 with a
+// widget at a point after ab and another at the end of the note
+const callout = '> [!note] Title\nab cd'
+const calloutMarks: Mark[] = [
+  { kind: 'line', from: 0, style: 'quote', group: 'c' },
+  { kind: 'hide', from: 0, to: 10, group: 'c' },
+  { kind: 'widget', from: 10, to: 10, text: 'i', group: 'c' },
+  { kind: 'widget', from: 18, to: 18, text: '*' },
+  { kind: 'widget', from: 21, to: 21, text: '.' },
+]
+const points = (state: EditorState) => {
+  const out: number[] = []
+  sets(state)[0].between(0, state.doc.length, (from, to) => {
+    if (from === to) out.push(from)
+  })
+  return out
+}
+
+describe('the caret beside a widget at a point', () => {
+  it('rests after hidden text opening the line and the widget at a point there, so typing joins the title', () => {
+    for (let at = 0; at <= 10; at++) expect(head(settled(note(callout, calloutMarks, at)))).toBe(10)
+    const alone = note('ab\ncd', [{ kind: 'widget', from: 3, to: 3, text: '>' }], 3)
+    expect(settle(alone, sets(alone))).toBe(null)
+  })
+
+  it('stays where it is beside a widget at a point mid-line or at the end of the note', () => {
+    for (const at of [17, 18, 19, 21]) {
+      const state = note(callout, calloutMarks, at)
+      expect(settle(state, sets(state))).toBe(null)
+    }
+  })
+
+  it('steps with the arrows by the characters around a widget at a point, which holds no place of its own', () => {
+    let state = note(callout, calloutMarks, 17)
+    const heads: number[] = []
+    for (let i = 0; i < 5; i++) heads.push(head(state = press(state, right)))
+    expect(heads).toEqual([18, 19, 20, 21, 21])
+    expect(head(press(note(callout, calloutMarks, 18), left))).toBe(17)
+  })
+
+  it('keeps a widget at a point before text typed at its place, where its caret is drawn', () => {
+    const state = note(callout, calloutMarks, 18).update({ changes: { from: 18, insert: 'x' }, selection: { anchor: 19 } }).state
+    expect(state.doc.toString()).toBe('> [!note] Title\nabx cd')
+    expect(points(state)).toEqual([10, 18, 22])
+  })
+
+  it('takes the characters beside a widget at a point with Backspace and Delete and leaves the widget', () => {
+    const back = press(note(callout, calloutMarks, 18), backspace)
+    expect(back.doc.toString()).toBe('> [!note] Title\na cd')
+    expect(points(back)).toEqual([10, 17, 20])
+    expect(press(note(callout, calloutMarks, 18), del).doc.toString()).toBe('> [!note] Title\nabcd')
+  })
+})
+
 describe('a selection over hidden text', () => {
   it('takes the markers of an element it holds whole, so a copy gives the markdown', () => {
     expect(selected(settled(note(bold, boldMarks, 0, 10)))).toBe('x **bold**')

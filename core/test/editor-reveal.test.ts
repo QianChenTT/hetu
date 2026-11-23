@@ -95,6 +95,18 @@ describe('an Alt+click on the part of an element the human sees', () => {
     expect(hidden(state)).toEqual([[0, 2]])
     expect(state.selection.main.head).toBe(12)
   })
+
+  it('takes a widget at a point in the group out as one over a range, its place counting in the span', () => {
+    const item: Mark[] = [{ kind: 'widget', from: 8, to: 8, text: '•', group: 'li' }, { kind: 'mark', from: 10, to: 14, style: 'em', group: 'li' }]
+    const state = altClick(noteOf(lines, ['marks', [...heading, ...item]]), 12)
+    expect(hidden(state)).toEqual([[0, 2]])
+    expect(hidden(moveTo(state, 8))).toEqual([[0, 2]])
+    expect(hidden(moveTo(state, 15))).toEqual([[0, 2], [8, 8]])
+    // A group of one widget at a point spans its place alone
+    const lone = altClick(noteOf(lines, ['marks', [{ kind: 'widget', from: 15, to: 15, text: '!', group: 'q' }]]), 15)
+    expect(hidden(lone)).toEqual([])
+    expect(hidden(moveTo(lone, 16))).toEqual([[15, 15]])
+  })
 })
 
 describe('a shown element', () => {
