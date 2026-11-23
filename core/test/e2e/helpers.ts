@@ -46,7 +46,10 @@ export function env(extra: Record<string, string>): Record<string, string> {
 // install folder of the test's own among it
 // switches are Chromium's, placed before the app
 export async function launch(dataDir: string, extra: Record<string, string> = {}, switches: string[] = []): Promise<ElectronApplication> {
-  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: process.env.HETU_QUIET_WINDOWS === '1' ? '1' : 'hidden', ...extra })
+  // A run from the source loads fail-fast.cjs first, so main throwing ends the run instead of opening a dialog on the
+  // desktop. A packed build takes no NODE_OPTIONS
+  const failFast: Record<string, string> = drivenApp === undefined ? { NODE_OPTIONS: `--require=${JSON.stringify(path.join(import.meta.dirname, 'fail-fast.cjs'))}` } : {}
+  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: process.env.HETU_QUIET_WINDOWS === '1' ? '1' : 'hidden', ...failFast, ...extra })
   const app = await (drivenApp === undefined
     ? electron.launch({ args: [...switches, repo], env: environment })
     : electron.launch({ executablePath: drivenApp, args: switches, env: environment }))

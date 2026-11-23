@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,10 +7,11 @@ import vm from 'node:vm'
 import { build } from 'esbuild'
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreModuleIds } from '../api/ids.ts'
-import { type BuildKind, buildMain } from '../build/main.ts'
+import { type BuildKind, buildMain, MAIN_BANNER } from '../build/main.ts'
 import { checkModuleImports, moduleBuiltins, moduleFolders } from '../build/module-imports.ts'
 import { DOOR_FILE } from '../backend/plugins-manager/verify.ts'
 import { writeFolder } from './plugins-manager-fakes.ts'
+import { makeZip } from './zip-maker.ts'
 
 const repo = path.join(import.meta.dirname, '..', '..')
 const made: string[] = []
@@ -27,6 +29,33 @@ async function outDir(): Promise<string> {
 }
 
 describe('the main bundle', () => {
+  // An ES module bundle reaches a CommonJS dependency's require of a Node built-in only through the banner's require.
+  // Without it main throws as it loads and Electron shows its error dialog before any window
+  it('loads the CommonJS zip reader as main bundles it and unpacks a zip with it, in a Node of its own', async () => {
+    const out = await outDir()
+    const file = path.join(out, 'unpack.mjs')
+    const zip = path.join(out, 'one.zip')
+    await writeFile(zip, makeZip([{ name: 'hetu-plugin.json', data: '{}' }]))
+    await build({
+      bundle: true, platform: 'node', format: 'esm', target: 'node24', banner: { js: MAIN_BANNER }, logLevel: 'silent', outfile: file,
+      stdin: {
+        contents: 'import { readFile } from "node:fs/promises"\nimport { unpackZip } from "./backend/plugins-manager/unpack.ts"\n'
+          + 'console.log(JSON.stringify(await unpackZip(await readFile(process.argv[2]), process.argv[3])))',
+        resolveDir: path.join(repo, 'core'), loader: 'ts',
+      },
+    })
+    const into = path.join(out, 'into')
+    await mkdir(into)
+    // A plain Node, not the test runner's module loader, which hands every module a require of its own
+    const ran = spawnSync(process.execPath, [file, zip, into], { encoding: 'utf8' })
+    expect(ran.stderr).toBe('')
+    expect(JSON.parse(ran.stdout)).toEqual({ problem: null, leftovers: false })
+    expect(await readFile(path.join(into, 'hetu-plugin.json'), 'utf8')).toBe('{}')
+    const main = await outDir()
+    await buildMain(main)
+    expect((await readFile(path.join(main, 'main.js'), 'utf8')).startsWith(MAIN_BANNER)).toBe(true)
+  })
+
   it('bundles main.ts into one module that imports only electron and Node built-ins', async () => {
     const out = await outDir()
     const built = await buildMain(out)
