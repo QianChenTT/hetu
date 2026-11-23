@@ -2,7 +2,7 @@ import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { command, fakeDoor, handleRefusals, installDoor, outcome, reports, startedWith, writeHolder } from './door-driver.ts'
-import { cleanup, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
+import { cleanup, logged, pageAt, temp, tick, until, visibleWindows, setUp } from './helpers.ts'
 
 // A client's connect in the built app: a fake door in its utility process asks the core for the connect and collects
 // the answer, each on a command a folder plugin holding door.handle hands it. The trusted window draws the request in
@@ -26,6 +26,7 @@ async function data(): Promise<string> {
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
   await writeHolder(store, dataDir)
+  await setUp(dataDir)
   return dataDir
 }
 

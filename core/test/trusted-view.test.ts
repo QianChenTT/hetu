@@ -438,22 +438,22 @@ describe('the trusted page', () => {
   })
 
   it('draws one tab at a time, Plugins first, and keeps the tab picked across answers', () => {
-    const { page, hears, sent, drawn } = started()
+    const { page, hears, sent, drawn } = started(calm({ plugins: [plugin({ id: 'layout', items: [{ capability: { type: 'ui.layout' }, off: false, firstUse: false }] })] }))
     expect(drawn.at(-1)?.screen.tab).toBe('plugins')
-    expect(drawn.at(-1)?.screen.tabs.map(tab => tab.label)).toEqual(['Plugins', 'Switches', 'Notes folder', 'Identities', 'Limits'])
+    expect(drawn.at(-1)?.screen.tabs.map(tab => tab.label)).toEqual(['Get started', 'Plugins', 'Switches', 'Notes folder', 'Identities', 'Limits'])
     const before = sent.length
     page.pickTab('limits')
     expect(drawn.at(-1)?.screen.tab).toBe('limits')
     // Picking a tab asks the core for nothing
     expect(sent.length).toBe(before)
     hears({ v: 1, kind: 'event', topic: 'core.security', seq: 4 })
-    hears(replyTo(sent.at(-1)!, calm()))
+    hears(replyTo(sent.at(-1)!, calm({ plugins: [plugin({ id: 'layout', items: [{ capability: { type: 'ui.layout' }, off: false, firstUse: false }] })] })))
     expect(drawn.at(-1)?.screen.tab).toBe('limits')
   })
 
   it('marks the Plugins tab with how many plugins wait for the human', () => {
     const marks = (list: SecurityList) => screen(list).tabs.map(tab => tab.mark)
-    expect(marks(calm())).toEqual([null, null, null, null, null])
+    expect(marks(calm())).toEqual([null, null, null, null, null, null])
     const waiting = calm({
       plugins: [
         plugin({ id: 'new-one', state: 'found', reason: 'new', on: false }),
@@ -461,7 +461,7 @@ describe('the trusted page', () => {
         plugin({ id: 'fine' }),
       ],
     })
-    expect(marks(waiting)).toEqual(['2 waiting', null, null, null, null])
+    expect(marks(waiting)).toEqual([null, '2 waiting', null, null, null, null])
   })
 
   // A request waiting for its Confirm is drawn above whichever tab is picked, so none sits unseen on a tab not shown
