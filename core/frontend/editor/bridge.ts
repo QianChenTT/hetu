@@ -41,8 +41,8 @@ export type PortLike = {
   onmessage: ((event: { data: unknown }) => void) | null
 }
 
-// The keys the drawer takes for itself before CodeMirror or any binding: the raw view, quick open, save and Quit
-export const CORE_KEYS: readonly string[] = Object.freeze(['Mod-/', 'Mod-p', 'Mod-s', 'Mod-q'])
+// The keys the drawer takes for itself before CodeMirror or any binding: the raw view, save and Quit
+export const CORE_KEYS: readonly string[] = Object.freeze(['Mod-/', 'Mod-s', 'Mod-q'])
 // No binding takes these: the core keys, the raw view's key where / needs Shift, and the editor's own copy, cut, paste,
 // undo, redo and select all
 export const RESERVED_KEYS: readonly string[] = Object.freeze([
@@ -174,7 +174,8 @@ export class Drawer {
     for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
   }
 
-  // The human opened the instance, from hetu's own palette or, with via, from a node of that plugin naming the note.
+  // The human opened the instance from a node of via naming the note. With no via, hetu's own open, which no control of
+  // the page makes now that quick open is a plugin.
   // A note a plugin opened isn't the human's, and neither is one opened from a node of a plugin that can't read or list
   // the note itself, or a plugin could draw a button naming any note and read it through ui.read once clicked. Plugins
   // that read it only through ui.read hear of it now

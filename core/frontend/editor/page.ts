@@ -12,14 +12,13 @@ import { drawMenu, type MenuData } from './menu.ts'
 import { type NoteNotice, Notes } from './notes.ts'
 import { noteBar, refusalText, type NoteAction } from './note-bar.ts'
 import { Frames } from './frames.ts'
-import { filterNames, listNames } from './palette.ts'
 import { RawSource } from './raw.ts'
 import { Settings } from './settings.ts'
 import { type Notice, Shell } from './shell.ts'
 import { themeStyle } from './theme.ts'
 import { SKELETON } from './ui-port.ts'
 
-// The editor window's page, the drawer: the banner, the notes in CodeMirror, the quick-open palette, the raw view, the
+// The editor window's page, the drawer: the banner, the notes in CodeMirror, the raw view, the
 // views menu, the layout's skeleton with the views in it and each plugin's port. Everything here is drawn as text,
 // never markup a plugin or a note wrote, and what plugins draw stays below the core layer
 
@@ -463,7 +462,6 @@ function start(bridge: Bridge): void {
   // open, which isn't the human's, whose reads judges the path the luoshu resolved. via names the plugin whose node
   // named the note
   async function openNote(path: string, focus = true, via?: string, reads?: (resolved: string) => Promise<boolean>): Promise<void> {
-    if (focus) closePalette()
     try {
       const id = await theNotes.open(path, reads)
       const opened = views.instance(id)
@@ -503,85 +501,6 @@ function start(bridge: Bridge): void {
     drawNoteBar()
     theLayers.schedule()
   }
-
-  // ---- the quick-open palette
-
-  let names: string[] = []
-  let matches: string[] = []
-  let picked = 0
-  // Each opening's listing, so pages of an older one still coming are dropped
-  let listing = 0
-
-  function drawPalette(): void {
-    matches = filterNames(names, element<HTMLInputElement>('palette-input').value)
-    picked = Math.min(picked, Math.max(0, matches.length - 1))
-    element('palette-list').replaceChildren(...matches.map((name, at) => {
-      const item = document.createElement('li')
-      item.textContent = name
-      item.setAttribute('role', 'option')
-      item.setAttribute('aria-selected', String(at === picked))
-      item.addEventListener('mousedown', event => {
-        event.preventDefault()
-        void openNote(name)
-      })
-      return item
-    }))
-  }
-
-  async function openPalette(): Promise<void> {
-    const run = ++listing
-    names = []
-    picked = 0
-    const note = element('palette-note')
-    note.textContent = 'Listing notes'
-    note.hidden = false
-    const input = element<HTMLInputElement>('palette-input')
-    input.value = ''
-    element('palette').hidden = false
-    drawPalette()
-    input.focus()
-    // Names show as each page comes, so a large luoshu is searchable while the rest are listed
-    const listed = await listNames(link, {
-      onPage: page => {
-        if (run !== listing) return
-        names.push(...page)
-        note.textContent = `Listing notes, ${names.length} so far`
-        drawPalette()
-      },
-    })
-    if (run !== listing) return
-    names = listed.names
-    note.textContent = listed.refused !== undefined
-      ? refusalText(listed.refused)
-      : listed.cut ? 'Only the first 20,000 names are listed' : ''
-    note.hidden = note.textContent === ''
-    drawPalette()
-  }
-
-  function closePalette(): void {
-    element('palette').hidden = true
-  }
-
-  element('palette-input').addEventListener('input', () => {
-    picked = 0
-    drawPalette()
-  })
-  element('palette-input').addEventListener('keydown', event => {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      picked = Math.max(0, Math.min(matches.length - 1, picked + (event.key === 'ArrowDown' ? 1 : -1)))
-      drawPalette()
-    } else if (event.key === 'Enter') {
-      event.preventDefault()
-      const name = matches[picked]
-      if (name !== undefined) void openNote(name)
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      closePalette()
-      views.focus()
-    }
-  })
-  element('palette-input').addEventListener('blur', closePalette)
 
   // ---- the raw view
 
@@ -645,7 +564,6 @@ function start(bridge: Bridge): void {
 
   function coreKey(core: CoreKey): void {
     if (core === 'raw') toggleRaw()
-    else if (core === 'open') void openPalette()
     else if (core === 'save') void save()
     else void quit()
   }
@@ -674,15 +592,19 @@ function start(bridge: Bridge): void {
   window.addEventListener('keydown', event => {
     if (event.defaultPrevented || !event.isTrusted) return
     const active = document.activeElement
-    if (active === null || active.closest('.cm-editor, #palette, #raw, #menu, #bar, #note-bar, #notices') !== null) return
+    if (active === null || active.closest('.cm-editor, #raw, #menu') !== null) return
     const name = keyName(event, mac)
     if (name === null) return
+    // On the bar's own buttons only the global bindings, a plugin's quick open among them
+    if (active.closest('#bar, #note-bar, #notices') !== null) {
+      if (theDrawer.key(null, name)) event.preventDefault()
+      return
+    }
     const tag = taggedOf(active)
     const took = tag !== null && tag.tree.surface !== SKELETON ? theDrawer.viewKey(tag.tree.surface, name) : theDrawer.key(null, name)
     if (took) event.preventDefault()
   })
 
-  element('open').addEventListener('click', () => void openPalette())
   element('raw-open').addEventListener('click', toggleRaw)
   element('security').addEventListener('click', () => shell.open())
 
