@@ -14,7 +14,7 @@ const asset = (name: string) => ({ name, size: 1, state: 'uploaded', browser_dow
 
 // GitHub answering one release with the update file for version, signed by the run's key unless forged
 function github(version = '0.6.1', forged = false): { fetch: Fetch, urls: string[], down: () => void } {
-  const file = Buffer.from(JSON.stringify({ version, file: INSTALLER, size: 10, sha256: 'ab'.repeat(32), released: '2026-11-23T20:00:00Z' }))
+  const file = Buffer.from(JSON.stringify({ version, file: INSTALLER, size: 10, sha256: 'ab'.repeat(32), built: '2026-11-23T20:00:00Z' }))
   const signature = sign(null, forged ? Buffer.concat([file, Buffer.from(' ')]) : file, ours.privateKey)
   const urls: string[] = []
   let offline = false
@@ -67,7 +67,7 @@ describe('the updater\'s state', () => {
     const state = await updater.check()
     expect(state).toEqual({
       canCheck: true, on: true, checked: 1_000,
-      last: { kind: 'found', version: '0.6.1', released: '2026-11-23T20:00:00Z', page: 'https://github.com/QianChenTT/hetu/releases/tag/v0.6.1', installable: true },
+      last: { kind: 'found', version: '0.6.1', built: '2026-11-23T20:00:00Z', page: 'https://github.com/QianChenTT/hetu/releases/tag/v0.6.1', installable: true },
     })
     expect(updater.state()).toBe(state)
     expect(records).toEqual([])

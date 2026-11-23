@@ -14,7 +14,7 @@ const download = (name: string) => `https://github.com/QianChenTT/hetu/releases/
 const INSTALLER = 'hetu-setup-0.6.1-x64.exe'
 
 const fields = (over: Record<string, unknown> = {}) => ({
-  version: '0.6.1', file: INSTALLER, size: 123_456, sha256: 'ab'.repeat(32), released: '2026-11-23T20:00:00.000Z', ...over,
+  version: '0.6.1', file: INSTALLER, size: 123_456, sha256: 'ab'.repeat(32), built: '2026-11-23T20:00:00.000Z', ...over,
 })
 const bytesOf = (body: unknown) => Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))
 const signed = (bytes: Buffer, key: KeyObject = ours.privateKey) => sign(null, bytes, key)
@@ -136,12 +136,18 @@ describe('a check of the latest release', () => {
     for (const body of [
       'not json', '[]', fields({ version: '0.7' }), fields({ version: 'v0.7.0' }), fields({ size: 0 }), fields({ size: -1 }), fields({ size: 1.5 }),
       fields({ size: 2 * 1024 * 1024 * 1024 }), fields({ sha256: 'AB'.repeat(32) }), fields({ sha256: 'ab' }), fields({ file: '..\\hetu.exe' }),
-      fields({ file: 'updates/hetu.exe' }), fields({ file: '.hetu.exe' }), fields({ file: 'hetu.msi' }), fields({ released: 'yesterday' }),
+      fields({ file: 'updates/hetu.exe' }), fields({ file: '.hetu.exe' }), fields({ file: 'hetu.msi' }), fields({ built: 'yesterday' }),
       { version: '0.7.0', file: INSTALLER, size: 1, sha256: 'ab'.repeat(32) },
-      '{"version":"0.5.0","version":"0.7.0","file":"a.exe","size":1,"sha256":"' + 'ab'.repeat(32) + '","released":"2026-11-23T20:00:00Z"}',
+      '{"version":"0.5.0","version":"0.7.0","file":"a.exe","size":1,"sha256":"' + 'ab'.repeat(32) + '","built":"2026-11-23T20:00:00Z"}',
     ]) {
       expect(await checkLatest(options(github({ file: bytesOf(body) }).fetch)), JSON.stringify(body)).toEqual({ outcome: 'refused', reason: 'format', version: null })
     }
+  })
+
+  it('refuses a signed file still carrying released in place of built', async () => {
+    const { built, ...rest } = fields()
+    const file = bytesOf({ ...rest, released: built })
+    expect(await checkLatest(options(github({ file }).fetch))).toEqual({ outcome: 'refused', reason: 'format', version: null })
   })
 
   it('ignores a field the file adds later', async () => {
