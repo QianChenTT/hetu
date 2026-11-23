@@ -66,6 +66,9 @@ export const mark = z.union([
   // or reorders what follows. The raw view still shows what it covers
   z.strictObject({ kind: z.literal('widget'), ...range, text: screenText(MAX_WIDGET_TEXT), group }).refine(m => m.to >= m.from, 'to before from'),
   z.strictObject({ kind: z.literal('line'), from: position, style: z.enum(lineStyles), group }),
+  // Text drawn as a link, the text itself left as it is. A Ctrl+click on it, Cmd+click on macOS, comes back to the
+  // plugin that placed it as editor.link with the id, a name the plugin picks. It came within API version 4 as an addition
+  z.strictObject({ kind: z.literal('link'), ...range, id: localName, group }).refine(m => m.to > m.from, 'an empty range'),
 ])
 export type Mark = z.infer<typeof mark>
 export type MarkStyle = typeof markStyles[number]
@@ -141,7 +144,9 @@ export function refused(id: number, code: RefusalCode): BridgeReply {
 // command names its note, the selection at the key and the version it was taken at only to a plugin that reads the
 // note. The viewport is the range of the text the editor draws, told only to a plugin that asked with editor.viewports,
 // once a note is told opened and again each time it moves. The selection, the viewport and its verb came within API
-// version 3 as additions, which an SDK without them drops or reads past and never asks for
+// version 3 as additions, which an SDK without them drops or reads past and never asks for. A link click names the note,
+// its version at the click and the link's id only to the plugin whose link mark it landed on while that plugin reads the
+// note. It came within API version 4 as an addition
 export type BridgeEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'editor.opened' | 'editor.closed', instance: string }
   | { topic: 'editor.changed', instance: string, version: number, changes: ChangeJson }
@@ -149,7 +154,27 @@ export type BridgeEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'editor.command', command: string, instance: string, version: number, selection: { anchor: number, head: number }[] }
   | { topic: 'editor.key', instance: string, key: string }
   | { topic: 'editor.viewport', instance: string, version: number, from: number, to: number }
+  | { topic: 'editor.link', instance: string, version: number, id: string }
 )
+
+export type LinkHit = { readonly owner: string, readonly id: string }
+
+// The link a Ctrl+click, Cmd+click on macOS, on the character at pos lands on, among each owner's sets of marks: the
+// link mark with the smallest range holding it. tied when links that differ in owner or id share that smallest range,
+// so the click tells no one. Null when no link mark holds it and the click goes on as a plain one
+export function linkAt(owned: ReadonlyMap<string, ReadonlyMap<string, readonly Mark[]>>, pos: number): LinkHit | 'tied' | null {
+  let best: { size: number, hits: LinkHit[] } | null = null
+  for (const [owner, sets] of owned) {
+    for (const mark of [...sets.values()].flat()) {
+      if (mark.kind !== 'link' || pos < mark.from || pos >= mark.to) continue
+      const size = mark.to - mark.from
+      if (best === null || size < best.size) best = { size, hits: [{ owner, id: mark.id }] }
+      else if (size === best.size && !best.hits.some(hit => hit.owner === owner && hit.id === mark.id)) best.hits.push({ owner, id: mark.id })
+    }
+  }
+  if (best === null) return null
+  return best.hits.length === 1 ? best.hits[0] : 'tied'
+}
 
 // What each verb answers with
 export type BridgeResults = {
