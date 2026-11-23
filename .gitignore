@@ -1,6 +1,6 @@
 node_modules/
 dist/
-# The playground vault is its own git repo, run by the daemon
+# A local notes folder to try hetu on
 /playground_vault/
 /.claude/
 # Plan ledgers and review packages, local only
