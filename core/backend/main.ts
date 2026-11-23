@@ -191,6 +191,7 @@ async function start(): Promise<void> {
     })
     // The Install button's stagings in the data folder, which only main's own dialog and downloads fill
     const stagings = new InstallStagings({ dataDir: booted.dataDir })
+    let picking = false
     const wired = wireCore({
       booted,
       installDir,
@@ -212,12 +213,20 @@ async function start(): Promise<void> {
             return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
           }
           // Staged here from the path main's own dialog answered, which never reaches the page
-          if (call.action === 'app.pickPlugins') {
+          // Checked before the dialog opens, so no staging is made that couldn't be answered. One pick at a time
+          if (call.action === 'app.stagePicked') {
             const { source } = call.args as { source: 'zip' | 'folder' }
-            if (pluginsManager === null || pluginsManager.stopped() !== null) throw { code: 'unavailable' }
-            const picked = await pickPlugins(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options), source)
-            if (picked === null) return null
-            return pluginsManager.stagedAnswer(await stagings.stagePicked(source, picked))
+            if (pluginsManager === null) throw { code: 'unavailable' }
+            pluginsManager.canStage()
+            if (picking) throw { code: 'throttled' }
+            picking = true
+            try {
+              const picked = await pickPlugins(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options), source)
+              if (picked === null) return null
+              return await pluginsManager.stagedAnswer(await stagings.stagePicked(source, picked))
+            } finally {
+              picking = false
+            }
           }
           if (call.action === 'editor.frame') {
             const { plugin, frame } = call.args as { plugin: string, frame: string }

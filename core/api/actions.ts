@@ -134,7 +134,7 @@ const link = screenText(MAX_LINK_LENGTH)
 const installTable = {
   // The OS dialog over the trusted window for a plugin zip or a folder holding one plugin or several, the pick staged
   // at once in main. null when the human cancelled
-  'app.pickPlugins': { from: 'trusted', args: z.strictObject({ source: z.enum(['zip', 'folder']) }) },
+  'app.stagePicked': { from: 'trusted', args: z.strictObject({ source: z.enum(['zip', 'folder']) }) },
   // The latest release of the GitHub repository a link names, or the release it names, with its zip assets under a
   // handle main keeps the list by. Only the latest release found is kept
   'core.findRelease': { from: 'trusted', args: z.strictObject({ link }) },
@@ -533,13 +533,14 @@ export type ReleaseAsset = { name: string, bytes: number }
 export type FoundRelease = { release: string, tag: string, assets: ReleaseAsset[] } | { problem: InstallProblem }
 
 // Why one plugin found can't be installed: its manifest doesn't parse or check out, it asks for what only hetu's own
-// install holds, it needs a core API this hetu doesn't have or its id is one hetu keeps
-export type StagedProblem = 'invalid' | 'install-only' | 'api' | 'reserved'
+// install holds, it needs a core API this hetu doesn't have, its id is one hetu keeps or a folder for it is in the
+// plugin folder that the human never approved, which an install would replace unseen
+export type StagedProblem = 'invalid' | 'install-only' | 'api' | 'reserved' | 'unapproved'
 
 // One plugin found: its id, the name and version its manifest gives, null where it didn't read, what it asks for, the
-// class the grant risk classifier would give it, null for none known, and the classifier's lines on why, as an approval's
-// Confirm shows them. replaces is the version it replaces, null for a new one. digest is the SHA-256 of the manifest's
-// bytes as staged, which the Confirm sends back
+// class the grant risk classifier would give it with every plugin found that can install installed too (null for none
+// known) and the classifier's lines on why, as an approval's Confirm shows them. replaces is the version it replaces,
+// null for a new one. digest is the SHA-256 of the manifest's bytes as staged, which the Confirm sends back
 export type StagedPlugin = {
   id: string
   name: string | null
@@ -562,7 +563,7 @@ export type StagedSource =
 export type Staged = { staged: string, source: StagedSource, plugins: StagedPlugin[] } | { problem: InstallProblem }
 
 export type InstallResults = {
-  'app.pickPlugins': Staged | null
+  'app.stagePicked': Staged | null
   'core.findRelease': FoundRelease
   'core.stage': Staged
   'core.unstage': null

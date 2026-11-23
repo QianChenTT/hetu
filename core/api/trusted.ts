@@ -1,4 +1,4 @@
-import type { StagedSource } from './actions.ts'
+import type { InstallProblem, StagedSource } from './actions.ts'
 import type { Capability } from './capabilities.ts'
 
 // What the trusted window's page shares with the core, kept apart from zod so the page bundles none of it
@@ -81,6 +81,32 @@ const sentences: Sentences = {
 export function grantSentence(granted: Capability): string {
   return (sentences[granted.type] as (granted: Capability) => string)(granted)
 }
+
+// Why a link or a source gave nothing to install, as the trusted window says it. main's fetch from GitHub answers its
+// problems with these words too
+export const installProblemWords: Readonly<Record<InstallProblem, string>> = Object.freeze({
+  'not-github': 'That is not a link to a GitHub repo or release. Paste one like https://github.com/owner/repo',
+  'off-github': "The download pointed away from the hosts hetu fetches from, so nothing was fetched. An older release may still use GitHub's old download host, which hetu no longer fetches from",
+  'no-release': "GitHub has no published release there. The repo may be private or missing or the tag may have no release. A repo link finds only the latest full release, so paste a prerelease's own tag link to install it",
+  'not-found': 'GitHub no longer has that file. Paste the link again to see what the release holds now',
+  'no-zip': 'That release holds no .zip file to install from',
+  'digest-mismatch': 'The downloaded zip does not match the checksum GitHub lists for it, so it was not kept. Try again',
+  'rate-limited': 'GitHub is limiting requests from this network for now. Try again in an hour or install from a downloaded zip',
+  offline: 'GitHub could not be reached. Check the connection and try again',
+  'timed-out': 'GitHub took too long to answer. Try again',
+  cancelled: 'The download was stopped',
+  'bad-answer': 'GitHub answered in a way hetu does not read. Try again later or install from a downloaded zip',
+  invalid: 'That doesn’t read as a zip or a plugin folder',
+  name: 'It holds a file name that could land outside its folder, so nothing was taken',
+  duplicate: 'It holds two files under one name, so nothing was taken',
+  special: 'It holds a link or another special file, so nothing was taken',
+  encrypted: 'It holds an encrypted file, so nothing was taken',
+  'too-many': 'It holds more files than one install takes, so nothing was taken',
+  'too-big': 'It is bigger than one install takes, so nothing was taken',
+  'not-a-folder': 'That isn’t a folder',
+  'same-id': 'It holds two plugins with one id, so nothing was taken',
+  none: 'No plugin in it. A plugin’s folder holds hetu-plugin.json',
+})
 
 // What an install says of the plugins it takes, which no signature proves yet
 export const UNSIGNED = 'Unsigned: nothing proves who made these plugins. Install only what comes from a source you trust'

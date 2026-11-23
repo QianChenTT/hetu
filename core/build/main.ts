@@ -28,7 +28,9 @@ function external(metafile: Metafile | undefined): string[] {
 }
 
 // A require for main's ES module bundle: yauzl is CommonJS and requires Node's built-ins, which esbuild's shim in an ES
-// module reaches only through a require declared at the top
+// module reaches only through a require declared at the top. It is bound to main.js's own URL, so it resolves only what
+// an import in main.js could already reach. checkModuleImports reads the metafile, which can't see a require(variable)
+// made at run time, so none is written in core code
 export const MAIN_BANNER = 'import { createRequire as hetuRequire } from \'node:module\'\nconst require = hetuRequire(import.meta.url)'
 
 export type Built = {
@@ -46,20 +48,25 @@ export type Built = {
 // source has neither
 export type BuildKind = { packaged?: boolean, locked?: boolean }
 
-export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
-  await mkdir(outDir, { recursive: true })
-  const main = await build({
+// How main.ts is bundled, each option the build of main.js takes, which a test builds other code with to see it load
+export function mainOptions(outfile: string, kind: BuildKind = {}): BuildOptions {
+  return {
     ...shared,
     absWorkingDir: core,
     entryPoints: [path.join(core, 'backend', 'main.ts')],
-    outfile: path.join(outDir, 'main.js'),
+    outfile,
     platform: 'node',
     format: 'esm',
     target: NODE,
     external: ['electron'],
     define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
     banner: { js: MAIN_BANNER },
-  })
+  }
+}
+
+export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
+  await mkdir(outDir, { recursive: true })
+  const main = await build(mainOptions(path.join(outDir, 'main.js'), kind))
   // Each core module bundled into main.js reaches only the Node built-ins on its own list, as each did when it was built as its own plugin
   const reached = await checkModuleImports(main.metafile!)
   if (reached.length > 0) throw new Error(`a core module reaches past its list:\n${reached.join('\n')}`)

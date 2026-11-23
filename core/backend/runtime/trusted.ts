@@ -81,7 +81,7 @@ export function pickFolder(trusted: TrustedWindow, dialog: FolderDialog): Promis
   return pickOne(trusted, dialog, { properties: ['openDirectory', 'createDirectory'], title: 'Pick the notes folder' })
 }
 
-// The dialog for app.pickPlugins: one zip or one folder holding one plugin or several
+// The dialog for app.stagePicked: one zip or one folder holding one plugin or several
 export function pickPlugins(trusted: TrustedWindow, dialog: FolderDialog, source: 'zip' | 'folder'): Promise<string | null> {
   return pickOne(trusted, dialog, source === 'zip'
     ? { properties: ['openFile'], title: 'Pick a plugin zip', filters: [{ name: 'Plugin zip', extensions: ['zip'] }] }

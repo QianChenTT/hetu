@@ -4,7 +4,7 @@
 // manager's words. The box's words are this file's and api/trusted.ts's, a plugin's own text only quoted
 import { MAX_LINK_LENGTH, type InstallProblem, type ReleaseAsset, type StagedPlugin, type StagedProblem, type StagedSource } from '../../api/actions.ts'
 import { classNames } from '../../api/policy-jobs.ts'
-import { grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
+import { grantSentence, installProblemWords, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 
 export type InstallFlow =
   | { step: 'assets', release: string, link: string, tag: string, assets: ReleaseAsset[] }
@@ -21,35 +21,14 @@ export type InstallBox =
 
 const quoted = (value: string) => JSON.stringify(value)
 
-const problems: Readonly<Record<InstallProblem, string>> = {
-  'not-github': 'That isn’t a link to a GitHub repository or release',
-  'no-release': 'That repository has no release',
-  'no-zip': 'That release has no zip to install from',
-  'rate-limited': 'GitHub asks hetu to wait before it looks again. Try again later',
-  offline: 'hetu couldn’t reach GitHub',
-  'off-github': 'The download pointed away from GitHub, so nothing was fetched',
-  'not-found': 'GitHub no longer has that zip. Find the release again to see what it holds now',
-  'digest-mismatch': 'The zip doesn’t match the checksum GitHub lists for it, so nothing was taken',
-  'timed-out': 'GitHub took too long to answer. Try again',
-  cancelled: 'The download stopped as hetu quit',
-  'bad-answer': 'GitHub answered in a way hetu doesn’t read. Try again later or install from a downloaded zip',
-  invalid: 'That doesn’t read as a zip or a plugin folder',
-  name: 'It holds a file name that could land outside its folder, so nothing was taken',
-  duplicate: 'It holds two files under one name, so nothing was taken',
-  special: 'It holds a link or another special file, so nothing was taken',
-  encrypted: 'It holds an encrypted file, so nothing was taken',
-  'too-many': 'It holds more files than one install takes, so nothing was taken',
-  'too-big': 'It is bigger than one install takes, so nothing was taken',
-  'not-a-folder': 'That isn’t a folder',
-  'same-id': 'It holds two plugins with one id, so nothing was taken',
-  none: 'No plugin in it. A plugin’s folder holds hetu-plugin.json',
-}
+const problems = installProblemWords
 
 const refused: Readonly<Record<StagedProblem, string>> = {
   invalid: 'Its manifest doesn’t parse or check out, so what it asks for can’t be read and it can’t be installed',
   'install-only': 'It asks for what only hetu’s own parts hold, so it can’t be installed',
   api: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed',
   reserved: 'Its id is one hetu keeps, so it can’t be installed',
+  unapproved: 'A folder for this plugin is already there and hetu never approved it. Remove it first',
 }
 
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
@@ -125,7 +104,7 @@ export class Installer {
   // dialog answers null and changes nothing
   pick(source: 'zip' | 'folder'): void {
     const mine = ++this.latest
-    this.host.call('app.pickPlugins', { source }, reply => {
+    this.host.call('app.stagePicked', { source }, reply => {
       if (reply.ok === true && reply.result === null) return
       this.took(mine, reply)
     })

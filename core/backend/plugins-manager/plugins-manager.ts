@@ -97,7 +97,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       case 'core.findRelease':
         return this.installs().findRelease(args.link as string)
       case 'core.stage':
-        return this.stagedAnswer(await this.installs().stageRelease(args.release as string, args.zip as number))
+        return await this.stagedAnswer(await this.installs().stageRelease(args.release as string, args.zip as number))
       case 'core.unstage':
         this.installs().unstage(args.staged as string)
         return null
@@ -224,19 +224,34 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     ]
   }
 
-  // A staging as the window is shown it: each plugin found with what it asks for, its class as if it were installed
-  // alone with the grant risk classifier's lines on why and the version it replaces. A staging dropped on the way, as
-  // the oldest when too many are held, answers not-found
-  stagedAnswer(made: Made): Staged {
+  // A staging as the window is shown it: each plugin found with what it asks for, the version it replaces and its class
+  // with the grant risk classifier's lines on why, classed as the Confirm classes it with every plugin that can install
+  // counted as ticked, as each starts ticked. A plugin whose folder is in the plugin folder with no entry can't install.
+  // A staging dropped on the way, as the oldest when too many are held, answers not-found. A staging the window is never
+  // answered is dropped
+  async stagedAnswer(made: Made): Promise<Staged> {
     if ('problem' in made) return made
-    this.installs()
-    const staging = this.heldStaging(made.handle)
-    if (staging === null) throw { code: 'not-found' }
-    return { staged: made.handle, source: staging.source, plugins: staging.plugins.map(plugin => this.stagedRow(plugin)) }
+    try {
+      this.installs()
+      const staging = this.heldStaging(made.handle)
+      if (staging === null) throw { code: 'not-found' }
+      const read: StagedRead[] = []
+      for (const plugin of staging.plugins) read.push(plugin.problem === null && await this.unapproved(plugin.id) ? { ...plugin, problem: 'unapproved' } : plugin)
+      const asks = new Map(read.flatMap(plugin => (plugin.problem === null && plugin.manifest !== null ? [[plugin.id, plugin.manifest.capabilities ?? []] as const] : [])))
+      return { staged: made.handle, source: staging.source, plugins: read.map(plugin => this.stagedRow(plugin, asks)) }
+    } catch (err) {
+      this.dropStaging(made.handle)
+      throw err
+    }
   }
 
-  protected stagedRow({ id, digest, manifest, problem }: StagedRead): StagedPlugin {
-    const classed = problem === null && manifest !== null ? this.installClassed(id, manifest, digest, new Map(), true) : null
+  // Throws unavailable while nothing may be staged, so main opens no dialog for a pick it couldn't answer
+  canStage(): void {
+    this.installs()
+  }
+
+  protected stagedRow({ id, digest, manifest, problem }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
+    const classed = problem === null && manifest !== null ? this.installClassed(id, manifest, digest, asks, true) : null
     return {
       id, name: manifest?.name ?? null, version: manifest?.version ?? null, capabilities: [...(manifest?.capabilities ?? [])],
       class: classed?.own?.entry?.class ?? null, lines: [...(classed?.lines ?? [])], replaces: this.installedEntry(id)?.version ?? null,

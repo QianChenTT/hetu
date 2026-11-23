@@ -17,7 +17,8 @@ import { MANIFEST_FILE, readPlugin, type Read } from './verify.ts'
 // zip or a folder main's own dialog picked or from a release zip main downloaded, then read as the plugins manager
 // reads a plugin folder. Nothing a window sends names a path or a download link
 
-// The most stagings held at once, the oldest dropped for a new one. Each holds up to the unpack cap on disk
+// The most stagings held at once, the one being made among them, the oldest dropped for a new one. Each holds up to the
+// unpack cap on disk
 export const MAX_STAGINGS = 4
 
 // A staging as main keeps it: its folder, what the window is shown and each plugin's folder with the hash of the bytes
@@ -79,6 +80,7 @@ export class InstallStagings implements Stagings {
   // A run before may have left stagings behind, which go before the first is made
   readonly #swept: Promise<void>
   #release: Release | null = null
+  #queue: Promise<unknown> = Promise.resolve()
   #closed = false
 
   constructor(options: StagingsOptions) {
@@ -101,7 +103,11 @@ export class InstallStagings implements Stagings {
   }
 
   // A zip or a folder main's dialog picked
-  async stagePicked(kind: 'zip' | 'folder', picked: string): Promise<Made> {
+  stagePicked(kind: 'zip' | 'folder', picked: string): Promise<Made> {
+    return this.#inTurn(() => this.#picked(kind, picked))
+  }
+
+  async #picked(kind: 'zip' | 'folder', picked: string): Promise<Made> {
     const source: StagedSource = { kind, path: picked }
     if (kind === 'folder') return this.#make(source, async dir => (await stageFolder(picked, dir, this.#limits)).problem)
     const bytes = await zipBytes(picked, zipLimits.bytes)
@@ -117,7 +123,11 @@ export class InstallStagings implements Stagings {
     return { release: handle, tag: release.tag, assets: release.zips.map(zip => ({ name: zip.name, bytes: zip.size })) }
   }
 
-  async stageRelease(handle: string, place: number): Promise<Made> {
+  stageRelease(handle: string, place: number): Promise<Made> {
+    return this.#inTurn(() => this.#released(handle, place))
+  }
+
+  async #released(handle: string, place: number): Promise<Made> {
     const release = this.#release
     if (release === null || release.handle !== handle) throw { code: 'not-found' }
     if (!Number.isInteger(place) || place < 0 || place >= release.zips.length) throw { code: 'invalid' }
@@ -146,6 +156,14 @@ export class InstallStagings implements Stagings {
     await clear(this.#root).catch(() => {})
   }
 
+  // One staging made at a time, its download included, so no two hold the disk or the memory a staging takes at once
+  #inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.#queue.then(work)
+    // The caller gets run and its error, the turn only waits for it so one failed staging never blocks the next
+    this.#queue = run.catch(() => {})
+    return run
+  }
+
   // A download stopped when the stagings close
   async #fetching<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (this.#closed) throw { code: 'stopped' }
@@ -165,6 +183,8 @@ export class InstallStagings implements Stagings {
     if (this.#closed) throw { code: 'stopped' }
     const handle = randomUUID()
     const dir = path.join(this.#root, handle)
+    // The staging being made counts toward the cap, so the oldest goes before it is written
+    for (const old of [...this.#kept.keys()].slice(0, Math.max(0, this.#kept.size - MAX_STAGINGS + 1))) this.unstage(old)
     let kept = false
     try {
       await mkdir(dir, { recursive: true })
@@ -175,7 +195,6 @@ export class InstallStagings implements Stagings {
       if (this.#closed) throw { code: 'stopped' }
       this.#kept.set(handle, found)
       kept = true
-      for (const old of [...this.#kept.keys()].slice(0, Math.max(0, this.#kept.size - MAX_STAGINGS))) this.unstage(old)
       return { handle }
     } finally {
       // A folder no handle names is never read. The next start's sweep takes it
