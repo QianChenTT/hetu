@@ -44,7 +44,8 @@ export type FakeFrame = {
   // The human pressed in the frame, or pressed Enter or Space in it, so one open from the plugin's frames within
   // OPEN_GRACE_MS is theirs
   pressed(): void
-  // The frame's open as @hetu/sdk/frame's: the note's instance when it opened as the human's, null when nothing opened
+  // The frame's open as @hetu/sdk/frame's: the human's after pressed, else the plugin's own in the background. Answers
+  // the note's instance, null when nothing opened
   open(path: string): string | null
   // A token for dragging the note out of the frame as @hetu/sdk/frame's dragToken, null when the plugin's luoshu.read
   // doesn't reach it
@@ -66,7 +67,8 @@ export class FakeDrawer {
   // The client the plugin's ctx.editor and ctx.ui use, which the fake core hands to each run of the plugin anew, so a
   // stopped run's handlers hear nothing
   editor = new Editor()
-  // Notes the plugin opened with editor.open, each in the background and never as the human's
+  // Notes the plugin opened itself, with editor.open or from a frame with no press behind it, each in the background
+  // and never as the human's
   readonly opened: string[] = []
   readonly marks = new Map<string, Mark[]>()
   // The version each set of marks was sent for, by instance and set
@@ -166,7 +168,11 @@ export class FakeDrawer {
         onTheme = handler
       },
       pressed: () => this.credit.pressed(SELF),
-      open: path => (asked({ kind: 'open', path }) && this.credit.use(SELF) ? this.humanOpen(path) : null),
+      open: path => {
+        if (!asked({ kind: 'open', path })) return null
+        if (this.credit.use(SELF)) return this.humanOpen(path)
+        return this.pluginOpen(path) ? [...this.notes].find(([, held]) => held.path === path)?.[0] ?? null : null
+      },
       dragToken: path => {
         if (!asked({ kind: 'drag-token', ask: 0, path }) || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return null
         const token = globalThis.crypto.randomUUID().replaceAll('-', '')
@@ -235,6 +241,16 @@ export class FakeDrawer {
   press(instance: string, node: string): string | null {
     const found = nodeIn(this.trees.get(instance) ?? null, node)
     return found?.drag?.type === 'note' ? this.humanOpen(found.drag.value) : null
+  }
+
+  // A note the plugin opens itself, in the background as hetu's drawer opens a plugin's: by editor.open, or from a frame
+  // with no press behind it. A real read only, false when refused. A note the luoshu doesn't hold opens nothing
+  private pluginOpen(path: string): boolean {
+    if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return false
+    this.opened.push(path)
+    const text = this.luoshuText(path)
+    if (text !== undefined && ![...this.notes.values()].some(held => held.path === path)) this.openNote(path, text, undefined, 'plugin')
+    return true
   }
 
   // A note the human opened from the plugin's view, as hetu's drawer opens it, the human's when the plugin reads or
@@ -452,13 +468,7 @@ export class FakeDrawer {
         return this.draw('layout', call.args.ops, true)
       case 'editor.open': {
         need('ui.view')
-        const { path } = call.args
-        // A real read only, as hetu's drawer asks
-        if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) throw new Refusal('not-granted')
-        this.opened.push(path)
-        // In the background, as hetu's drawer opens a plugin's. A note the luoshu doesn't hold opens nothing
-        const text = this.luoshuText(path)
-        if (text !== undefined && ![...this.notes.values()].some(held => held.path === path)) this.openNote(path, text, undefined, 'plugin')
+        if (!this.pluginOpen(call.args.path)) throw new Refusal('not-granted')
         return null
       }
       case 'editor.instances':

@@ -12,8 +12,8 @@ import type { Rect } from './drag.ts'
 // slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
 // it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
 // move ends, which leaves it a key or none of what the human types. hetu's theme is offered to every frame as the
-// page sets it, never checked or forced on one. A frame may ask hetu to open a note as the human's, which counts only
-// right after the human pressed in one of its plugin's frames, one open each press, and else opens nothing. A note
+// page sets it, never checked or forced on one. A frame may ask hetu to open a note, which is the human's only right
+// after the human pressed in one of its plugin's frames, one open each press, and else the plugin's own. A note
 // dragged out of a frame carries a token main minted for its plugin and note, and dropped on the editor it opens as the
 // human's once main answers the token
 
@@ -113,9 +113,9 @@ export class Frames {
   // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note.
   // again says the same frame still holds it from a theft already told
   onTheft: ((url: string, again: boolean) => void) | null = null
-  // Told a note a frame of owner's asked to open right after the human's press in one of them, or a note dragged out of
-  // one, to open as the human's
-  onOpen: ((owner: string, path: string) => void) | null = null
+  // Told a note to open for owner: human for one a frame of owner's asked right after the human's press in one of them,
+  // or a note dragged out of one, else the plugin's own open
+  onOpen: ((owner: string, path: string, human: boolean) => void) | null = null
   // The theme's variables as last offered to the frames
   private variables: Readonly<Record<string, string>> = {}
   // The theme main last took, as JSON, so one main refused is sent again with the next offer
@@ -341,13 +341,13 @@ export class Frames {
     held.element.contentWindow.postMessage({ v: 1, kind: 'view', variables: this.variables }, '*', [port2])
   }
 
-  // What a frame asked of hetu itself. An open goes on only on the human's press in a frame of its plugin's
+  // What a frame asked of hetu itself. An open is the human's only on their press in a frame of its plugin's
   private asked(instance: string, held: Mounted, message: unknown): void {
     const taken = held.asks(message)
     if (taken === null || this.mounted.get(instance) !== held) return
     const { ask } = taken
     if (ask.kind === 'open') {
-      if (taken.ok && this.credit.use(held.owner)) this.onOpen?.(held.owner, ask.path)
+      if (taken.ok) this.onOpen?.(held.owner, ask.path, this.credit.use(held.owner))
       return
     }
     void this.dragToken(instance, held, ask.ask, taken.ok ? ask.path : null)
@@ -370,6 +370,6 @@ export class Frames {
     const got = await this.link.call('editor.dropToken', { token })
     if (!got.ok) return
     const { plugin, path } = got.result as { plugin: string, path: string }
-    this.onOpen?.(plugin, path)
+    this.onOpen?.(plugin, path, true)
   }
 }

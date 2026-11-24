@@ -17,9 +17,10 @@ export type FrameView = {
   onMessage(handler: (data: unknown) => void): void
   theme(): Theme
   onTheme(handler: (theme: Theme) => void): void
-  // Opens the note in front as the human's, as a click on a note row of a tree view does. Counted only right after the
-  // human pressed in one of the plugin's frames or pressed Enter or Space in it, one open each time, so call it from
-  // that click or key. Any other open does nothing: the worker's editor.open opens a note in the background
+  // Opens the note in front as the human's, as a click on a note row of a tree view does, right after the human pressed
+  // in one of the plugin's frames or pressed Enter or Space in it, one open each time, so call it from that click or
+  // key. Any other open is the plugin's own, in the background as the worker's editor.open opens one, only where the
+  // plugin's luoshu.read reaches
   open(path: string): void
   // A token for dragging the note out of the frame, null when the plugin's luoshu.read doesn't reach it. Set DRAG_PREFIX
   // and the token as the drag's text/plain on dragstart. A token opens the note once and lasts 30 minutes at most, so
