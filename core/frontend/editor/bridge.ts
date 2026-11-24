@@ -5,7 +5,7 @@ import {
 } from '../../api/editor.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
 import { type DrawerCall, parseDrawerCall, type UiCall, uiNeeds } from '../../api/ui.ts'
-import { normalKey } from './keys.ts'
+import { normalKey } from '../../api/keys.ts'
 import type { CoreLink } from './link.ts'
 import type { SettingsValue } from './settings.ts'
 import { type UiHooks, UiPort, UiRefusal } from './ui-port.ts'
@@ -198,6 +198,16 @@ export class Drawer {
       if (!conn.marked.delete(instance)) continue
       conn.port.postMessage(JSON.stringify(event({ topic: 'editor.closed', instance })))
     }
+  }
+
+  // A note a frame of the plugin's opens with no press of the human's behind it, held to the item and the live port its
+  // worker's editor.open is held to, then opened as that one is
+  async frameOpen(plugin: string, path: string): Promise<void> {
+    const conn = this.connections.get(plugin)
+    if (conn === undefined) throw new Refusal('stopped')
+    if (!(await this.reachOf(plugin)).verbs.includes(uiNeeds['editor.open'])) throw new Refusal('not-granted')
+    if (!this.live(conn)) throw new Refusal('stopped')
+    await this.ui.pluginOpen(plugin, path)
   }
 
   // A change the instance applied, already pushed to its versions

@@ -389,9 +389,9 @@ describe('the images host on the editor session', () => {
   })
 
   it('gives a view frame a policy that names no images host, so a frame loads no image from it', () => {
-    const policy = frameCsp('0'.repeat(32))
+    const policy = frameCsp('kanban', '0'.repeat(32))
     expect(policy).not.toContain('hetu://images')
-    expect(policy).toContain(`img-src hetu://views/${'0'.repeat(32)}/;`)
+    expect(policy).toContain(`img-src hetu://kanban.views/${'0'.repeat(32)}/;`)
     expect(policy).toContain("connect-src 'none'")
     expect(policy).toContain("default-src 'none'")
   })

@@ -760,7 +760,7 @@ describe('the windows\' own actions', () => {
     for (const action of ['app.openSecurity', 'app.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
     expect((await way.ask('trusted', 'app.relaunch')).ok).toBe(true)
     expect((await way.ask('editor', 'editor.frame', { plugin: 'alpha', frame: 'board' })).ok).toBe(true)
-    const url = 'hetu://views/0123456789abcdef0123456789abcdef/board.html'
+    const url = 'hetu://alpha.views/0123456789abcdef0123456789abcdef/board.html'
     expect((await way.ask('editor', 'editor.frameGone', { url, navigated: true })).ok).toBe(true)
     expect(served).toEqual(['app.openSecurity', 'app.quit', 'app.relaunch', 'editor.frame', 'editor.frameGone'])
     expect((await way.ask('trusted', 'security.list')).ok).toBe(true)

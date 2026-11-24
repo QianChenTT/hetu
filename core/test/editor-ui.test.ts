@@ -372,6 +372,37 @@ describe('editor.open', () => {
     expect(await board.call('editor.open', { path: 'public/a.md' })).toMatchObject({ ok: true })
     expect(resolved).toEqual({ 'private/x.md': false, 'public/a.md': true })
   })
+
+  // A frame's open with no press of the human's behind it goes the same way
+  it('opens the same way for a frame\'s open with no press behind it, a real read only and judged where the path leads', async () => {
+    const { drawer, opened, resolved, core } = started({ kanban: { verbs: ['ui.view'], read: ['a.md', 'public/link/x.md'], list: ['names/b.md'], uiRead: ['shown/c.md'] } })
+    await connected(drawer, 'kanban')
+    await drawer.ui.pluginOpen('kanban', 'a.md')
+    for (const path of ['names/b.md', 'shown/c.md', 'secret.md']) await expect(drawer.ui.pluginOpen('kanban', path)).rejects.toMatchObject({ code: 'not-granted' })
+    await drawer.ui.pluginOpen('kanban', 'public/link/x.md')
+    expect(opened).toEqual(['a.md', 'public/link/x.md'])
+    expect(resolved).toEqual({ 'a.md': true, 'private/x.md': false })
+    expect(core.calls('luoshu.read')).toEqual([])
+  })
+
+  // A note dragged out of a frame is judged where the luoshu resolved it, as editor.open judges a plugin's open
+  it('answers whether the plugin reads the path a note resolved to', async () => {
+    const { drawer } = started({ kanban: { verbs: ['ui.view'], read: ['public/link/x.md'] } })
+    const reads = drawer.ui.resolvedReads('kanban')
+    expect(await reads('public/link/x.md')).toBe(true)
+    expect(await reads('private/x.md')).toBe(false)
+  })
+
+  // From a frame, held to the item and the live port its worker's editor.open is held to
+  it('opens from a frame only while the plugin holds ui.view and its worker is connected', async () => {
+    const { drawer, opened } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'] }, files: { verbs: [], read: ['a.md'] } })
+    await expect(drawer.frameOpen('kanban', 'a.md')).rejects.toMatchObject({ code: 'stopped' })
+    await connected(drawer, 'files')
+    await expect(drawer.frameOpen('files', 'a.md')).rejects.toMatchObject({ code: 'not-granted' })
+    await connected(drawer, 'kanban')
+    await drawer.frameOpen('kanban', 'a.md')
+    expect(opened).toEqual(['a.md'])
+  })
 })
 
 describe('keys in the design\'s order', () => {
@@ -384,6 +415,18 @@ describe('keys in the design\'s order', () => {
     expect(drawer.viewKey('v2', 'j')).toBe(false)
     await settle()
     expect(board.events('view.command')).toEqual([{ v: 1, kind: 'event', topic: 'view.command', instance: 'v1', command: 'down' }])
+  })
+
+  it('tells main the keys a plugin\'s views bound named the page\'s way each time they change and none once its port ends', async () => {
+    const { drawer } = started({ kanban: viewer })
+    const told: [string, string[]][] = []
+    drawer.ui.onBindings = (owner, keys) => told.push([owner, keys])
+    const board = await connected(drawer, 'kanban')
+    await board.call('view.bind', { bindings: [{ key: 'J', command: 'down' }, { key: 'Ctrl-k', command: 'up' }] })
+    await board.call('view.bind', { bindings: [{ key: 'x', command: 'cut' }] })
+    expect(await board.call('view.bind', { bindings: [{ key: 'Mod-s', command: 'x' }] })).toMatchObject({ ok: false })
+    drawer.end('kanban', 1)
+    expect(told).toEqual([['kanban', ['j', 'Mod-k']], ['kanban', ['x']], ['kanban', []]])
   })
 
   it('refuses a view binding on a core key', async () => {

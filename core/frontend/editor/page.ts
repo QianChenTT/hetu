@@ -1,11 +1,11 @@
 import type { CoreViewsPlugin } from '../../api/actions.ts'
-import type { Payload } from '../../api/ui.ts'
+import { DEFAULT_LINK_COLOR, type Payload, tokenNames } from '../../api/ui.ts'
 import { Drawer, type PortLike } from './bridge.ts'
 import { accepts, type Rect, DragGesture, fraction, splitSizes, zoneAt } from './drag.ts'
 import { type DrawHooks, fillerOf, taggedOf } from './draw.ts'
 import { EditorViews } from './editor.ts'
-import { CORE_KEY_NAMES, type CoreKey, coreKeyOf } from '../../api/keys.ts'
-import { keyName } from './keys.ts'
+import { viewsHost } from '../../api/ids.ts'
+import { CORE_KEY_NAMES, type CoreKey, coreKeyOf, keyName } from '../../api/keys.ts'
 import { Layers } from './layers.ts'
 import { type Bridge, CoreLink } from './link.ts'
 import { drawMenu, type MenuData } from './menu.ts'
@@ -151,7 +151,7 @@ function start(bridge: Bridge): void {
       if (payload.type === 'note') void openNote(payload.value, owner)
     },
     divider: (node, index, event, split) => dividerDrag(owner, surface, node, index, event, split),
-    iconUrl: src => `hetu://views/icon/${owner}/${src}`,
+    iconUrl: src => `hetu://${viewsHost(owner)}/icon/${src}`,
     imageUrl: async path => {
       const got = await link.call('editor.image', { plugin: owner, path })
       return got.ok ? (got.result as { url: string }).url : null
@@ -369,6 +369,15 @@ function start(bridge: Bridge): void {
       for (const [name, value] of Object.entries(variables)) target.style.setProperty(name, value)
     }
     themed = Object.keys(variables)
+    // What the page draws with, each token as the theme or shell.css set it and links in hetu's color unless the theme
+    // gives one, offered to the frames and to main, which serves it at the root of each frame's ticket
+    const drawn = getComputedStyle(element('editors'))
+    const offer: Record<string, string> = { '--hetu-color-editor-link': DEFAULT_LINK_COLOR }
+    for (const name of [...tokenNames, 'color-editor-link']) {
+      const value = drawn.getPropertyValue(`--hetu-${name}`).trim()
+      if (value !== '') offer[`--hetu-${name}`] = value
+    }
+    theFrames.theme(offer)
   }
 
   settings.onChange = () => {
@@ -492,8 +501,9 @@ function start(bridge: Bridge): void {
 
   // via names the plugin whose node the human opened the note from, and the note takes focus. With via null, a plugin's
   // open, which isn't the human's: the note goes beside the others for the layout to place, the current one staying
-  // current, and reads judges the path the luoshu resolved
-  async function openNote(path: string, via: string | null, reads?: (resolved: string) => Promise<boolean>): Promise<void> {
+  // current, and reads judges the path the luoshu resolved. stay shows the human's note in front and leaves focus where it
+  // is, in the frame the human pressed in
+  async function openNote(path: string, via: string | null, reads?: (resolved: string) => Promise<boolean>, stay = false): Promise<void> {
     const focus = via !== null
     try {
       const id = await theNotes.open(path, reads)
@@ -505,7 +515,7 @@ function start(bridge: Bridge): void {
         else theLayers.schedule()
         return
       }
-      views.show(id)
+      views.show(id, !stay)
     } catch (err) {
       if (!focus) return
       const code = (err as { code?: string }).code ?? 'failed'
@@ -650,6 +660,8 @@ function start(bridge: Bridge): void {
     const took = tag !== null && tag.tree.surface !== SKELETON ? theDrawer.viewKey(tag.tree.surface, name) : theDrawer.key(null, name)
     if (took) event.preventDefault()
   })
+  // A key pressed in a frame never reaches the page, so main matches the views' bindings itself
+  ui.onBindings = (owner, keys) => void link.call('editor.viewKeys', { plugin: owner, keys })
 
   element('raw-open').addEventListener('click', toggleRaw)
   element('security').addEventListener('click', () => shell.open())
@@ -658,11 +670,28 @@ function start(bridge: Bridge): void {
 
   window.addEventListener('message', event => {
     if (event.source !== window || event.origin !== location.origin) return
-    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown } | null
+    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown, url?: unknown, press?: { down?: unknown, x?: unknown, y?: unknown } } | null
     // A core key main took before any frame could, since a frame with focus would hear it first
     if (data?.hetu === 'key' && typeof data.key === 'string' && (CORE_KEY_NAMES as readonly string[]).includes(data.key)) {
       if (data.key === 'raw' && rawOpen) toggleRaw()
       else coreKey(data.key as CoreKey)
+      return
+    }
+    // Main moving focus into a frame, which counts as the core's own move
+    if (data?.hetu === 'focus-frame') {
+      const instance = typeof data.url === 'string' ? theFrames.instanceAt(data.url) : null
+      if (instance !== null) theFrames.focusFrame(instance)
+      return
+    }
+    // A key a plugin's views bound, pressed while focus was in that frame of the plugin's
+    if (data?.hetu === 'view-key') {
+      const instance = typeof data.url === 'string' ? theFrames.instanceAt(data.url) : null
+      if (instance !== null && typeof data.key === 'string') ui.viewKey(instance, data.key)
+      return
+    }
+    // A press main saw, a frame's own included, which the page alone never hears
+    if (data?.hetu === 'press') {
+      theFrames.pushed(data.press)
       return
     }
     if (typeof data?.plugin !== 'string' || typeof data.incarnation !== 'number') return
@@ -674,14 +703,15 @@ function start(bridge: Bridge): void {
   link.on('core.status', () => void readViews())
   link.on('core.security', () => void readViews())
 
-  // A frame that took focus on its own is closed and the note gets it back
-  theFrames.onTheft = () => views.focus()
-  window.addEventListener('blur', () => theFrames.checkFocus())
-
-  // A press anywhere but on a frame's shield puts every frame back behind its shield
-  window.addEventListener('pointerdown', event => {
-    if (!(event.target instanceof Element) || event.target.closest('.hetu-frame-shield') === null) theFrames.deactivate()
-  }, true)
+  // A frame that took focus on its own gives it back to the note and the core records it. The page sees focus leave its
+  // own document for a frame as a blur
+  theFrames.onTheft = (url, again) => {
+    views.focus()
+    if (!again) void link.call('editor.focusTaken', { url })
+  }
+  theFrames.onOpen = (owner, path, human, dropped) => void (human ? openNote(path, owner, dropped ? ui.resolvedReads(owner) : undefined, !dropped) : theDrawer.frameOpen(owner, path).catch(() => { /* refused: nothing opens, as for editor.open */ }))
+  window.addEventListener('blur', () => theFrames.focusMoved())
+  document.addEventListener('focusin', () => theFrames.focusMoved())
 
   shell.start()
   theNotes.start()

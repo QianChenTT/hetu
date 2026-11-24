@@ -466,7 +466,7 @@
       "hash": "527132e7298837da",
       "at": [
         "core/backend/runtime/trusted.ts:18-22",
-        "core/frontend/editor/frames.ts:44-48"
+        "core/frontend/editor/frames.ts:30-36"
       ],
       "judged": "not yet"
     },
@@ -643,9 +643,9 @@
         "core/frontend/editor/page.ts",
         "core/frontend/workers/preload.ts"
       ],
-      "hash": "5e1bc8266ba8a937",
+      "hash": "79f7f7ba160279fe",
       "at": [
-        "core/frontend/editor/page.ts:677-683",
+        "core/frontend/editor/page.ts:741-747",
         "core/frontend/workers/preload.ts:10-14"
       ],
       "judged": "not yet"

@@ -6,14 +6,14 @@ import {
 import { label, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
-import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, frameOwner } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { actionPathProblem } from './paths.ts'
 import { hidesOnScreen, MAX_SCOPE_LENGTH } from './scope.ts'
 import { MAX_LIST, type ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
-import { imagePath, type ThemeSpec } from './ui.ts'
+import { imagePath, MAX_VIEW_BINDINGS, type ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
@@ -111,9 +111,16 @@ function lookup<T extends object>(entries: Record<string, T>): Readonly<Record<s
 const target = z.strictObject({ plugin: pluginId })
 // A frame entry's name, which is never the name of another half
 const frameName = localName.refine(name => name !== 'worker' && name !== 'host' && name !== 'page', 'the name of another half')
-// A frame's single-use URL as main minted it: the views host, a token of 32 hex digits, then a path in the plugin
+// A frame's single-use URL as main minted it: the host of its plugin's frames, a token of 32 hex digits, then a path in the
+// plugin
 export const FRAME_TOKEN = /^[0-9a-f]{32}$/
-const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
+const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/([a-z0-9-]+\.views)\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
+  .refine(url => frameOwner(url.slice('hetu://'.length, url.indexOf('/', 'hetu://'.length))) !== null, 'no plugin\'s frames')
+// The theme's variables as the editor page sets them. hetu's own names, and values with no character that could end a
+// declaration, open a rule or load anything, since main writes them into a stylesheet
+const MAX_THEME_VARIABLES = 32
+const themeVariables = z.record(z.string().max(48).regex(/^--hetu-[a-z][a-z0-9-]*$/), z.string().max(200).regex(/^[A-Za-z0-9 #,._-]*$/))
+  .refine(variables => Object.keys(variables).length <= MAX_THEME_VARIABLES, `at most ${MAX_THEME_VARIABLES} variables`)
 
 // The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub
 // link whose release main lists the zip assets of. The core copies the source into a staging folder of its own and
@@ -190,9 +197,22 @@ const coreTable = {
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
   // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
+  // The frame at that URL took focus with no press of the human's in it and was pulled back, which the core records
+  'editor.focusTaken': { from: 'windows', args: z.strictObject({ url: frameUrl }) },
+  // The keys a plugin's views bound, named the page's way, in place of the ones sent before. A key pressed in a frame
+  // never reaches the page, so main matches these itself while focus is in one of the plugin's frames
+  'editor.viewKeys': { from: 'windows', args: z.strictObject({ plugin: pluginId, keys: z.array(z.string().min(1).max(64)).max(MAX_VIEW_BINDINGS) }) },
   // A single-use URL main serves one image of the notes folder from for a plugin's image node, inside that plugin's
   // luoshu.read scope. Only the editor window's drawer gets one
   'editor.image': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: imagePath }) },
+  // The theme the editor page set, at its start and on each change, which main serves at the root of each frame's
+  // ticket as hetu-theme.css. Offered to frames, never checked in one
+  'editor.theme': { from: 'windows', args: z.strictObject({ variables: themeVariables }) },
+  // A one-time token for dragging a note out of one of a plugin's frames, inside that plugin's luoshu.read scope. Only
+  // the editor window gets one
+  'editor.dragToken': { from: 'windows', args: z.strictObject({ plugin: pluginId, path }) },
+  // A drag token dropped on the editor, answered once with the plugin that asked for it and its note
+  'editor.dropToken': { from: 'windows', args: z.strictObject({ token: z.string().regex(/^[0-9a-f]{32}$/) }) },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
   // <plugin id>.refused coalesced by reason
   'core.refused': {
@@ -490,7 +510,12 @@ export type ActionResults = InstallResults & {
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null
+  'editor.focusTaken': null
+  'editor.viewKeys': null
   'editor.image': { url: string }
+  'editor.theme': null
+  'editor.dragToken': { token: string }
+  'editor.dropToken': { plugin: string, path: string }
   // null when the notes hold nothing the last commit doesn't
   'history.commit': { commit: string | null }
   'history.log': { commits: HistoryCommit[] }

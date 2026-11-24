@@ -3,7 +3,9 @@ import type { Capability } from '../../api/capabilities.ts'
 import { type BridgeEvent, linkAt, type Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
+import { DRAG_TOKEN_MS, DRAG_TOKENS_PER_PLUGIN, dragTokenOf, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { Editor } from '../editor.ts'
+import type { Theme } from '../frame.ts'
 import type { Transport } from '../transport.ts'
 import { holds } from './gate.ts'
 
@@ -17,7 +19,10 @@ import { holds } from './gate.ts'
 // command goes only when the plugin bound a key to it, with the note, its version and the selection only when it reads
 // the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list and moves its link
 // marks as hetu's drawer does. A link click goes as hetu's drawer sends it, to the plugin while it reads the note and
-// holds ui.decoration
+// holds ui.decoration. A view the manifest draws in a frame takes the worker's posts once the test mounts its frame,
+// which posts to the worker as the frame's script would and keeps what the worker posted. Its open is the human's only
+// right after the test says the human pressed in the frame, one open each press, as hetu's drawer counts the presses
+// main pushes. A note dragged out of it opens as the human's on a drop of the token it was given, once
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -27,6 +32,32 @@ type Selection = { anchor: number, head: number }[]
 type Drawn = { from: number, to: number, stamp: number }
 // human: the human opened it, so ui.read reaches it
 type Note = { path: string, text: Text, version: number, drawn: Drawn, human: boolean, selection?: { anchor: number, head: number } }
+
+// A view's frame as a test plays it. post sends data as @hetu/sdk/frame does, false when hetu's drawer would drop it.
+// received is what the worker posted, oldest first, as the frame reads it. theme and onTheme are the theme as the
+// frame's SDK reads it, the one changeTheme last set
+export type FakeFrame = {
+  post(data: unknown): boolean
+  readonly received: readonly unknown[]
+  theme(): Theme
+  onTheme(handler: (theme: Theme) => void): void
+  // The human pressed in the frame, or pressed Enter in it, so one open from the plugin's frames within
+  // OPEN_GRACE_MS is theirs
+  pressed(): void
+  // Enter went down in the frame while it held focus, a press as pressed is
+  keyed(): void
+  // The human let go of the press, which counts it from then, as for a long press
+  released(): void
+  // The frame's open as @hetu/sdk/frame's: the human's after pressed, else the plugin's own in the background. Answers
+  // the note's instance, null when nothing opened
+  open(path: string): string | null
+  // A token for dragging the note out of the frame as @hetu/sdk/frame's dragToken, null when the plugin's luoshu.read
+  // doesn't reach it
+  dragToken(path: string): string | null
+}
+
+// The one plugin the fake drawer serves, as the press credit names it
+const SELF = 'plugin'
 
 class Refusal {
   readonly code: string
@@ -40,7 +71,8 @@ export class FakeDrawer {
   // The client the plugin's ctx.editor and ctx.ui use, which the fake core hands to each run of the plugin anew, so a
   // stopped run's handlers hear nothing
   editor = new Editor()
-  // Notes the plugin opened with editor.open, each in the background and never as the human's
+  // Notes the plugin opened itself, with editor.open or from a frame with no press behind it, each in the background
+  // and never as the human's
   readonly opened: string[] = []
   readonly marks = new Map<string, Mark[]>()
   // The version each set of marks was sent for, by instance and set
@@ -53,6 +85,14 @@ export class FakeDrawer {
   private luoshuText: (path: string) => string | undefined = () => undefined
   private readonly trees = new Map<string, UiNode>()
   private readonly instancesOf = new Map<string, string>()
+  // What the worker posted to each mounted frame
+  private readonly frames = new Map<string, unknown[]>()
+  // The theme the frames are offered, {} until the test changes it, and each mounted frame's way to hear a change
+  private frameTheme: Theme = Object.freeze({})
+  private readonly themeHeard = new Set<(theme: Theme) => void>()
+  // Whether the human just pressed in one of the plugin's frames, and the drag tokens its frames were given
+  private credit = new OpenCredit(() => Date.now())
+  private readonly dragTokens = new Map<string, { path: string, until: number }>()
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
   private n = 0
@@ -75,6 +115,9 @@ export class FakeDrawer {
     this.editor = new Editor()
     this.trees.clear()
     this.instancesOf.clear()
+    this.frames.clear()
+    this.credit = new OpenCredit(() => Date.now())
+    this.dragTokens.clear()
     return this.editor
   }
 
@@ -99,6 +142,71 @@ export class FakeDrawer {
       this.instancesOf.set(instance, view)
       this.emit({ topic: 'view.opened', instance, view })
     }
+  }
+
+  // The frame drawing an instance of a frame view loaded and holds its port
+  mountFrame(instance: string): FakeFrame {
+    const view = this.instancesOf.get(instance)
+    if (view === undefined || this.views[view]?.frame === undefined) throw new Error(`no frame draws ${instance}`)
+    const received: unknown[] = []
+    this.frames.set(instance, received)
+    const inbox = new FrameInbox(Date.now)
+    let onTheme: ((theme: Theme) => void) | null = null
+    this.themeHeard.add(theme => {
+      if (this.frames.get(instance) === received) onTheme?.(theme)
+    })
+    // Asked as the frame's SDK asks, and taken as hetu's drawer takes it
+    const asks = frameAsks(() => Date.now())
+    const asked = (ask: object) => asks({ v: 1, ...ask })?.ok === true && this.frames.get(instance) === received
+    return {
+      received,
+      post: data => {
+        // JSON text as the frame's SDK sends it, taken as hetu's drawer takes it, and only while the plugin holds ui.view
+        const taken = inbox.take(JSON.stringify(data))
+        if (!taken.ok || this.frames.get(instance) !== received || !this.has('ui.view')) return false
+        this.emit({ topic: 'view.message', instance, data: taken.data })
+        return true
+      },
+      theme: () => this.frameTheme,
+      onTheme: handler => {
+        onTheme = handler
+      },
+      pressed: () => this.credit.pressed(SELF),
+      keyed: () => this.credit.keyed(SELF),
+      released: () => this.credit.released(SELF),
+      open: path => {
+        if (!asked({ kind: 'open', path }) || !this.has('ui.view')) return null
+        if (this.credit.use(SELF)) return this.humanOpen(path)
+        return this.pluginOpen(path) ? [...this.notes].find(([, held]) => held.path === path)?.[0] ?? null : null
+      },
+      dragToken: path => {
+        if (!asked({ kind: 'drag-token', ask: 0, path }) || !this.has('ui.view') || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return null
+        const token = globalThis.crypto.randomUUID().replaceAll('-', '')
+        // Its oldest goes first past the cap, as in hetu's main
+        if (this.dragTokens.size >= DRAG_TOKENS_PER_PLUGIN) this.dragTokens.delete(this.dragTokens.keys().next().value as string)
+        this.dragTokens.set(token, { path, until: Date.now() + DRAG_TOKEN_MS })
+        return token
+      },
+    }
+  }
+
+  // The human picked another theme: every frame is told the page's variables as hetu's drawer tells them
+  changeTheme(variables: Readonly<Record<string, string>>): void {
+    this.frameTheme = Object.freeze({ ...variables })
+    for (const heard of this.themeHeard) heard(this.frameTheme)
+  }
+
+  // The human dropped a drag carrying this text on the editor. A token one of the plugin's frames was given opens its
+  // note as the human's once, within DRAG_TOKEN_MS and while the plugin still reads the note. Answers the note's
+  // instance, null when nothing opened
+  drop(text: string): string | null {
+    const token = dragTokenOf(text)
+    const held = token === null ? undefined : this.dragTokens.get(token)
+    if (token === null || held === undefined) return null
+    this.dragTokens.delete(token)
+    // The fake luoshu holds no links, so the path read is the one named
+    if (Date.now() > held.until || !this.has('ui.view') || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [held.path] } })) return null
+    return this.humanOpen(held.path)
   }
 
   // An event from the drawer to the plugin
@@ -141,8 +249,22 @@ export class FakeDrawer {
   // note it can't reach and read it through ui.read once clicked. Answers the note's instance, null when nothing opened
   press(instance: string, node: string): string | null {
     const found = nodeIn(this.trees.get(instance) ?? null, node)
-    if (found?.drag?.type !== 'note') return null
-    const path = found.drag.value
+    return found?.drag?.type === 'note' ? this.humanOpen(found.drag.value) : null
+  }
+
+  // A note the plugin opens itself, in the background as hetu's drawer opens a plugin's: by editor.open, or from a frame
+  // with no press behind it. A real read only, false when refused. A note the luoshu doesn't hold opens nothing
+  private pluginOpen(path: string): boolean {
+    if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return false
+    this.opened.push(path)
+    const text = this.luoshuText(path)
+    if (text !== undefined && ![...this.notes.values()].some(held => held.path === path)) this.openNote(path, text, undefined, 'plugin')
+    return true
+  }
+
+  // A note the human opened from the plugin's view, as hetu's drawer opens it, the human's when the plugin reads or
+  // lists it
+  private humanOpen(path: string): string | null {
     const reaches = holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })
       || holds(this.granted, { capability: 'luoshu.list', scope: { paths: [path] } })
     const open = [...this.notes].find(([, held]) => held.path === path)
@@ -326,12 +448,23 @@ export class FakeDrawer {
         own(call.args.instance)
         this.instancesOf.delete(call.args.instance)
         this.trees.delete(call.args.instance)
+        this.frames.delete(call.args.instance)
         return null
       case 'view.title':
-      case 'view.post':
         need('ui.view')
         own(call.args.instance)
         return null
+      case 'view.post': {
+        need('ui.view')
+        own(call.args.instance)
+        const view = this.views[this.instancesOf.get(call.args.instance) as string]
+        if (view?.frame === undefined) throw new Refusal('not-found')
+        const received = this.frames.get(call.args.instance)
+        if (received === undefined) throw new Refusal('unavailable')
+        // Taken from JSON text already, as the frame reads it. Nothing reaches a frame as nothing
+        if (call.args.data !== undefined) received.push(call.args.data)
+        return null
+      }
       case 'view.bind':
         need('ui.view')
         return null
@@ -344,13 +477,7 @@ export class FakeDrawer {
         return this.draw('layout', call.args.ops, true)
       case 'editor.open': {
         need('ui.view')
-        const { path } = call.args
-        // A real read only, as hetu's drawer asks
-        if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) throw new Refusal('not-granted')
-        this.opened.push(path)
-        // In the background, as hetu's drawer opens a plugin's. A note the luoshu doesn't hold opens nothing
-        const text = this.luoshuText(path)
-        if (text !== undefined && ![...this.notes.values()].some(held => held.path === path)) this.openNote(path, text, undefined, 'plugin')
+        if (!this.pluginOpen(call.args.path)) throw new Refusal('not-granted')
         return null
       }
       case 'editor.instances':

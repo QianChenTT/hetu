@@ -56,6 +56,8 @@ export class UiPort {
   private readonly bindings = new Map<string, Map<string, string>>()
   private current: string | null = null
   private lastState = ''
+  // Told the keys an owner's views bound, named the page's way, each time they change
+  onBindings: ((owner: string, keys: string[]) => void) | null = null
 
   constructor(options: Options) {
     this.options = options
@@ -171,6 +173,7 @@ export class UiPort {
         const bound = call.args.bindings.map(binding => [this.options.normal(binding.key), binding.command] as const)
         if (bound.some(([key]) => this.options.reserved(key))) throw new UiRefusal('invalid')
         this.bindings.set(owner, new Map(bound))
+        this.onBindings?.(owner, bound.map(([key]) => key))
         return null
       }
       case 'layout.draw': {
@@ -181,17 +184,27 @@ export class UiPort {
         this.options.hooks.drawn(owner, SKELETON)
         return null
       }
-      case 'editor.open': {
-        // Asked before anything is read, so opening never tells a plugin whether a note it can't name exists
-        const reach = await this.options.reach(owner, call.args.path)
-        // A real read only, so a note a plugin opens is never one ui.read reaches through a list grant or its own
-        if (!reach.read) throw new UiRefusal('not-granted')
-        // And on where the note is, so a spelling through a link into a folder the plugin can't read opens nothing. It
-        // answers as an open whose read failed does, so the plugin can't tell whether a note is there
-        await this.options.hooks.open(call.args.path, async resolved => (await this.options.reach(owner, resolved)).read)
+      case 'editor.open':
+        await this.pluginOpen(owner, call.args.path)
         return null
-      }
     }
+  }
+
+  // A note the plugin opens itself, in the background and never as the human's: by its worker's editor.open, or from
+  // one of its frames with no press of the human's behind it
+  async pluginOpen(owner: string, path: string): Promise<void> {
+    // Asked before anything is read, so opening never tells a plugin whether a note it can't name exists
+    const reach = await this.options.reach(owner, path)
+    // A real read only, so a note a plugin opens is never one ui.read reaches through a list grant or its own
+    if (!reach.read) throw new UiRefusal('not-granted')
+    // And on where the note is, so a spelling through a link into a folder the plugin can't read opens nothing. It
+    // answers as an open whose read failed does, so the plugin can't tell whether a note is there
+    await this.options.hooks.open(path, this.resolvedReads(owner))
+  }
+
+  // Whether the plugin's own read reaches the path the luoshu resolved a note it named to
+  resolvedReads(owner: string): (resolved: string) => Promise<boolean> {
+    return async resolved => (await this.options.reach(owner, resolved)).read
   }
 
   // A key while focus is in a view instance: its owner's own binding, true when one took it
@@ -249,7 +262,7 @@ export class UiPort {
 
   private dropViews(owner: string): void {
     for (const held of this.views.all()) if (held.owner === owner) this.surfaces.dropSurface(owner, held.instance)
-    this.bindings.delete(owner)
+    if (this.bindings.delete(owner)) this.onBindings?.(owner, [])
     this.views.ended(owner)
     this.options.hooks.changed()
   }

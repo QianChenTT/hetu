@@ -18,6 +18,18 @@ ipcRenderer.on('hetu:drawer', (event, named: { plugin?: unknown, incarnation?: u
 ipcRenderer.on('hetu:key', (_event, key: unknown) => {
   window.postMessage({ hetu: 'key', key }, location.origin)
 })
+// A key a plugin's views bound that main took while focus was in one of that plugin's frames, with the frame's URL
+ipcRenderer.on('hetu:view-key', (_event, pressed: { url?: unknown, key?: unknown }) => {
+  window.postMessage({ hetu: 'view-key', url: pressed.url, key: pressed.key }, location.origin)
+})
+// Main moving focus into the frame served from that URL
+ipcRenderer.on('hetu:focus-frame', (_event, asked: { url?: unknown }) => {
+  window.postMessage({ hetu: 'focus-frame', url: asked.url }, location.origin)
+})
+// Each press and release in the window, a frame's included, at its point on the page, as main saw it
+ipcRenderer.on('hetu:press', (_event, press: unknown) => {
+  window.postMessage({ hetu: 'press', press }, location.origin)
+})
 ipcRenderer.on('hetu:drawer-end', (_event, named: { plugin?: unknown, incarnation?: unknown }) => {
   window.postMessage({ hetu: 'drawer-end', plugin: named.plugin, incarnation: named.incarnation }, location.origin)
 })

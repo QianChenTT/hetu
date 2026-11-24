@@ -19,6 +19,22 @@ export const pluginId = z.string()
   .refine(value => !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(value), 'a Windows device name')
   .refine(value => !isBadKey(value), 'a key plain data refuses')
 
+const VIEWS_SUFFIX = '.views'
+
+// The host a plugin's frames and icons load from: <id>.views with each _ written --, since a CSP
+// host-source takes only letters, digits and dashes and drops a source holding an underscore. No id holds --, so a host
+// names one id at most
+export const viewsHost = (plugin: string): string => `${plugin.replaceAll('_', '--')}${VIEWS_SUFFIX}`
+
+// The plugin whose frames a host serves, else null: the host must be exactly what viewsHost makes of a plugin id, so
+// my_board.views and my---board.views name nobody. The editor page's CSP names hetu://*.views, which Chromium matches
+// at any depth, x.kanban.views among them, so this check is the one that holds a host to a single plugin
+export function frameOwner(hostname: string): string | null {
+  if (!hostname.endsWith(VIEWS_SUFFIX)) return null
+  const plugin = hostname.slice(0, -VIEWS_SUFFIX.length).replaceAll('--', '_')
+  return pluginId.safeParse(plugin).success && viewsHost(plugin) === hostname ? plugin : null
+}
+
 // The name a plugin gives one of the plugin's own actions, topics or frames
 export const localName = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(new RegExp(`^${name}$`))
 

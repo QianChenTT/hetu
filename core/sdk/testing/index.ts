@@ -20,12 +20,12 @@ import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'
 import type { Transport } from '../transport.ts'
-import { FakeDrawer } from './drawer.ts'
+import { FakeDrawer, type FakeFrame } from './drawer.ts'
 import { type FakeMode, holds, ModeGate, pairKey } from './gate.ts'
 import { memoryLock, MemoryHistory, MemoryStorage, MemoryLuoshu } from './providers.ts'
 
 export { FakeDrawer, holds }
-export type { FakeMode }
+export type { FakeFrame, FakeMode }
 
 export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string } | { state: 'crashed', reason: 'start-timeout' }
 export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Refusal }

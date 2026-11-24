@@ -325,79 +325,309 @@ describe('a busy view', () => {
   })
 })
 
+// A frame's rows: arrow keys move between them and Enter or a click opens one, as a file list would. It tells its
+// worker each key it hears and each row opened. Told to, it takes focus on its own, once after a while or each time it
+// loses it
 const frameScript = `
-var input = document.getElementById('i')
+var rows = [].slice.call(document.querySelectorAll('button'))
+var current = 0
+var port = null
+function say(data) { if (port) port.postMessage(JSON.stringify(data)) }
+rows.forEach(function (row, at) {
+  row.addEventListener('click', function () { say({ opened: row.textContent }) })
+  row.addEventListener('focus', function () { current = at })
+})
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    rows[Math.max(0, Math.min(rows.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)))].focus()
+  }
+  say({ key: event.key })
+})
+window.addEventListener('focus', function () { say({ focused: true }) })
 window.addEventListener('message', function (event) {
   if (event.source !== parent || !event.ports[0]) return
-  var port = event.ports[0]
-  input.addEventListener('input', function () { port.postMessage(JSON.stringify({ typed: input.value })) })
+  port = event.ports[0]
   port.onmessage = function (message) {
     var data = JSON.parse(message.data)
-    if (data === 'steal') setInterval(function () { if (document.activeElement !== input) input.focus() }, 100)
+    if (data && typeof data.steal === 'number') setTimeout(function () { rows[0].focus(); say({ stole: true }) }, data.steal)
+    if (data && data.sticky === true) window.addEventListener('blur', function () { setTimeout(function () { rows[0].focus(); say({ stole: true }) }, 0) })
   }
-  port.postMessage(JSON.stringify({ hello: true }))
+  say({ hello: true })
 })
 `
-const framePage = '<!doctype html><html><head><meta charset="utf-8"></head><body><input id="i"><script src="board.js"></script></body></html>'
+const row = (name: string) => `<button style="display:block;width:200px;height:30px;margin:0">${name}</button>`
+const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<script src="board.js"></script></body></html>`
+
+type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused?: true }
+type Press = { down: boolean, x: number, y: number }
 
 describe('a view frame', () => {
-  async function framed() {
-    const made = await inColumns({
-      notes: { 'a.md': '' },
-      plugins: {
-        kanban: {
-          granted: viewer,
-          manifest: { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views: { board: { title: 'Board', kind: 'view', frame: 'board' } } },
-          files: { 'board.html': framePage, 'board.js': frameScript },
-        },
-      },
-    })
-    const worker = await pluginWorker(made.app, 'kanban')
-    const messages = async () => (await heard(worker)).filter(event => event.topic === 'view.message').map(event => event.data as { typed?: string })
-    await until(async () => (await messages()).length >= 1)
-    return { ...made, worker, messages }
+  // Each plugin of ids with a frame view in a column, side by side in that order, its frame loaded and laid out
+  async function framed(ids = ['kanban']) {
+    const plugin: Fixture = {
+      granted: viewer,
+      manifest: { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views: { board: { title: 'Board', kind: 'view', frame: 'board' } } },
+      files: { 'board.html': framePage, 'board.js': frameScript },
+    }
+    const made = await inColumns({ notes: { 'a.md': '' }, plugins: Object.fromEntries(ids.map(id => [id, plugin])) })
+    const workers = await Promise.all(ids.map(id => pluginWorker(made.app, id)))
+    const said = async (at = 0) => (await heard(workers[at]!)).filter(event => event.topic === 'view.message').map(event => event.data as Said)
+    for (let at = 0; at < ids.length; at++) {
+      await until(async () => (await said(at)).length >= 1)
+      await until(async () => ((await frameOf(made.editor, ids[at]!).boundingBox())?.width ?? 0) > 0)
+    }
+    return { ...made, workers, said }
+  }
+  const frameOf = (editor: Page, id: string) => editor.locator(`#editors iframe.hetu-frame[src^="hetu://${id}.views/"]`)
+  // A point in a frame's first row, on the page
+  const inRow = async (editor: Page, id: string) => {
+    const box = (await frameOf(editor, id).boundingBox())!
+    return { x: box.x + 20, y: box.y + 12 }
   }
 
-  it('takes none of the typing on its own: a frame that focuses itself is closed and the note keeps the typing', async () => {
-    const { editor, worker, messages } = await framed()
-    await open(editor, 'a.md')
-    await shown(editor).click()
-    await editor.keyboard.type('abc', { delay: 50 })
-    await run(worker, `
-      const instance = heard.find(e => e.topic === 'view.opened').instance
-      await ctx.ui.views.post(instance, 'steal')
-    `)
-    await until(async () => (await editor.locator('#editors .hetu-down', { hasText: 'took focus without a click' }).count()) === 1)
-    expect(await editor.locator('#editors iframe.hetu-frame').count()).toBe(0)
-    await editor.keyboard.type('defghij', { delay: 120 })
-    await until(async () => (await shown(editor).innerText()) === 'abcdefghij')
-    expect((await messages()).some(data => data.typed !== undefined)).toBe(false)
+  it('is found under each press and release main pushes at its point on the page, with two frames side by side', async () => {
+    const { editor } = await framed(['kanban', 'board'])
+    await editor.evaluate(() => {
+      const scope = window as unknown as { pushed: unknown[] }
+      scope.pushed = []
+      window.addEventListener('message', event => {
+        const data = event.data as { hetu?: unknown, press?: unknown } | null
+        if (event.source === window && data?.hetu === 'press') scope.pushed.push(data.press)
+      })
+    })
+    // The same point within each frame, which main gets as the frame's own x and y
+    for (const id of ['kanban', 'board']) {
+      const at = await inRow(editor, id)
+      await editor.mouse.click(at.x, at.y)
+      await until(async () => (await editor.evaluate('window.pushed.length')) === 2)
+      const pushed = await editor.evaluate(() => (window as unknown as { pushed: Press[] }).pushed.splice(0).map(press => ({
+        ...press, host: new URL(document.elementFromPoint(press.x, press.y)?.getAttribute('src') ?? 'hetu://page/').host,
+      })))
+      expect(pushed.map(press => [press.down, press.host])).toEqual([[true, `${id}.views`], [false, `${id}.views`]])
+      for (const press of pushed) {
+        expect(Math.abs(press.x - at.x)).toBeLessThanOrEqual(1)
+        expect(Math.abs(press.y - at.y)).toBeLessThanOrEqual(1)
+      }
+    }
   })
 
-  it('takes typing once the human clicks it, and goes back behind its shield on a press elsewhere', async () => {
-    const { editor, messages } = await framed()
+  it('takes focus on a press in it, then works its own rows with arrow keys and Enter', async () => {
+    const { editor, said } = await framed()
     await open(editor, 'a.md')
-    const shield = editor.locator('#editors .hetu-frame-shield')
-    await until(async () => shield.isVisible())
-    await shield.click()
-    await until(async () => !(await shield.isVisible()))
-    const element = editor.locator('#editors iframe.hetu-frame')
-    const frame = (await element.boundingBox())!
-    const board = (await (await element.elementHandle())!.contentFrame())!
-    // The shield hides at once but the frame takes a click only once the page drew it no longer inert and the frame's
-    // own page heard it, a frame or more later and slower on a busy macOS runner. A click sent before goes to the page
-    // under it, which puts the frame back behind its shield, so the pointer rests on the input until the frame's page
-    // sees it there
-    await until(async () => {
-      await editor.mouse.move(frame.x + 20, frame.y + 12)
-      return board.evaluate(() => document.querySelector('#i:hover') !== null)
-    })
-    await editor.mouse.click(frame.x + 20, frame.y + 12)
-    await editor.keyboard.type('mine', { delay: 30 })
-    await until(async () => (await messages()).some(data => data.typed === 'mine'))
-    // A press elsewhere in the page puts the frame back behind its shield
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    // Past the check that would pull focus back
+    await tick(300)
+    await editor.keyboard.press('ArrowDown')
+    await editor.keyboard.press('Enter')
+    await until(async () => (await said()).some(data => data.opened === 'row-2'))
+    expect((await said()).filter(data => data.key !== undefined).map(data => data.key)).toEqual(['ArrowDown', 'Enter'])
+    expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
+  })
+
+  // Tells the plugin's frame what to do, as data
+  const tell = (worker: Worker, data: object) => worker.evaluate(async told => {
+    const own = globalThis as unknown as { heard: Heard[], ctx: { ui: { views: { post: (instance: string, data: unknown) => Promise<unknown> } } } }
+    const instance = own.heard.find(e => e.topic === 'view.opened')!.instance!
+    await own.ctx.ui.views.post(instance, told)
+  }, data)
+
+  it('gets none of the typing at a key each 150 ms when it takes focus with no press, which the core records', async () => {
+    const { editor, workers, said, dataDir } = await framed()
+    await open(editor, 'a.md')
     await shown(editor).click()
-    await until(async () => shield.isVisible())
+    await editor.keyboard.type('abc', { delay: 150 })
+    await tell(workers[0]!, { steal: 400 })
+    await editor.keyboard.type('defghijkl', { delay: 150 })
+    await until(async () => (await shown(editor).innerText()) === 'abcdefghijkl')
+    expect((await said()).some(data => data.stole === true)).toBe(true)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+    expect(await frameOf(editor, 'kanban').count()).toBe(1)
+    await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' }))
+  })
+
+  it('gets none of the typing when it focuses itself after the human pressed in it and then back in the note', async () => {
+    const { editor, workers, said } = await framed()
+    await open(editor, 'a.md')
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await shown(editor).click()
+    await tell(workers[0]!, { steal: 400 })
+    await editor.keyboard.type('abcdefgh', { delay: 150 })
+    await until(async () => (await shown(editor).innerText()) === 'abcdefgh')
+    expect((await said()).some(data => data.stole === true)).toBe(true)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+  })
+
+  // Pulled back each time it takes focus again, so the two run in a loop and the note may get none of the typing either
+  it('gets none of the typing when it takes focus back each time it loses it', async () => {
+    const { editor, workers, said } = await framed()
+    await open(editor, 'a.md')
+    await tell(workers[0]!, { sticky: true })
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await shown(editor).click()
+    await until(async () => (await said()).some(data => data.stole === true))
+    await tick(300)
+    await editor.keyboard.type('abcdefgh', { delay: 150 })
+    await tick(300)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+  })
+
+  it('gets none of the typing when it takes focus from another frame the human pressed in, which the core records for its plugin', async () => {
+    const { editor, workers, said, dataDir } = await framed(['kanban', 'board'])
+    await open(editor, 'a.md')
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said(0)).some(data => data.opened === 'row-1'))
+    await tick(300)
+    await tell(workers[1]!, { steal: 0 })
+    await until(async () => (await said(1)).some(data => data.stole === true))
+    await tick(300)
+    await editor.keyboard.type('xyz', { delay: 150 })
+    await until(async () => (await shown(editor).innerText()) === 'xyz')
+    expect((await said(1)).filter(data => data.key !== undefined)).toEqual([])
+    await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'board' }))
+    expect(await logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' })).toBe(false)
+  })
+
+  // Keys Playwright sends never pass the window's before-input-event, so main's own handler is handed the key as the
+  // window's input would hand it. Answers whether main kept the key from the page and its frames
+  const keyInMain = (app: ElectronApplication, key: string) => app.evaluate(({ webContents }, [pressed, mac]) => {
+    const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
+    let prevented = false
+    const input = { type: 'keyDown', key: pressed, code: '', control: !mac, meta: mac, alt: false, shift: false, isAutoRepeat: false }
+    contents.emit('before-input-event', { preventDefault: () => { prevented = true } }, input)
+    return prevented
+  }, [key, process.platform === 'darwin'] as const)
+
+  it('hands the core a core key pressed while focus is in it', async () => {
+    const { app, editor, said } = await framed()
+    await open(editor, 'a.md')
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(300)
+    expect(await keyInMain(app, '/')).toBe(true)
+    await until(async () => editor.locator('#raw').isVisible())
+  })
+
+  it('hands its plugin a key the plugin bound for its views, as view.command, while focus is in it', async () => {
+    const { app, editor, workers, said } = await framed()
+    await run(workers[0]!, `
+      ctx.ui.on('view.command', event => heard.push(event))
+      await ctx.ui.views.bind([{ key: 'Mod-k', command: 'down' }])
+    `)
+    await open(editor, 'a.md')
+    // Focus in the note: the key is the note's
+    await shown(editor).click()
+    await tick(300)
+    expect(await keyInMain(app, 'k')).toBe(false)
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(300)
+    expect(await keyInMain(app, 'k')).toBe(true)
+    await until(async () => (await heard(workers[0]!)).some(event => event.topic === 'view.command'))
+    expect((await heard(workers[0]!)).filter(event => event.topic === 'view.command')).toEqual([expect.objectContaining({ topic: 'view.command', command: 'down' })])
+  })
+
+  it('is never reached by Tab from the note', async () => {
+    const { editor, said } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    for (let i = 0; i < 8; i++) await editor.keyboard.press('Tab')
+    await tick(300)
+    expect((await said()).filter(data => data.focused === true || data.key !== undefined)).toEqual([])
+  })
+
+  it('gets none of the typing when it takes focus back after a second press in it and a core key out of it', async () => {
+    const { app, editor, workers, said } = await framed()
+    await open(editor, 'a.md')
+    await tell(workers[0]!, { sticky: true })
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(300)
+    await editor.mouse.click(at.x, at.y)
+    expect(await keyInMain(app, '/')).toBe(true)
+    await tick(300)
+    await editor.keyboard.type('abc', { delay: 150 })
+    await tick(300)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+  })
+
+  it('takes focus the core moves into it as no theft, then works its own rows', async () => {
+    const { app, editor, said, dataDir } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    const url = await frameOf(editor, 'kanban').getAttribute('src')
+    await app.evaluate(({ webContents }, src) => {
+      webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!.send('hetu:focus-frame', { url: src })
+    }, url)
+    await until(async () => (await said()).some(data => data.focused === true))
+    await tick(300)
+    await editor.keyboard.press('ArrowDown')
+    await editor.keyboard.press('Enter')
+    await until(async () => (await said()).some(data => data.opened === 'row-2'))
+    expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
+  })
+
+  it('gets none of the typing when it takes focus with no note shown, recorded once', async () => {
+    const { editor, workers, said, dataDir } = await framed()
+    await tell(workers[0]!, { steal: 0 })
+    await until(async () => (await said()).some(data => data.stole === true))
+    await tick(300)
+    await editor.keyboard.type('abc', { delay: 150 })
+    await tick(1500)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+    expect((await records(dataDir)).filter(record => record.event === 'frame.focus-taken').map(record => record.count)).toEqual([1])
+  })
+
+  it('keeps focus on a press in it while the page is busy as the press comes', async () => {
+    const { editor, said, dataDir } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    const at = await inRow(editor, 'kanban')
+    await editor.evaluate(() => {
+      setTimeout(() => {
+        const until = Date.now() + 300
+        while (Date.now() < until) { /* the page's thread held */ }
+      }, 0)
+    })
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(500)
+    expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
+    expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
+  })
+
+  it('is found under a press at its point on the page with the page zoomed to 150%', async () => {
+    const { app, editor, said } = await framed(['kanban', 'board'])
+    await app.evaluate(({ webContents }) => {
+      webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!.setZoomFactor(1.5)
+    })
+    await tick(500)
+    await editor.evaluate(() => {
+      const scope = window as unknown as { pushed: unknown[] }
+      scope.pushed = []
+      window.addEventListener('message', event => {
+        const data = event.data as { hetu?: unknown, press?: unknown } | null
+        if (event.source === window && data?.hetu === 'press') scope.pushed.push(data.press)
+      })
+    })
+    const at = await inRow(editor, 'board')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said(1)).some(data => data.opened === 'row-1'))
+    await until(async () => (await editor.evaluate('window.pushed.length')) === 2)
+    const hosts = await editor.evaluate(() => (window as unknown as { pushed: Press[] }).pushed.map(press =>
+      new URL(document.elementFromPoint(press.x, press.y)?.getAttribute('src') ?? 'hetu://page/').host))
+    expect(hosts).toEqual(['board.views', 'board.views'])
+    expect((await said(0)).some(data => data.opened !== undefined)).toBe(false)
   })
 })
 

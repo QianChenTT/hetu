@@ -34,7 +34,7 @@ describe('the sessions', () => {
 
   it('lets a request through only to the role\'s own hetu hosts', () => {
     expect(allowed('editor', 'hetu://editor/')).toBe(true)
-    expect(allowed('editor', 'hetu://views/x.html')).toBe(true)
+    expect(allowed('editor', 'hetu://kanban.views/x.html')).toBe(true)
     expect(allowed('editor', 'hetu://content/x')).toBe(true)
     expect(allowed('trusted', 'hetu://trusted/index.html')).toBe(true)
     for (const url of [
@@ -48,6 +48,26 @@ describe('the sessions', () => {
     expect(allowed('workers', 'hetu://workers/page.js')).toBe(true)
     expect(allowed('workers', 'hetu://editor/')).toBe(false)
     expect(allowed('editor', 'hetu://workers/')).toBe(false)
+  })
+
+  it('lets the editor page reach a host of its own for each plugin id\'s frames, and no other frames host', () => {
+    const longest = `p${'a'.repeat(62)}z`
+    for (const url of [
+      'hetu://kanban.views/', 'hetu://my--plugin.views/t/a.html', 'hetu://a-b.views/icon/x.svg', `hetu://${longest}.views/`,
+      `hetu://${'ab--'.repeat(21)}c.views/`, 'hetu://xn--board.views/',
+    ]) {
+      expect(allowed('editor', url), url).toBe(true)
+    }
+    for (const url of [
+      'hetu://views/x.html', 'hetu://.views/', 'hetu://x.kanban.views/', 'hetu://kanban.views.views/', `hetu://${longest}a.views/`,
+      'hetu://-kanban.views/', 'hetu://kanban_.views/', 'hetu://con.views/', 'hetu://kanban.view/', 'hetu://kanbanviews/',
+      'hetu://user@kanban.views/', 'hetu://kanban.views:1/', 'https://kanban.views/', 'hetu://my_plugin.views/',
+      'hetu://my---plugin.views/', 'hetu://my--.views/', 'hetu://--my.views/', 'hetu://my--_plugin.views/', `hetu://${'ab--'.repeat(21)}cd.views/`,
+    ]) {
+      expect(allowed('editor', url), url).toBe(false)
+    }
+    expect(allowed('trusted', 'hetu://kanban.views/')).toBe(false)
+    expect(allowed('workers', 'hetu://kanban.views/')).toBe(false)
   })
 
   it('serves the role\'s page from the app with its CSP and type, never sniffed', async () => {
@@ -64,7 +84,7 @@ describe('the sessions', () => {
 
   it('serves no other role\'s page, no host without pages yet and nothing outside its folder', async () => {
     for (const [role, url] of [
-      ['editor', 'hetu://trusted/'], ['trusted', 'hetu://editor/'], ['editor', 'hetu://views/index.html'],
+      ['editor', 'hetu://trusted/'], ['trusted', 'hetu://editor/'], ['editor', 'hetu://views/index.html'], ['editor', 'hetu://kanban.views/index.html'],
       ['editor', 'hetu://editor/../secret.html'], ['editor', 'hetu://editor/%2e%2e/secret.html'],
       ['editor', 'hetu://editor/..%2fsecret.html'], ['editor', 'hetu://editor/parts%5c..%5c..%5csecret.html'],
       ['editor', 'hetu://editor/README.md'], ['editor', 'hetu://editor/missing.html'], ['editor', 'hetu://editor/parts'],
@@ -86,27 +106,30 @@ describe('the sessions', () => {
     expect(editor.headers.get('content-security-policy')).not.toContain('worker-src')
   })
 
-  it('lets the editor page frame and show images from the views host and show the images host, and no other page', async () => {
+  it('lets the editor page frame and show images from the plugins\' frames hosts and show the images host, and no other page', async () => {
     const editor = (await serve('editor', get('hetu://editor/'), root)).headers.get('content-security-policy') ?? ''
-    expect(editor).toContain('frame-src hetu://views;')
-    expect(editor).toContain("img-src 'self' hetu://views hetu://images;")
+    expect(editor).toContain('frame-src hetu://*.views;')
+    expect(editor).toContain("img-src 'self' hetu://*.views hetu://images;")
     expect(editor).toContain("frame-ancestors 'none'")
     const trusted = (await serve('trusted', get('hetu://trusted/'), root)).headers.get('content-security-policy') ?? ''
-    expect(trusted).not.toContain('hetu://views')
+    expect(trusted).not.toContain('.views')
     expect(trusted).not.toContain('hetu://images')
   })
 
-  it('serves the views host from what main holds for it, with the frame\'s own CSP', async () => {
+  it('serves a plugin\'s frames from what main holds for it, with the frame\'s own CSP', async () => {
     const views = {
-      serve: (url: string) => (url === 'hetu://views/t/a.html' ? { bytes: new Uint8Array(Buffer.from('<p>a</p>')), type: 'text/html; charset=utf-8', csp: "default-src 'none'; frame-ancestors hetu://editor" } : null),
+      serve: (url: string) => (url === 'hetu://kanban.views/t/a.html' ? { bytes: new Uint8Array(Buffer.from('<p>a</p>')), type: 'text/html; charset=utf-8', csp: "default-src 'none'; frame-ancestors hetu://editor" } : null),
     }
-    const page = await serve('editor', get('hetu://views/t/a.html'), root, views)
+    const page = await serve('editor', get('hetu://kanban.views/t/a.html'), root, views)
     expect(page.status).toBe(200)
     expect(await page.text()).toBe('<p>a</p>')
     expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; frame-ancestors hetu://editor")
     expect(page.headers.get('x-content-type-options')).toBe('nosniff')
-    expect((await serve('editor', get('hetu://views/t/b.html'), root, views)).status).toBe(404)
-    expect((await serve('editor', get('hetu://views/t/a.html', 'HEAD'), root, views)).status).toBe(200)
+    expect((await serve('editor', get('hetu://kanban.views/t/b.html'), root, views)).status).toBe(404)
+    expect((await serve('editor', get('hetu://kanban.views/t/a.html', 'HEAD'), root, views)).status).toBe(200)
+    // The bare views host and a deeper one hold no plugin's frames, whatever main would answer for them
+    const any = { serve: () => ({ bytes: new Uint8Array(1), type: 'text/html; charset=utf-8', csp: "default-src 'none'" }) }
+    for (const url of ['hetu://views/t/a.html', 'hetu://x.kanban.views/t/a.html']) expect((await serve('editor', get(url), root, any)).status, url).toBe(404)
   })
 
   it('names a nonce in the editor page\'s style-src and on its script, made fresh for each load with 128 random bits', async () => {
@@ -148,12 +171,12 @@ describe('the sessions', () => {
     expect((await serve('editor', get('hetu://editor/'), root)).status).toBe(500)
   })
 
-  it('serves a page from the views host as main holds it, the nonce\'s mark left as text and no nonce in its policy', async () => {
+  it('serves a frame\'s page as main holds it, the nonce\'s mark left as text and no nonce in its policy', async () => {
     const html = `<style nonce="${NONCE_MARK}">p {}</style>`
-    const views = { serve: () => ({ bytes: new Uint8Array(Buffer.from(html)), type: 'text/html; charset=utf-8', csp: "default-src 'none'; style-src hetu://views/t/" }) }
-    const page = await serve('editor', get('hetu://views/t/a.html'), root, views)
+    const views = { serve: () => ({ bytes: new Uint8Array(Buffer.from(html)), type: 'text/html; charset=utf-8', csp: "default-src 'none'; style-src hetu://kanban.views/t/" }) }
+    const page = await serve('editor', get('hetu://kanban.views/t/a.html'), root, views)
     expect(await page.text()).toBe(html)
-    expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; style-src hetu://views/t/")
+    expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; style-src hetu://kanban.views/t/")
   })
 
   it('has the editor page\'s own markup carry the nonce\'s mark on its script, where the page reads it', async () => {
