@@ -136,3 +136,15 @@ describe('a frame\'s side of its view', () => {
     close()
   })
 })
+
+describe('a frame asking hetu to open a note', () => {
+  it('asks the drawer as an object on its port, never as JSON text a worker message could read as', async () => {
+    const { view, drawer, close } = await connected()
+    const asked = new Promise(resolve => {
+      drawer.onmessage = event => resolve(event.data)
+    })
+    view.open('notes/a.md')
+    expect(await asked).toEqual({ v: 1, kind: 'open', path: 'notes/a.md' })
+    close()
+  })
+})

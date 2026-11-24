@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME_MESSAGES_PER_SECOND, FrameInbox, MAX_FRAME_MESSAGE } from '../api/ui-limits.ts'
+import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit } from '../api/ui-limits.ts'
 import { FOCUS_GRACE_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
 import type { CoreLink } from '../frontend/editor/link.ts'
 
@@ -147,5 +147,89 @@ describe('the theme the frames are offered', () => {
     frames.theme({ '--hetu-color-bg': '#202020' })
     await settle()
     expect(sent).toHaveLength(3)
+  })
+})
+
+describe("an open from a frame counted as the human's", () => {
+  it('takes one open of the plugin pressed in, then none until the next press', () => {
+    const credit = new OpenCredit(() => 0)
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed('kanban')
+    expect(credit.use('kanban')).toBe(true)
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed('kanban')
+    expect(credit.use('kanban')).toBe(true)
+  })
+
+  it("takes no open of a plugin after a press elsewhere or in another plugin's frame", () => {
+    const credit = new OpenCredit(() => 0)
+    credit.pressed('kanban')
+    credit.pressed(null)
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed('kanban')
+    credit.pressed('board')
+    expect(credit.use('kanban')).toBe(false)
+    expect(credit.use('board')).toBe(true)
+  })
+
+  it(`counts a press within ${OPEN_GRACE_MS} ms, or the release of a press not yet used, so a long press still opens once`, () => {
+    let now = 0
+    const credit = new OpenCredit(() => now)
+    credit.pressed('kanban')
+    now = OPEN_GRACE_MS + 1
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed('kanban')
+    now += 2000
+    credit.released('kanban')
+    now += OPEN_GRACE_MS
+    expect(credit.use('kanban')).toBe(true)
+    credit.released('kanban')
+    expect(credit.use('kanban')).toBe(false)
+  })
+
+  it("counts a release only after a press in the same plugin's frame", () => {
+    const credit = new OpenCredit(() => 0)
+    credit.released('kanban')
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed(null)
+    credit.released('kanban')
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed('board')
+    credit.released('kanban')
+    expect(credit.use('kanban')).toBe(false)
+  })
+
+  it("takes Enter or Space in the plugin's frame as a press, one open each", () => {
+    const credit = new OpenCredit(() => 0)
+    credit.keyed('kanban')
+    expect(credit.use('board')).toBe(false)
+    expect(credit.use('kanban')).toBe(true)
+    expect(credit.use('kanban')).toBe(false)
+  })
+})
+
+describe('what a frame asks of the page', () => {
+  it('takes an open and a numbered drag token ask for a path, as objects', () => {
+    const asks = frameAsks(() => 0)
+    expect(asks({ v: 1, kind: 'open', path: 'a.md' })).toEqual({ ask: { kind: 'open', path: 'a.md' }, ok: true })
+    expect(asks({ v: 1, kind: 'drag-token', ask: 3, path: 'b/c.md' })).toEqual({ ask: { kind: 'drag-token', ask: 3, path: 'b/c.md' }, ok: true })
+  })
+
+  it('takes nothing else: text, another version or kind, no path, an empty or long one, an ask not a whole number', () => {
+    const asks = frameAsks(() => 0)
+    for (const message of [
+      JSON.stringify({ v: 1, kind: 'open', path: 'a.md' }), null, 1, { v: 2, kind: 'open', path: 'a.md' }, { v: 1, kind: 'close', path: 'a.md' },
+      { v: 1, kind: 'open' }, { v: 1, kind: 'open', path: '' }, { v: 1, kind: 'open', path: 'a'.repeat(513) }, { v: 1, kind: 'open', path: 1 },
+      { v: 1, kind: 'drag-token', path: 'a.md' }, { v: 1, kind: 'drag-token', ask: 1.5, path: 'a.md' }, { v: 1, kind: 'drag-token', ask: -1, path: 'a.md' },
+    ]) expect(asks(message)).toBeNull()
+  })
+
+  it(`answers asks past ${FRAME_ASKS_PER_SECOND} a second as not ok and takes them again in the next`, () => {
+    let now = 0
+    const asks = frameAsks(() => now)
+    for (let i = 0; i < FRAME_ASKS_PER_SECOND; i++) expect(asks({ v: 1, kind: 'open', path: 'a.md' })?.ok).toBe(true)
+    expect(asks({ v: 1, kind: 'drag-token', ask: 1, path: 'a.md' })).toEqual({ ask: { kind: 'drag-token', ask: 1, path: 'a.md' }, ok: false })
+    now = 1000
+    expect(asks({ v: 1, kind: 'open', path: 'a.md' })?.ok).toBe(true)
   })
 })
