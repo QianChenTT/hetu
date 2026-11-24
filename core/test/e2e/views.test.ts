@@ -237,9 +237,12 @@ describe('dragging a view', () => {
         ],
       })
     })
-    const title = editor.locator('#editors .hetu-title', { hasText: 'board · Cards' })
-    await until(async () => (await title.count()) === 1)
+    // The layout's own title, not the one the plain column drew before the layout did
+    const title = editor.locator('#editors .hetu-title[data-layout="tiles"]', { hasText: 'board · Cards' })
+    await until(async () => (await title.count()) === 1 && (await title.boundingBox()) !== null)
     const from = (await title.boundingBox())!
+    // and the plain column's went with it
+    expect(await editor.locator('#editors .hetu-title', { hasText: 'board · Cards' }).count()).toBe(1)
     expect(await editor.locator('#drop-zones').isVisible()).toBe(false)
     await editor.mouse.move(from.x + 10, from.y + from.height / 2)
     await editor.mouse.down()
