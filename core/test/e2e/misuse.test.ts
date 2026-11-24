@@ -543,6 +543,91 @@ describe('a view frame', () => {
     await tick(300)
     expect((await said()).filter(data => data.focused === true || data.key !== undefined)).toEqual([])
   })
+
+  it('gets none of the typing when it takes focus back after a second press in it and a core key out of it', async () => {
+    const { app, editor, workers, said } = await framed()
+    await open(editor, 'a.md')
+    await tell(workers[0]!, { sticky: true })
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(300)
+    await editor.mouse.click(at.x, at.y)
+    expect(await keyInMain(app, '/')).toBe(true)
+    await tick(300)
+    await editor.keyboard.type('abc', { delay: 150 })
+    await tick(300)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+  })
+
+  it('takes focus the core moves into it as no theft, then works its own rows', async () => {
+    const { app, editor, said, dataDir } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    const url = await frameOf(editor, 'kanban').getAttribute('src')
+    await app.evaluate(({ webContents }, src) => {
+      webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!.send('hetu:focus-frame', { url: src })
+    }, url)
+    await until(async () => (await said()).some(data => data.focused === true))
+    await tick(300)
+    await editor.keyboard.press('ArrowDown')
+    await editor.keyboard.press('Enter')
+    await until(async () => (await said()).some(data => data.opened === 'row-2'))
+    expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
+  })
+
+  it('gets none of the typing when it takes focus with no note shown, recorded once', async () => {
+    const { editor, workers, said, dataDir } = await framed()
+    await tell(workers[0]!, { steal: 0 })
+    await until(async () => (await said()).some(data => data.stole === true))
+    await tick(300)
+    await editor.keyboard.type('abc', { delay: 150 })
+    await tick(1500)
+    expect((await said()).filter(data => data.key !== undefined)).toEqual([])
+    expect((await records(dataDir)).filter(record => record.event === 'frame.focus-taken').map(record => record.count)).toEqual([1])
+  })
+
+  it('keeps focus on a press in it while the page is busy as the press comes', async () => {
+    const { editor, said, dataDir } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    const at = await inRow(editor, 'kanban')
+    await editor.evaluate(() => {
+      setTimeout(() => {
+        const until = Date.now() + 300
+        while (Date.now() < until) { /* the page's thread held */ }
+      }, 0)
+    })
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(500)
+    expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
+    expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
+  })
+
+  it('is found under a press at its point on the page with the page zoomed to 150%', async () => {
+    const { app, editor, said } = await framed(['kanban', 'board'])
+    await app.evaluate(({ webContents }) => {
+      webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!.setZoomFactor(1.5)
+    })
+    await tick(500)
+    await editor.evaluate(() => {
+      const scope = window as unknown as { pushed: unknown[] }
+      scope.pushed = []
+      window.addEventListener('message', event => {
+        const data = event.data as { hetu?: unknown, press?: unknown } | null
+        if (event.source === window && data?.hetu === 'press') scope.pushed.push(data.press)
+      })
+    })
+    const at = await inRow(editor, 'board')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said(1)).some(data => data.opened === 'row-1'))
+    await until(async () => (await editor.evaluate('window.pushed.length')) === 2)
+    const hosts = await editor.evaluate(() => (window as unknown as { pushed: Press[] }).pushed.map(press =>
+      new URL(document.elementFromPoint(press.x, press.y)?.getAttribute('src') ?? 'hetu://page/').host))
+    expect(hosts).toEqual(['board.views', 'board.views'])
+    expect((await said(0)).some(data => data.opened !== undefined)).toBe(false)
+  })
 })
 
 // The input delay and a little more, so a click after it lands
