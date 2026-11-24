@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_FRAME_MESSAGE } from '../api/ui.ts'
-import { FOCUS_GRACE_MS, FocusGuard, FRAME_MESSAGES_PER_SECOND, FrameInbox, FrameLoads } from '../frontend/editor/frames.ts'
+import { FRAME_MESSAGES_PER_SECOND, FrameInbox, MAX_FRAME_MESSAGE } from '../api/ui-limits.ts'
+import { FOCUS_GRACE_MS, FocusGuard, FrameLoads } from '../frontend/editor/frames.ts'
 
 describe('a frame\'s loads', () => {
   it('hands the port on the first load only and reads any later load as navigated', () => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MAX_DEPTH } from '../api/plain.ts'
 import { API_VERSION } from '../api/manifest.ts'
-import { MAX_FRAME_MESSAGE } from '../api/ui-limits.ts'
+import { FRAME_MESSAGES_PER_SECOND, MAX_FRAME_MESSAGE } from '../api/ui-limits.ts'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, FakeDrawer } from '../sdk/testing/index.ts'
 
@@ -71,6 +71,15 @@ describe('frame views in the fake drawer', () => {
     expect(frame.post('x'.repeat(MAX_FRAME_MESSAGE - 16))).toBe(true)
     await settled()
     expect(heard).toHaveLength(1)
+  })
+
+  it(`drops a frame's messages past ${FRAME_MESSAGES_PER_SECOND} a second, as hetu's drawer does`, async () => {
+    const { drawer, heard, settled, board } = await started()
+    const frame = drawer.mountFrame(board)
+    for (let at = 0; at < FRAME_MESSAGES_PER_SECOND; at++) expect(frame.post(at)).toBe(true)
+    expect(frame.post('one more')).toBe(false)
+    await settled()
+    expect(heard).toHaveLength(FRAME_MESSAGES_PER_SECOND)
   })
 
   it('refuses a worker\'s post past the cap or not plain data, to a view drawn as a tree and to a frame not yet loaded', async () => {
