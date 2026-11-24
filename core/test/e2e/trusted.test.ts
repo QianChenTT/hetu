@@ -39,14 +39,14 @@ self.onmessage = event => {
 type Worker = { code: string, manifest?: object, entry?: Partial<Plugin> }
 
 // An approved plugin holding nothing that never draws, which ends the startup flow, so the trusted window opens only
-// when asked. welcome leaves it out
+// when asked. startup leaves it out
 const quiet: Worker = { code: lifecycle(), manifest: { capabilities: [] }, entry: { granted: [] } }
 
-async function data(options: { switches?: Partial<Switches>, workers?: Record<string, Worker>, before?: (dataDir: string) => Promise<void>, welcome?: boolean } = {}): Promise<string> {
+async function data(options: { switches?: Partial<Switches>, workers?: Record<string, Worker>, before?: (dataDir: string) => Promise<void>, startup?: boolean } = {}): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), ...options.switches })
-  const workers = { ...(options.welcome === true ? {} : { quiet }), ...options.workers }
+  const workers = { ...(options.startup === true ? {} : { quiet }), ...options.workers }
   for (const [id, worker] of Object.entries(workers)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, worker.manifest ?? {}), { 'worker.js': worker.code }))
@@ -542,9 +542,9 @@ describe('a plugin', () => {
 
 // hetu ships no plugin, so the trusted window opens by itself over the editor on the startup flow every install goes
 // through. With no plugin installed it has no way out and the window stays, and Quit still quits hetu
-describe('the welcome guide', () => {
+describe('the startup flow', () => {
   it('opens over the editor at start, goes a step at a time with no way out, keeps its window open and quits on Quit', async () => {
-    const app = await start(await data({ welcome: true }), await install())
+    const app = await start(await data({ startup: true }), await install())
     await editorPage(app)
     const page = await trustedPage(app)
     const guide = page.getByRole('region', { name: 'Get started with hetu' })
@@ -578,7 +578,7 @@ describe('the welcome guide', () => {
   })
 
   it('goes to a step by its name and stays on Install after an install, its Confirm still waiting out the delay', async () => {
-    const dataDir = await data({ welcome: true })
+    const dataDir = await data({ startup: true })
     const zip = path.join(await temp(), 'greeter.zip')
     const files = filesFor(workerManifest('greeter', { name: 'Greeter', capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }] }), { 'worker.js': lifecycle() })
     await writeFile(zip, makeZip(Object.entries(files).map(([name, text]) => ({ name, data: text }))))

@@ -846,16 +846,16 @@ describe('the windows\' own actions', () => {
   it('say the startup flow is due until the plugin folder holds a plugin, approved or not', async () => {
     const bare = await joined()
     await bare.pluginsManager.start()
-    expect(bare.pluginsManager.welcomeDue()).toBe(true)
+    expect(bare.pluginsManager.startupDue()).toBe(true)
     const viewed = await joined({
       folder: { tiles: filesFor(workerManifest('tiles', { capabilities: [{ type: 'ui.view' }] })) },
       entries: { tiles: { granted: [{ type: 'ui.view' }] } },
     })
     await viewed.pluginsManager.start()
-    expect(viewed.pluginsManager.welcomeDue()).toBe(false)
+    expect(viewed.pluginsManager.startupDue()).toBe(false)
     const found = await joined({ folder: { tiles: filesFor(workerManifest('tiles', { capabilities: [{ type: 'ui.view' }] })) } })
     await found.pluginsManager.start()
-    expect(found.pluginsManager.welcomeDue()).toBe(false)
+    expect(found.pluginsManager.startupDue()).toBe(false)
   })
 
   it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {

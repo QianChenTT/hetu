@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ListedPlugin, SecurityList } from '../api/actions.ts'
-import { welcomeDue } from '../api/trusted.ts'
+import { startupDue } from '../api/trusted.ts'
 import { APPROVE_LINE, SUGGESTED_LINK } from '../frontend/trusted/startup.ts'
 import { screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
@@ -52,18 +52,18 @@ describe('the startup screen', () => {
   // Every install goes through the flow and nothing cancels it. It ends once the plugin folder holds a plugin, the
   // human having learned to install one, approved or not. A core part is no plugin installed
   it('is due while the plugin folder holds no plugin and ends once it holds one, approved, waiting, refused or failed', () => {
-    expect(welcomeDue(calm())).toBe(true)
-    expect(welcomeDue(calm({ luoshu: '/notes', plugins: [plugin({ id: 'gate', from: 'core', place: 'core', class: null })] }))).toBe(true)
-    expect(welcomeDue(calm({ plugins: [plugin({ id: 'search' })] }))).toBe(false)
-    expect(welcomeDue(calm({ plugins: [found('tags')] }))).toBe(false)
-    expect(welcomeDue(calm({ plugins: [plugin({ id: 'layout', state: 'refused', reason: 'invalid' })] }))).toBe(false)
-    expect(welcomeDue(calm({ plugins: [plugin({ id: 'tags', state: 'failed', reason: 'start-failed' })] }))).toBe(false)
+    expect(startupDue(calm())).toBe(true)
+    expect(startupDue(calm({ luoshu: '/notes', plugins: [plugin({ id: 'gate', from: 'core', place: 'core', class: null })] }))).toBe(true)
+    expect(startupDue(calm({ plugins: [plugin({ id: 'search' })] }))).toBe(false)
+    expect(startupDue(calm({ plugins: [found('tags')] }))).toBe(false)
+    expect(startupDue(calm({ plugins: [plugin({ id: 'layout', state: 'refused', reason: 'invalid' })] }))).toBe(false)
+    expect(startupDue(calm({ plugins: [plugin({ id: 'tags', state: 'failed', reason: 'start-failed' })] }))).toBe(false)
     expect(screen(calm()).startup?.due).toBe(true)
     expect(screen(calm({ plugins: [found('tags')] })).startup?.due).toBe(false)
   })
 
   it('is not due and draws nothing while hetu is stopped', () => {
-    expect(welcomeDue(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))).toBe(false)
+    expect(startupDue(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))).toBe(false)
     expect(screen(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } })).startup).toBeNull()
   })
 
