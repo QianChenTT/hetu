@@ -523,10 +523,10 @@
         "core/backend/runtime/workers.ts",
         "core/frontend/trusted/view.ts"
       ],
-      "hash": "050474268533b25f",
+      "hash": "994e7eeddce05a15",
       "at": [
         "core/backend/runtime/workers.ts:148-153",
-        "core/frontend/trusted/view.ts:397-402"
+        "core/frontend/trusted/view.ts:404-409"
       ],
       "judged": "not yet"
     },
