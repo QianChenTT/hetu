@@ -185,7 +185,7 @@ describe('the trusted window', () => {
 })
 
 describe('picking the notes folder', () => {
-  it('opens the OS folder dialog over the trusted window and answers the folder, or null when cancelled', async () => {
+  it('opens the OS folder dialog over the trusted window and asks for the folder picked, or for nothing when cancelled', async () => {
     const { window } = trusted()
     const parent = window.show()
     const asked: { parent: TrustedLike, properties: string[] }[] = []
@@ -193,9 +193,13 @@ describe('picking the notes folder', () => {
       asked.push({ parent: over, properties: options.properties })
       return { canceled: false, filePaths: ['/Users/someone/notes'] }
     }
-    expect(await pickFolder(window, dialog)).toBe('/Users/someone/notes')
+    const requested: unknown[] = []
+    const ask = async (change: unknown) => (requested.push(change), { held: 'r1' })
+    expect(await pickFolder(window, dialog, ask)).toEqual({ held: 'r1' })
     expect(asked).toEqual([{ parent, properties: ['openDirectory', 'createDirectory'] }])
-    expect(await pickFolder(window, async () => ({ canceled: true, filePaths: [] }))).toBeNull()
+    expect(requested).toEqual([{ kind: 'luoshu.pick', folder: '/Users/someone/notes' }])
+    expect(await pickFolder(window, async () => ({ canceled: true, filePaths: [] }), ask)).toBeNull()
+    expect(requested).toHaveLength(1)
   })
 
   it('opens no dialog while no trusted window is open', async () => {
@@ -204,7 +208,7 @@ describe('picking the notes folder', () => {
     expect(await pickFolder(window, async () => {
       asked++
       return { canceled: false, filePaths: ['/notes'] }
-    })).toBeNull()
+    }, async () => ({ held: 'r1' }))).toBeNull()
     expect(asked).toBe(0)
   })
 })

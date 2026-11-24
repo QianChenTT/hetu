@@ -269,6 +269,10 @@ const notes: Readonly<Record<string, string>> = Object.freeze({
   'not-found': 'That request is gone',
 })
 
+// What a refused request tells the human. A Confirm refused too soon has its own words in notes
+const TOO_SOON = 'Too soon after the window showed or gained focus. Wait a moment, then ask again'
+const TOO_MANY = 'Too many requests are waiting. Answer or cancel some first'
+
 type Reply = { kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, refusal?: { code?: unknown }, topic?: unknown, seq?: unknown }
 
 // Hears core.status and core.security, reads the list and draws it, then reads it again each time the core says so.
@@ -277,6 +281,7 @@ type Reply = { kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, ref
 export class TrustedPage {
   private readonly bridge: Bridge
   private readonly draw: (screen: Screen, note: string | null) => void
+  private readonly inFocusDelay: () => boolean
   private id = 0
   private readonly pending = new Map<number, (reply: Reply) => void>()
   private last: SecurityList | null = null
@@ -285,9 +290,11 @@ export class TrustedPage {
   private step: number | null = null
   readonly installer: Installer
 
-  constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void) {
+  // inFocusDelay says whether the input delay since the window showed or gained focus still runs
+  constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void, inFocusDelay: () => boolean = () => false) {
     this.bridge = bridge
     this.draw = draw
+    this.inFocusDelay = inFocusDelay
     this.installer = new Installer({
       call: (action, args, then) => this.call(action, args, then),
       settle: (reply, note) => this.settle(reply, 'other', note),
@@ -314,14 +321,9 @@ export class TrustedPage {
     this.call('security.cancel', { requestId }, reply => this.settle(reply))
   }
 
-  // A choice in the stopped mode that applied at once, with confirmOff on, starts hetu again as a Confirm does
   ask(change: Change): void {
     const stopped = this.last?.stopped ?? null
-    this.call('security.request', { change }, reply => {
-      const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
-      if (applied && stopped !== null) this.call('app.relaunch')
-      this.settle(reply, 'request')
-    })
+    this.call('security.request', { change }, reply => this.settleRequest(reply, stopped))
   }
 
   stop(plugin: string): void {
@@ -336,12 +338,12 @@ export class TrustedPage {
     this.call('app.relaunch')
   }
 
-  // The OS folder dialog in main, then the folder picked asked for as luoshu.pick, which waits for the Confirm. A
-  // cancelled dialog asks for nothing
+  // The OS folder dialog in main, which asks for the folder picked as luoshu.pick itself, answering as a request does.
+  // A cancelled dialog asks for nothing
   pickFolder(): void {
+    const stopped = this.last?.stopped ?? null
     this.call('app.pickFolder', undefined, reply => {
-      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.pick', folder: reply.result })
-      else if (reply.ok !== true) this.settle(reply)
+      if (reply.ok !== true || reply.result !== null) this.settleRequest(reply, stopped)
     })
   }
 
@@ -374,12 +376,20 @@ export class TrustedPage {
     this.call('app.quit')
   }
 
+  // A choice in the stopped mode that applied at once, with confirmOff on, starts hetu again as a Confirm does
+  private settleRequest(reply: Reply, stopped: StoppedMode | null): void {
+    const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
+    if (applied && stopped !== null) this.call('app.relaunch')
+    this.settle(reply, 'request')
+  }
+
   // said is a note of the caller's own for an answer the core gave
   private settle(reply: Reply, sent: 'request' | 'other' = 'other', said?: string): void {
     const code = reply.ok === true ? null : reply.refusal?.code
-    // A request answers throttled when its sender's places are full, a Confirm when it came too soon
+    // A Confirm answers throttled when it came too soon. A request answers throttled inside the input delay as well as
+    // when its sender's places are full, told apart by the delay this page keeps beside main's
     if (said !== undefined) this.note = said
-    else if (code === 'throttled' && sent === 'request') this.note = 'Too many requests are waiting. Answer or cancel some first'
+    else if (code === 'throttled' && sent === 'request') this.note = this.inFocusDelay() ? TOO_SOON : TOO_MANY
     else this.note = typeof code === 'string' ? notes[code] ?? `Refused: ${code}` : null
     this.refresh()
   }

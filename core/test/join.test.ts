@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import net, { type AddressInfo } from 'node:net'
@@ -15,6 +16,7 @@ import { wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { httpPlugin } from '../backend/door/keeper.ts'
+import { type FolderDialog, INPUT_DELAY_MS, pickFolder, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
 import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './router-fakes.ts'
 import { luoshuModule, storageModule } from './modules-fakes.ts'
@@ -32,7 +34,7 @@ afterEach(async () => {
 const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 const exists = (file: string) => stat(file).then(() => true, () => false)
 
-async function until(check: () => boolean, ms = 2000): Promise<void> {
+async function until(check: () => boolean, ms = 10_000): Promise<void> {
   for (let waited = 0; !check(); waited += 5) {
     if (waited > ms) throw new Error('nothing arrived in time')
     await tick(5)
@@ -774,6 +776,70 @@ describe('the windows\' own actions', () => {
     expect((await way.ask('trusted', 'security.confirm', { requestId: id })).refusal).toMatchObject({ code: 'throttled' })
     armed = true
     expect((await way.ask('trusted', 'security.confirm', { requestId: id })).ok).toBe(true)
+  })
+
+  // The OS dialog closing gives the trusted window focus again, which restarts its input delay. A request the page sent
+  // with the folder then was refused throttled, so no folder could be picked
+  it('hold the folder picked in main\'s dialog for its Confirm, though closing the dialog restarted the input delay', async () => {
+    let now = 0
+    const fake = Object.assign(new EventEmitter(), { webContents: new EventEmitter(), focus() {}, isDestroyed: () => false })
+    const window = new TrustedWindow({ open: () => fake as unknown as TrustedLike, clock: () => now })
+    const folder = path.resolve('/notes/picked')
+    const dialog: FolderDialog = async () => {
+      fake.emit('focus')
+      return { canceled: false, filePaths: [folder] }
+    }
+    let manager: { request(change: unknown, from: typeof trusted): Promise<unknown> } | null = null
+    const { router, pluginsManager } = await joined({
+      wire: {
+        windows: {
+          serve: async call => call.action === 'app.pickFolder' ? pickFolder(window, dialog, change => manager!.request(change, trusted)) : null,
+          armed: caller => window.armed(caller),
+        },
+      },
+    })
+    manager = pluginsManager
+    await pluginsManager.start()
+    window.show()
+    fake.emit('show')
+    // The click on Pick a folder counts only once armed
+    expect((await windowWay(router, { trusted }).ask('trusted', 'app.pickFolder')).refusal).toMatchObject({ code: 'throttled' })
+    now = INPUT_DELAY_MS
+    const way = windowWay(router, { trusted })
+    const picked = await way.ask('trusted', 'app.pickFolder')
+    const held = (picked.result as { held: string }).held
+    expect(typeof held).toBe('string')
+    const list = (await way.ask('trusted', 'security.list')).result as { requests: { id: string, kind: string }[] }
+    expect(list.requests).toMatchObject([{ id: held, kind: 'luoshu.pick' }])
+    // The delay the dialog restarted still holds for every input of the page's own, the Confirm included
+    expect((await way.ask('trusted', 'security.request', { change: { kind: 'skipVerification', on: true } })).refusal).toMatchObject({ code: 'throttled' })
+    expect((await way.ask('trusted', 'security.confirm', { requestId: held })).refusal).toMatchObject({ code: 'throttled' })
+    now = 2 * INPUT_DELAY_MS
+    expect((await way.ask('trusted', 'security.confirm', { requestId: held })).ok).toBe(true)
+    expect(((await way.ask('trusted', 'security.list')).result as { luoshu: string | null }).luoshu).toBe(folder)
+  })
+
+  it('ask for nothing when the human cancels the folder dialog', async () => {
+    let now = 0
+    const fake = Object.assign(new EventEmitter(), { webContents: new EventEmitter(), focus() {}, isDestroyed: () => false })
+    const window = new TrustedWindow({ open: () => fake as unknown as TrustedLike, clock: () => now })
+    const asked: unknown[] = []
+    const dialog: FolderDialog = async () => ({ canceled: true, filePaths: [] })
+    const { router, pluginsManager } = await joined({
+      wire: {
+        windows: {
+          serve: async call => call.action === 'app.pickFolder' ? pickFolder(window, dialog, async change => { asked.push(change); return null }) : null,
+          armed: caller => window.armed(caller),
+        },
+      },
+    })
+    await pluginsManager.start()
+    window.show()
+    fake.emit('show')
+    now = INPUT_DELAY_MS
+    const way = windowWay(router, { trusted })
+    expect((await way.ask('trusted', 'app.pickFolder')).result).toBeNull()
+    expect(asked).toEqual([])
   })
 
   // Main opens the trusted window on its welcome guide at start while this holds

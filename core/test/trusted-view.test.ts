@@ -426,15 +426,45 @@ describe('the trusted page', () => {
     expect(drawn.at(-1)?.note).toBe('Type a whole number from 1 up')
   })
 
-  it('picks a folder through main’s dialog and asks for it as luoshu.pick, and asks nothing when the dialog was cancelled', () => {
+  // Main asks for the folder its dialog picked, since closing the dialog restarts the window's input delay and a request
+  // the page sent then would count for nothing
+  it('picks a folder through main’s dialog, which asks for it as luoshu.pick, and sends no request of its own', () => {
     const { sent, page, hears } = started()
     page.pickFolder()
     expect(sent.at(-1)).toMatchObject({ action: 'app.pickFolder' })
     hears(replyTo(sent.at(-1)!, null))
     expect(sent.at(-1)).toMatchObject({ action: 'app.pickFolder' })
     page.pickFolder()
-    hears(replyTo(sent.at(-1)!, '/Users/someone/notes'))
-    expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'luoshu.pick', folder: '/Users/someone/notes' } } })
+    hears(replyTo(sent.at(-1)!, { held: 'r1' }))
+    expect(sent.map(message => message.action)).not.toContain('security.request')
+    expect(sent.at(-1)).toMatchObject({ action: 'security.list' })
+  })
+
+  it('starts hetu again once a folder picked in the stopped mode applied at once', () => {
+    const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
+    page.pickFolder()
+    hears(replyTo(sent.at(-1)!, { applied: true }))
+    expect(sent.map(message => message.action)).toContain('app.relaunch')
+  })
+
+  // A request answers throttled both inside the input delay and when its sender's places are full
+  it('says a refused request came too soon while the delay since the window gained focus runs, else that too many wait', () => {
+    let inDelay = true
+    const made = bridge()
+    const drawn: { screen: Screen, note: string | null }[] = []
+    const page = new TrustedPage(made.bridge, (shown, note) => drawn.push({ screen: shown, note }), () => inDelay)
+    page.start()
+    made.hears(replyTo(made.sent[1], calm()))
+    for (const [delayRuns, note] of [
+      [true, 'Too soon after the window showed or gained focus. Wait a moment, then ask again'],
+      [false, 'Too many requests are waiting. Answer or cancel some first'],
+    ] as const) {
+      inDelay = delayRuns
+      page.ask({ kind: 'skipVerification', on: true })
+      made.hears(refuse(made.sent.at(-1)!, 'throttled'))
+      made.hears(replyTo(made.sent.at(-1)!, calm()))
+      expect(drawn.at(-1)?.note).toBe(note)
+    }
   })
 
   it('draws one tab at a time, Plugins first, and keeps the tab picked across answers', () => {

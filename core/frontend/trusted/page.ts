@@ -467,6 +467,6 @@ function act(page: TrustedPage, plugin: string, action: PluginAction): void {
 }
 
 if (bridge !== undefined) {
-  const page: TrustedPage = new TrustedPage(bridge, (shown, note) => draw(page, shown, note))
+  const page: TrustedPage = new TrustedPage(bridge, (shown, note) => draw(page, shown, note), () => arming.focusDelayRuns())
   page.start()
 }
