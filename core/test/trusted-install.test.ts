@@ -96,7 +96,7 @@ describe('what the install box draws', () => {
     const box = installBox(staging([found({}), found({ id: 'layout', name: 'Layout', version: '0.3.0', capabilities: [{ type: 'ui.layout' }], class: 0 })]))
     expect(box).toMatchObject({
       step: 'found',
-      source: 'From the zip "C:\\\\plugins.zip"',
+      source: 'From the zip "C:\\plugins.zip"',
       unsigned: 'Unsigned: nothing proves who made these plugins. Install only what comes from a source you trust',
       ready: true,
     })

@@ -39,7 +39,7 @@ describe('hetu with every core module and the door switched off', () => {
     expect(status).toMatchObject({ ok: true, result: { stopped: null } })
     // Only switches read as off and the luoshu to pick, no down: line for a plugin down and no line for a log that can't
     // write
-    const expected = new Set([...coreModuleIds.flatMap(id => [`${id} off`, `${id}: off`]), 'pick a luoshu folder'])
+    const expected = new Set([...coreModuleIds.flatMap(id => [`${id === 'luoshu' ? 'notes access' : id} off`, `${id}: off`]), 'no notes folder is picked yet'])
     expect((await page.locator('#banner li').allTextContents()).filter(line => !expected.has(line))).toEqual([])
     // main answered, so no modal box holds it. No layout is approved, so the trusted window opened over the editor on
     // its welcome guide

@@ -10,6 +10,18 @@ export const INPUT_DELAY_MS = 1000
 
 const quoted = (value: string) => JSON.stringify(value)
 
+// Characters that draw nothing or reorder the text around them
+const HIDDEN = /[\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g
+
+// A folder or file path in quotes. A path that holds no quote, no control or hidden character, no lone surrogate and
+// no backslash at its end, as an ordinary Windows path, shows as it is, each backslash once. Any other is escaped as
+// data with each hidden character as its code, so it can't end its quotes early or reorder what follows them
+export function quotedPath(path: string): string {
+  const plain = path.isWellFormed() && !/["\u0000-\u001f]/.test(path) && path.search(HIDDEN) === -1 && !path.endsWith('\\')
+  if (plain) return `"${path}"`
+  return quoted(path).replace(HIDDEN, hidden => `\\u${hidden.charCodeAt(0).toString(16).padStart(4, '0')}`)
+}
+
 // A plugin-folder plugin the human approved: found and new is one waiting for its approval
 const approved = (plugin: ListedPlugin) => plugin.from === 'folder' && !(plugin.state === 'found' && plugin.reason === 'new')
 
@@ -98,8 +110,16 @@ const sentences: Sentences = {
   'door.handle': () => 'Answer the requests other programs on this computer send to hetu',
 }
 
+// A type no row names, which a parsed manifest never holds, shows as its name in quotes
 export function grantSentence(granted: Capability): string {
-  return (sentences[granted.type] as (granted: Capability) => string)(granted)
+  const sentence = sentences[granted.type] as ((granted: Capability) => string) | undefined
+  return sentence === undefined ? `Use ${quoted(granted.type)}` : sentence(granted)
+}
+
+// The sentence to follow a plugin's name or "it can": its first letter lower case, as in "Let search read all your notes"
+export function grantClause(granted: Capability): string {
+  const sentence = grantSentence(granted)
+  return sentence.charAt(0).toLowerCase() + sentence.slice(1)
 }
 
 // Why a link or a source gave nothing to install, as the trusted window says it. main's fetch from GitHub answers its
@@ -134,7 +154,7 @@ export const UNSIGNED = 'Unsigned: nothing proves who made these plugins. Instal
 // The source as the core staged it, a link's with the release it took the zip from and whether its bytes matched the
 // checksum GitHub lists, which says they arrived as GitHub holds them and never who made them
 export function sourceLine(source: StagedSource): string {
-  if (source.kind !== 'link') return `From the ${source.kind} ${quoted(source.path)}`
+  if (source.kind !== 'link') return `From the ${source.kind} ${quotedPath(source.path)}`
   const checked = source.verified ? 'matching the checksum GitHub lists for it' : 'with no checksum from GitHub to check it against'
   return `From ${quoted(source.asset)} in the release ${quoted(source.tag)} of ${quoted(source.link)}, ${checked}`
 }

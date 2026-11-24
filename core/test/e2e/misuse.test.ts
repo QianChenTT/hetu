@@ -458,7 +458,7 @@ describe('a plugin writing notes', () => {
       await notice.click()
       const page = await pageAt(app, 'hetu://trusted/')
       await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
-      await until(async () => (await page.locator('#root').innerText()).includes(`Let ${WRITER} use luoshu.write on "**"`))
+      await until(async () => (await page.locator('#root').innerText()).includes(`Let ${WRITER} create, change, move and delete all your notes`))
       expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
       await tick(PAST_DELAY)
       await page.getByRole('button', { name: 'Confirm' }).click()

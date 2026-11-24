@@ -5,7 +5,7 @@ import { stoppedCause, type HeldRequest, type ListedIdentity, type ListedPlugin,
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
-import { capabilityText } from '../../api/trusted.ts'
+import { grantSentence } from '../../api/trusted.ts'
 import { watchingModuleIds } from '../../api/ids.ts'
 import { installBox, Installer, type InstallBox, type InstallFlow } from './install.ts'
 import { welcomeDue } from '../../api/trusted.ts'
@@ -74,7 +74,7 @@ function identityRow(pair: ListedIdentity): IdentityRow {
   const label = JSON.stringify(pair.field)
   const under = ` under ${pair.root}`
   if (pair.revoked) return { label, line: `${under} · revoked until hetu quits`, change: null }
-  return { label, line: under + pair.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'identity.revoke', root: pair.root, field: pair.field } }
+  return { label, line: under + pair.items.map(item => ` · ${grantSentence(item)}`).join(''), change: { kind: 'identity.revoke', root: pair.root, field: pair.field } }
 }
 
 // A request's heading with the field in quotes as a part of its own, the whole text as one part for any other request
@@ -159,11 +159,11 @@ function actionsOf(plugin: ListedPlugin, locked: boolean): PluginAction[] {
 function itemsOf(plugin: ListedPlugin): Screen['plugins'][number]['items'] {
   return plugin.items.map(item => {
     const { capability } = item
-    const text = capabilityText(capability)
+    const text = grantSentence(capability)
     if (item.firstUse && !item.off) return { line: `${text} · asks at first use`, on: false, capability }
     if (!item.off) return { line: `${text} · on`, on: true, capability }
     const wider = plugin.items.some(other => other !== item && !other.off && !other.firstUse && other.capability.type === capability.type)
-    return { line: `${text} · off${wider ? ` · other ${capability.type} items still on may reach the same paths` : ''}`, on: false, capability }
+    return { line: `${text} · off${wider ? ' · another grant of this kind still on may cover the same' : ''}`, on: false, capability }
   })
 }
 

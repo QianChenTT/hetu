@@ -169,7 +169,7 @@ describe('the pair rule over where data moves', () => {
     const callers = [reader]
     expect(caps.screen({ granted: [fetchOne, call], reachable: [read], callers, flow: flow({ upstream: [reader], downstream: [reader] }) })).toEqual([
       'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
-      'Through plugin.call it is connected to: luoshu.read on "notes/**"',
+      'Through the plugins it calls it can read the notes at "notes/**"',
       'Plugins that read and are connected to it through plugin.call: notes',
     ])
   })
@@ -179,7 +179,7 @@ describe('the screen under the core\'s words', () => {
   it('names the class and what the plugin reaches through plugin.call', () => {
     expect(caps.screen({ granted: [call], reachable: [write], callers: [] })).toEqual([
       'Class 2, Writer',
-      'Through plugin.call it is connected to: luoshu.write on "04 - Daily/**"',
+      'Through the plugins it calls it can create, change, move and delete the notes at "04 - Daily/**"',
     ])
   })
 

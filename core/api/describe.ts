@@ -2,7 +2,7 @@ import type { Change, ClassRaised } from './changes.ts'
 import { grantKeyOf } from './envelope.ts'
 import { isSecurityControl } from './ids.ts'
 import { classNames } from './policy-jobs.ts'
-import { capabilityText } from './trusted.ts'
+import { grantClause, quotedPath } from './trusted.ts'
 
 // The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. The id of
 // the plugin a change is for is shown as it is inside a fixed sentence. An id with hyphens can still read as words, such
@@ -54,15 +54,15 @@ export function describeChange(change: Change): Described {
         notes: ['A plugin from the plugin folder then waits for approval again', 'This can\'t be undone'],
       }
     case 'grant.widen':
-      return { text: `Give ${change.plugin} ${capabilityText(change.capability)}`, notes: [] }
+      return { text: `Give ${change.plugin} the grant to ${grantClause(change.capability)}`, notes: [] }
     case 'grant.narrow':
-      return { text: `Take ${capabilityText(change.capability)} from ${change.plugin}`, notes: [] }
+      return { text: `Take from ${change.plugin} the grant to ${grantClause(change.capability)}`, notes: [] }
     case 'item.on':
-      return { text: `Let ${change.plugin} use ${capabilityText(change.capability)}`, notes: [] }
+      return { text: `Let ${change.plugin} ${grantClause(change.capability)}`, notes: [] }
     case 'item.off':
-      return { text: `Stop ${change.plugin} using ${capabilityText(change.capability)}`, notes: [] }
+      return { text: `Stop letting ${change.plugin} ${grantClause(change.capability)}`, notes: [] }
     case 'luoshu.pick':
-      return { text: `Use ${quoted(change.folder)} as the notes folder`, notes: [] }
+      return { text: `Use ${quotedPath(change.folder)} as the notes folder`, notes: [] }
     case 'devMode':
       return change.on
         ? { text: `Load ${change.plugin} in dev mode`, notes: ['Its files then load without their hash check'] }
@@ -98,7 +98,7 @@ export function describeChange(change: Change): Described {
       return {
         text: `Give ${quoted(change.field)} under ${change.root} what it asks for through ${change.plugin}`,
         notes: [
-          ...change.capabilities.map(capability => `It asks for: ${capabilityText(capability)}`),
+          ...change.capabilities.map(capability => `It asks to ${grantClause(capability)}`),
           'Each call made for it reaches only what the calling plugin holds as well', `${change.root} may pass on to it what a plugin it called found that it may read, without holding that itself`, 'It holds the items until hetu quits',
           'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
         ],

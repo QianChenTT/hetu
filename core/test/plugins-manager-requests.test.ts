@@ -643,7 +643,7 @@ describe('the request to approve a plugin', () => {
     await made.pluginsManager.start()
     const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks to read the notes at "notes/**"', 'It asks to send data to and get data from "example.com" over the network', 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out'])
   })
 
   it('quotes each target, topic and variable its manifest names', async () => {
@@ -655,8 +655,8 @@ describe('the request to approve a plugin', () => {
     await made.pluginsManager.start()
     const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0].notes.slice(0, 4)).toEqual([
-      'Version 1.0.0', 'It asks for: plugin.call to "notes"', 'It asks for: events.subscribe to "notes.saved"',
-      'It asks for: exec of ["git","status"] with "HOME" from your environment',
+      'Version 1.0.0', 'It asks to call the plugin "notes"', 'It asks to hear the events "notes.saved"',
+      'It asks to run the command ["git","status"] outside the sandbox with your rights on this computer, with "HOME" from your environment',
     ])
   })
 

@@ -1,6 +1,6 @@
 import { capabilityKey, type Capability } from '../../../api/capabilities.ts'
 import { classNames } from '../../../api/policy-jobs.ts'
-import { capabilityText } from '../../../api/trusted.ts'
+import { grantClause } from '../../../api/trusted.ts'
 
 // A plugin with what it holds
 export type Peer = { readonly id: string, readonly granted: readonly Capability[] }
@@ -152,9 +152,9 @@ export function screen({ granted, reachable, callers, flow }: ScreenSubject): st
   const sendersDown = [...granted, ...holdings(moves.upstream)].some(reads) ? beyond(moves.downstream, network) : []
   let head = `Class ${n}, ${classNames[n]}`
   if (n === 4 && paired(granted, moves)) head += ': it can read notes and reach the network, so it could send notes out'
-  else if (n === 4) head += `: ${granted.filter(item => classOf(item) === 4).map(capabilityText).join(', ')}`
+  else if (n === 4) head += `: it can ${granted.filter(item => classOf(item) === 4).map(grantClause).join(' and it can ')}`
   const lines = [head]
-  if (reachable.length > 0) lines.push(`Through plugin.call it is connected to: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
+  if (reachable.length > 0) lines.push(`Through the plugins it calls it can ${[...new Set(reachable.map(grantClause))].join(' and it can ')}`)
   if (readers.length > 0) lines.push(`Plugins that read and are connected to it through plugin.call: ${readers.join(', ')}`)
   if (readersUp.length > 0) lines.push(`Plugins that read and can reach it through events: ${readersUp.join(', ')}`)
   if (sendersDown.length > 0) lines.push(`Plugins with network it can reach through events: ${sendersDown.join(', ')}`)
