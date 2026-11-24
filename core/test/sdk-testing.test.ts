@@ -527,7 +527,7 @@ describe('the fake drawer', () => {
     const [open] = await ctx.editor.instances()
     expect(open).toMatchObject({ path: 'notes/b.md', version: 0 })
     expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: open!.instance }])
-    expect(drawer.human(open!.instance)).toBe(false)
+    expect(drawer.isHuman(open!.instance)).toBe(false)
     expect(drawer.text(open!.instance)).toBe('bee')
   })
 
@@ -573,13 +573,35 @@ describe('the fake drawer', () => {
     })
     const opened = drawer.press('v1', 'a')
     expect(opened).not.toBe(null)
-    expect(drawer.human(opened!)).toBe(true)
+    expect(drawer.isHuman(opened!)).toBe(true)
     expect(drawer.text(opened!)).toBe('aye')
-    expect(drawer.press('v1', 'b')).toBe(null)
+    // A note the plugin can't reach opens all the same, and not as the human's
+    const unreached = drawer.press('v1', 'b')
+    expect(drawer.isHuman(unreached!)).toBe(false)
     expect(drawer.press('v1', 'plain')).toBe(null)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: opened }])
     expect(await ctx.editor.read(opened!)).toMatchObject({ text: 'aye' })
+    await expect(ctx.editor.read(unreached!)).rejects.toMatchObject({ code: 'not-granted' })
+  })
+
+  it('tells a plugin of a note once when the human presses a note it opened itself', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer, notes: { 'notes/a.md': 'aye' } })
+    cores.push(made)
+    const heard: unknown[] = []
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) {
+      given = ctx
+      ctx.editor.on('opened', event => heard.push(event))
+    } }))
+    const ctx = given as unknown as PluginContext
+    await ctx.ui.views.draw('v1', { kind: 'button', id: 'a', text: 'a', drag: { type: 'note', value: 'notes/a.md' } })
+    await ctx.editor.open('notes/a.md')
+    const opened = drawer.press('v1', 'a')
+    expect(drawer.isHuman(opened!)).toBe(true)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: opened }])
   })
 
   it('hands events from the test to the plugin\'s handlers', async () => {
