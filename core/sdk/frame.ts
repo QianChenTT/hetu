@@ -30,8 +30,15 @@ function themeOf(variables: unknown): Theme {
   return Object.freeze(Object.fromEntries(entries.filter(([name, value]) => name.startsWith('--hetu-') && typeof value === 'string')))
 }
 
+// The most messages kept for the first handler, the oldest dropped past it
+const MAX_WAITING = 100
+// One connection a scope, so a second connect answers the same view
+const connecting = new WeakMap<object, Promise<FrameView>>()
+
 export function connect(scope: FrameScope = globalThis as unknown as FrameScope): Promise<FrameView> {
-  return new Promise(resolve => {
+  const held = connecting.get(scope)
+  if (held !== undefined) return held
+  const made = new Promise<FrameView>(resolve => {
     const listener = (event: FrameEvent) => {
       const data = event.data as { v?: unknown, kind?: unknown, variables?: unknown } | null
       const port = event.ports[0]
@@ -55,14 +62,23 @@ export function connect(scope: FrameScope = globalThis as unknown as FrameScope)
         } catch {
           return
         }
-        if (onMessage === null) waiting.push(value)
-        else onMessage(value)
+        if (onMessage !== null) onMessage(value)
+        else if (waiting.push(value) > MAX_WAITING) waiting.shift()
       }
       resolve({
         post: value => port.postMessage(JSON.stringify(value)),
         onMessage: handler => {
           onMessage = handler
-          for (const value of waiting.splice(0)) handler(value)
+          // Each kept message reaches the handler even when it throws on one, the first throw going on after
+          let thrown: { err: unknown } | null = null
+          for (const value of waiting.splice(0)) {
+            try {
+              handler(value)
+            } catch (err) {
+              thrown ??= { err }
+            }
+          }
+          if (thrown !== null) throw thrown.err
         },
         theme: () => theme,
         onTheme: handler => {
@@ -72,4 +88,6 @@ export function connect(scope: FrameScope = globalThis as unknown as FrameScope)
     }
     scope.addEventListener('message', listener)
   })
+  connecting.set(scope, made)
+  return made
 }

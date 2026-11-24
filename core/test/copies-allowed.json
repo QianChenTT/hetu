@@ -472,18 +472,6 @@
     },
     {
       "files": [
-        "core/backend/runtime/views.ts",
-        "core/frontend/editor/frames.ts"
-      ],
-      "hash": "818553bbe3e93234",
-      "at": [
-        "core/backend/runtime/views.ts:105-109",
-        "core/frontend/editor/frames.ts:69-74"
-      ],
-      "judged": "not one meaning: the views host's theme setter and the frames' theme setter share a signature, one writes a stylesheet and one posts to ports"
-    },
-    {
-      "files": [
         "core/backend/runtime/windows.ts",
         "core/backend/runtime/windows.ts"
       ],

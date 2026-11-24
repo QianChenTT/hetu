@@ -5,6 +5,7 @@ import type { ViewSpec } from '../../api/manifest.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
 import { FrameInbox } from '../../api/ui-limits.ts'
 import { Editor } from '../editor.ts'
+import type { Theme } from '../frame.ts'
 import type { Transport } from '../transport.ts'
 import { holds } from './gate.ts'
 
@@ -31,10 +32,13 @@ type Drawn = { from: number, to: number, stamp: number }
 type Note = { path: string, text: Text, version: number, drawn: Drawn, human: boolean, selection?: { anchor: number, head: number } }
 
 // A view's frame as a test plays it. post sends data as @hetu/sdk/frame does, false when hetu's drawer would drop it.
-// received is what the worker posted, oldest first, as the frame reads it
+// received is what the worker posted, oldest first, as the frame reads it. theme and onTheme are the theme as the
+// frame's SDK reads it, the one changeTheme last set
 export type FakeFrame = {
   post(data: unknown): boolean
   readonly received: readonly unknown[]
+  theme(): Theme
+  onTheme(handler: (theme: Theme) => void): void
 }
 
 class Refusal {
@@ -64,6 +68,9 @@ export class FakeDrawer {
   private readonly instancesOf = new Map<string, string>()
   // What the worker posted to each mounted frame
   private readonly frames = new Map<string, unknown[]>()
+  // The theme the frames are offered, {} until the test changes it, and each mounted frame's way to hear a change
+  private frameTheme: Theme = Object.freeze({})
+  private readonly themeHeard = new Set<(theme: Theme) => void>()
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
   private n = 0
@@ -120,16 +127,30 @@ export class FakeDrawer {
     const received: unknown[] = []
     this.frames.set(instance, received)
     const inbox = new FrameInbox(Date.now)
+    let onTheme: ((theme: Theme) => void) | null = null
+    this.themeHeard.add(theme => {
+      if (this.frames.get(instance) === received) onTheme?.(theme)
+    })
     return {
       received,
       post: data => {
-        // JSON text as the frame's SDK sends it, taken as hetu's drawer takes it
+        // JSON text as the frame's SDK sends it, taken as hetu's drawer takes it, and only while the plugin holds ui.view
         const taken = inbox.take(JSON.stringify(data))
-        if (!taken.ok || this.frames.get(instance) !== received) return false
+        if (!taken.ok || this.frames.get(instance) !== received || !this.has('ui.view')) return false
         this.emit({ topic: 'view.message', instance, data: taken.data })
         return true
       },
+      theme: () => this.frameTheme,
+      onTheme: handler => {
+        onTheme = handler
+      },
     }
+  }
+
+  // The human picked another theme: every frame is told the page's variables as hetu's drawer tells them
+  changeTheme(variables: Readonly<Record<string, string>>): void {
+    this.frameTheme = Object.freeze({ ...variables })
+    for (const heard of this.themeHeard) heard(this.frameTheme)
   }
 
   // An event from the drawer to the plugin

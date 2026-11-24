@@ -205,8 +205,8 @@ const coreTable = {
   // A single-use URL main serves one image of the notes folder from for a plugin's image node, inside that plugin's
   // luoshu.read scope. Only the editor window's drawer gets one
   'editor.image': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: imagePath }) },
-  // The theme the editor page set, at its start and on each change, which main serves beside each frame's page as
-  // hetu-theme.css. Offered to frames, never checked in one
+  // The theme the editor page set, at its start and on each change, which main serves at the root of each frame's
+  // ticket as hetu-theme.css. Offered to frames, never checked in one
   'editor.theme': { from: 'windows', args: z.strictObject({ variables: themeVariables }) },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
   // <plugin id>.refused coalesced by reason

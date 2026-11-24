@@ -281,7 +281,7 @@ async function start(): Promise<void> {
             else viewKeys.set(plugin, new Set(keys))
             return null
           }
-          // The theme the editor page set, served beside each frame's page. Only the editor window draws frames
+          // The theme the editor page set, served at the root of each frame's ticket. Only the editor window draws frames
           if (call.action === 'editor.theme') {
             const { variables } = call.args as { variables: Record<string, string> }
             if (call.caller.kind === 'window' && call.caller.role === 'editor') views.theme(variables)

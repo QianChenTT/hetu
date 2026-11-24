@@ -105,6 +105,8 @@ export class Frames {
   onTheft: ((url: string, again: boolean) => void) | null = null
   // The theme's variables as last offered to the frames
   private variables: Readonly<Record<string, string>> = {}
+  // The theme main last took, as JSON, so one main refused is sent again with the next offer
+  private offered: string | null = null
 
   // relay hands what a frame sent to its owner's worker. gone says an instance is closed or its owner down
   constructor(link: CoreLink, host: HTMLElement, relay: (owner: string, instance: string, data: unknown) => void, gone: (instance: string) => boolean) {
@@ -114,11 +116,19 @@ export class Frames {
     this.gone = gone
   }
 
-  // The theme's variables as the page set them, to each frame with its port and now to each holding one, as an object
-  // so no text a worker sends reads as one
+  // The theme's variables as the page draws with them, to each frame with its port and to each holding one when they
+  // change, as an object so no text a worker sends reads as one. Main gets them for the stylesheet at the root of each
+  // frame's ticket until it takes them
   theme(variables: Readonly<Record<string, string>>): void {
-    this.variables = variables
-    for (const held of this.mounted.values()) held.port?.postMessage({ v: 1, kind: 'theme', variables })
+    const text = JSON.stringify(variables)
+    if (text !== JSON.stringify(this.variables)) {
+      this.variables = variables
+      for (const held of this.mounted.values()) held.port?.postMessage({ v: 1, kind: 'theme', variables })
+    }
+    if (text === this.offered) return
+    void this.link.call('editor.theme', { variables }).then(got => {
+      if (got.ok) this.offered = text
+    })
   }
 
   // The frame drawing a view instance laid over its slot, mounted on first use, or hidden while no slot holds it

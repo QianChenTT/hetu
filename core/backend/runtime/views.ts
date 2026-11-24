@@ -10,8 +10,8 @@ import { IMAGE_CSP, type Served } from './lib.ts'
 // the token for as long as the frame lives, and no other page, so a frame that navigates finds nothing. A token is
 // served only on its own plugin's host. Icons come from hetu://<id>.views/icon/<file>, svg or png only, so a plugin's
 // host shows no other plugin's icons.
-// Every token of an incarnation ends with it, and every token ends when the editor page unloads. Beside each frame's
-// page, hetu-theme.css holds hetu's theme as the editor page last set it, offered to the frame and never checked
+// Every token of an incarnation ends with it, and every token ends when the editor page unloads. At the root of each
+// token, hetu-theme.css holds hetu's theme as the editor page last set it, offered to the frame and never checked
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
   html: 'text/html; charset=utf-8',
