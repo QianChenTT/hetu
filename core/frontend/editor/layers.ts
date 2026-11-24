@@ -43,6 +43,8 @@ type Hooks = {
   titleClicked(owner: string, node: string): void
   // Placing changed what the layout plans from
   state(state: Omit<LayoutState, 'views' | 'editors' | 'current'>): void
+  // Placing showed a view or took one away, which the views menu says
+  viewsShownChanged(): void
 }
 
 export class Layers {
@@ -221,7 +223,10 @@ export class Layers {
       if (!laid.has(element)) lay(element, null)
     }
     for (const element of [...this.downs.values(), ...this.itemBoxes.values()]) if (!laid.has(element)) lay(element, null)
+    const before = this.shownViews()
     for (const held of this.ui.views.all()) this.ui.views.shown(held.instance, held.down ? null : sizeOf(shown.get(held.instance)))
+    const after = this.shownViews()
+    const shownSetChanged = before.size !== after.size || [...after].some(instance => !before.has(instance))
     this.frames?.forget(framed)
 
     // Editors over their boxes. The first placeholder for an instance wins
@@ -259,6 +264,7 @@ export class Layers {
       if (node.kind === 'slot' || node.kind === 'editor') slots[node.id] = sizeOf(box(element)) as { width: number, height: number }
     }
     this.hooks.state({ width: Math.round(stageBox.width), height: Math.round(stageBox.height), slots })
+    if (shownSetChanged) this.hooks.viewsShownChanged()
   }
 
   private rankOf(owner: string, view: string): number {
