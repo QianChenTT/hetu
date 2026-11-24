@@ -206,8 +206,8 @@ describe('a layout that never draws', () => {
     await pickLayout(editor, null)
     await tick(800)
     expect(await editor.locator('#base .hetu-plain').count()).toBe(1)
-    // No layout draws, so no view is placed and no title drawn
-    expect(await editor.locator('#editors .hetu-title').count()).toBe(0)
+    // No layout draws, so the drawer's own plain column holds the view under its title
+    expect(await editor.locator('#editors .hetu-title').allInnerTexts()).toEqual(['board · Cards'])
     await editor.locator('#views').click()
     expect(await editor.locator('#menu select').first().evaluate(select => (select as HTMLSelectElement).selectedOptions[0]?.textContent)).toBe('Plain')
   })

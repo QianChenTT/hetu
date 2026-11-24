@@ -4,18 +4,29 @@
 export class Arming {
   private readonly clock: () => number
   private readonly delay: number
+  // When the Confirm buttons arm, which something new drawn under them puts off
   private armedAt: number
+  // When the delay since the window showed or gained focus ends, the one main holds every input of the page to
+  private focusAt: number
   private readonly drawn = new Map<string, string | null>()
 
   constructor(clock: () => number, delay: number) {
     this.clock = clock
     this.delay = delay
     this.armedAt = clock() + delay
+    this.focusAt = this.armedAt
   }
 
   // The window showed or gained focus
   focused(): void {
     this.armedAt = this.clock() + this.delay
+    this.focusAt = this.armedAt
+  }
+
+  // Whether the delay since the window showed or gained focus still runs, inside which main counts a request the page
+  // sends for nothing
+  focusDelayRuns(): boolean {
+    return this.clock() < this.focusAt
   }
 
   // What a Confirm of one kind is drawn for now, null for none. Something new waits the delay again

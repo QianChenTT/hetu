@@ -218,11 +218,21 @@ async function start(): Promise<void> {
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
+          // Checked before the dialog opens, so no folder is picked that couldn't be asked for. One dialog at a time, a
+          // plugin pick's included
           if (call.action === 'app.pickFolder') {
-            return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
+            if (pluginsManager === null) throw { code: 'unavailable' }
+            const manager = pluginsManager
+            if (picking) throw { code: 'throttled' }
+            picking = true
+            try {
+              return await pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options), change => manager.request(change, call.caller))
+            } finally {
+              picking = false
+            }
           }
           // Staged here from the path main's own dialog answered, which never reaches the page
-          // Checked before the dialog opens, so no staging is made that couldn't be answered. One pick at a time
+          // Checked before the dialog opens, so no staging is made that couldn't be answered. One dialog at a time
           if (call.action === 'app.stagePicked') {
             const { source } = call.args as { source: 'zip' | 'folder' }
             if (pluginsManager === null) throw { code: 'unavailable' }
@@ -329,7 +339,11 @@ async function start(): Promise<void> {
     // A control failed at start: only the trusted window opens, or the native box with the security view off
     const stopped = wired.pluginsManager.stopped()
     if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
-    else editor = show(editorWindow())
+    else {
+      editor = show(editorWindow())
+      // Over the editor, on its welcome guide, until a layout plugin is approved
+      if (wired.pluginsManager.welcomeDue()) trusted.show()
+    }
   } catch (err) {
     tell(err)
     code = 1
