@@ -66,8 +66,9 @@ describe('the luoshu in the install', () => {
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const trusted = await pageAt(app, 'hetu://trusted/')
     await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
-    await until(async () => (await trusted.locator('#root').innerText()).includes('Notes folder: none picked'))
     await tick(PAST_DELAY)
+    await trusted.getByRole('tab', { name: 'Notes folder', exact: true }).click()
+    await until(async () => (await trusted.locator('#root').innerText()).includes('Notes folder: none picked'))
     // The startup screen's first step offers the same dialog, so the Notes section's button is the one clicked
     await trusted.locator('section.luoshu').getByRole('button', { name: 'Pick a folder' }).click()
     await until(async () => (await trusted.locator('#root').innerText()).includes(`Use ${JSON.stringify(notes)} as the notes folder`))

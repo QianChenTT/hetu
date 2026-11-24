@@ -184,6 +184,8 @@ function start(bridge: Bridge): void {
           if (rawOpen) layRaw()
           ui.state({ ...geometry, views: ui.views.list(settings.value.favorites), editors: views.ids(), current: views.shown() })
         },
+        // Only when a view came or went, since drawing the menu again closes a select open in it
+        viewsShownChanged: () => drawMenuSoon(),
       },
     },
   )
