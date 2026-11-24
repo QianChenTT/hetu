@@ -71,7 +71,7 @@ describe('the luoshu in the install', () => {
     await until(async () => (await trusted.locator('#root').innerText()).includes('Notes folder: none picked'))
     // The startup screen's first step offers the same dialog, so the Notes section's button is the one clicked
     await trusted.locator('section.luoshu').getByRole('button', { name: 'Pick a folder' }).click()
-    await until(async () => (await trusted.locator('#root').innerText()).includes(`Use ${JSON.stringify(notes)} as the notes folder`))
+    await until(async () => (await trusted.locator('#root').innerText()).includes(`Use "${notes}" as the notes folder`))
     await tick(PAST_DELAY)
     await trusted.getByRole('button', { name: 'Confirm' }).click()
     await until(async () => (await trusted.locator('#root').innerText()).includes(`Notes folder: ${notes}`))

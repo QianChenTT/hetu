@@ -296,7 +296,7 @@ self.onmessage = event => {
     await until(async () => (await page.locator('#root').innerText()).includes('Raises listener from class 3, Network to class 4, Powerful'))
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Confirm' }).click()
-    await until(async () => (await row('listener').innerText()).includes('net.fetch to "example.com" · asks at first use'))
+    await until(async () => (await row('listener').innerText()).includes('Send data to and get data from "example.com" over the network · asks at first use'))
     expect(await row('listener').innerText()).toContain('class 4')
     const entry = (await new StateStore(dataDir).load()).state.plugins.listener
     expect(entry).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
