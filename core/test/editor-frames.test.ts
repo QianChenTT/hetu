@@ -244,6 +244,15 @@ describe('what a frame asks of the page', () => {
     ]) expect(asks(message)).toBeNull()
   })
 
+  it('takes no path the note path check refuses, as the worker\'s editor.open', () => {
+    const asks = frameAsks(() => 0)
+    for (const path of ['a\\b.md', 'c:x.md', 'a\u0001.md', '\ud800.md', 'a//b.md']) {
+      expect(asks({ v: 1, kind: 'open', path })).toBeNull()
+      expect(asks({ v: 1, kind: 'drag-token', ask: 1, path })).toBeNull()
+    }
+    expect(asks({ v: 1, kind: 'open', path: 'notes/a b.md' })?.ok).toBe(true)
+  })
+
   it(`answers asks past ${FRAME_ASKS_PER_SECOND} a second as not ok and takes them again in the next`, () => {
     let now = 0
     const asks = frameAsks(() => now)
