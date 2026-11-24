@@ -26,7 +26,7 @@ import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
-import { appMenu, editorKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
+import { appMenu, editorKeyOfInput, frameKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import type { Updater } from './updater/header.ts'
 import { createUpdater } from './updater/updater.ts'
@@ -336,9 +336,12 @@ async function start(): Promise<void> {
       contents.on('destroyed', unloaded)
       contents.on('dom-ready', () => drawers.loaded(contents))
       // The core keys reach the page whatever has focus, a frame included, and so do the keys a plugin's views bound
-      // while focus is in one of its frames
+      // while focus is in one of its frames. Enter or Space going on to a plugin's frame is pushed as a press there
       contents.on('before-input-event', (event, input) => {
-        const took = editorKeyOfInput(input, contents.focusedFrame?.url ?? null, viewKeys, process.platform === 'darwin')
+        const focused = contents.focusedFrame?.url ?? null
+        const took = editorKeyOfInput(input, focused, viewKeys, process.platform === 'darwin')
+        const url = took === null ? frameKeyOfInput(input, focused) : null
+        if (url !== null && !contents.isDestroyed()) contents.send('hetu:press', { key: true, url })
         if (took === null) return
         event.preventDefault()
         if (took.channel !== null && !contents.isDestroyed()) contents.send(took.channel, took.sent)

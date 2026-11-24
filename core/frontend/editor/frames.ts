@@ -52,6 +52,11 @@ export class FocusGuard {
     return ok
   }
 
+  // Whether focus is in this frame, let in
+  holding(instance: string): boolean {
+    return this.holder === instance
+  }
+
   // Focus is in the page's own document again. A press credit not yet used goes with it
   left(): void {
     this.holder = null
@@ -152,9 +157,13 @@ export class Frames {
     this.lay(held)
   }
 
-  // A press main pushed: down or up at its point on the page
+  // A press main pushed: down or up at its point on the page, or Enter or Space in the focused frame served from url,
+  // counted only while focus is in it by a press or the core's own move
   pushed(press: unknown): void {
-    const { down, x, y } = (typeof press === 'object' && press !== null ? press : {}) as Record<string, unknown>
+    const { down, x, y, key, url } = (typeof press === 'object' && press !== null ? press : {}) as Record<string, unknown>
+    const instance = key === true && typeof url === 'string' ? this.instanceAt(url) : null
+    const owner = instance === null ? undefined : this.mounted.get(instance)?.owner
+    if (instance !== null && owner !== undefined && this.guard.holding(instance)) this.credit.keyed(owner)
     if (typeof x !== 'number' || typeof y !== 'number') return
     if (down === true) this.pressed(x, y)
     else if (down === false) this.released(x, y)
