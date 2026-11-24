@@ -8,7 +8,8 @@ import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { watchingModuleIds } from '../../api/ids.ts'
 import { installBox, Installer, type InstallBox, type InstallFlow } from './install.ts'
-import { startupScreen, type Startup, type StartupShown } from './startup.ts'
+import { welcomeDue } from '../../api/trusted.ts'
+import { startupScreen, type Startup } from './startup.ts'
 
 export type Bridge = {
   send(message: unknown): void
@@ -26,6 +27,13 @@ export type Part = { text: string, label: boolean }
 
 // A pair's row: its field in quotes, then the rest of its line
 export type IdentityRow = { label: string, line: string, change: Change | null }
+
+// The tabs on the left, one drawn at a time on the right. What waits for a Confirm is drawn above whichever is picked
+export const tabs = ['start', 'plugins', 'switches', 'notes', 'identities', 'limits'] as const
+export type Tab = typeof tabs[number]
+const tabLabels: Readonly<Record<Tab, string>> = Object.freeze({
+  start: 'Get started', plugins: 'Plugins', switches: 'Switches', notes: 'Notes folder', identities: 'Identities', limits: 'Limits',
+})
 
 export type Limit = { constant: LimitName, fixed: number, all: number | null, plugins: { plugin: string, value: number }[] }
 
@@ -48,8 +56,12 @@ export type Screen = {
   identities: { rows: IdentityRow[], about: string }
   // The Install button's box, null while nothing is being installed
   installing: InstallBox | null
-  // The startup screen's steps, null while it isn't shown
+  // The welcome guide's steps and the one drawn, null in the stopped mode
   startup: Startup | null
+  // The tab drawn and every tab with its name. mark says what on a tab waits for the human, drawn beside its name so
+  // nothing waits unseen on a tab not shown
+  tab: Tab
+  tabs: { id: Tab, label: string, mark: string | null }[]
 }
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
@@ -213,7 +225,9 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
   return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
 }
 
-export function screen(list: SecurityList, flow: InstallFlow | null = null, shown: StartupShown = 'auto'): Screen {
+// tab is the one the human picked, else Get started while the welcome is due and Plugins after. at is the guide's step
+// the human went to
+export function screen(list: SecurityList, flow: InstallFlow | null = null, tab: Tab | null = null, at: number | null = null): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
@@ -232,8 +246,18 @@ export function screen(list: SecurityList, flow: InstallFlow | null = null, show
     installNote: INSTALL_LINE,
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
     installing: installBox(flow),
-    startup: startupScreen(list, shown),
+    startup: startupScreen(list, at),
+    tab: tab ?? (welcomeDue(list) ? 'start' : 'plugins'),
+    tabs: tabs.map(id => ({ id, label: tabLabels[id], mark: id === 'plugins' ? waitingMark(list) : null })),
   }
+}
+
+// The plugins that wait for the human: a new folder plugin waiting for Approve, one that crashed, failed or stopped
+// answering
+function waitingMark(list: SecurityList): string | null {
+  const waiting = list.plugins.filter(plugin => (plugin.from === 'folder' && plugin.state === 'found' && plugin.reason === 'new')
+    || plugin.state === 'crashed' || plugin.state === 'failed' || plugin.state === 'unresponsive').length
+  return waiting === 0 ? null : `${waiting} waiting`
 }
 
 // What a refused Confirm or change tells the human
@@ -245,6 +269,10 @@ const notes: Readonly<Record<string, string>> = Object.freeze({
   'not-found': 'That request is gone',
 })
 
+// What a refused request tells the human. A Confirm refused too soon has its own words in notes
+const TOO_SOON = 'Too soon after the window showed or gained focus. Wait a moment, then ask again'
+const TOO_MANY = 'Too many requests are waiting. Answer or cancel some first'
+
 type Reply = { kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, refusal?: { code?: unknown }, topic?: unknown, seq?: unknown }
 
 // Hears core.status and core.security, reads the list and draws it, then reads it again each time the core says so.
@@ -253,16 +281,20 @@ type Reply = { kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, ref
 export class TrustedPage {
   private readonly bridge: Bridge
   private readonly draw: (screen: Screen, note: string | null) => void
+  private readonly inFocusDelay: () => boolean
   private id = 0
   private readonly pending = new Map<number, (reply: Reply) => void>()
   private last: SecurityList | null = null
   private note: string | null = null
-  private startup: StartupShown = 'auto'
+  private tab: Tab | null = null
+  private step: number | null = null
   readonly installer: Installer
 
-  constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void) {
+  // inFocusDelay says whether the input delay since the window showed or gained focus still runs
+  constructor(bridge: Bridge, draw: (screen: Screen, note: string | null) => void, inFocusDelay: () => boolean = () => false) {
     this.bridge = bridge
     this.draw = draw
+    this.inFocusDelay = inFocusDelay
     this.installer = new Installer({
       call: (action, args, then) => this.call(action, args, then),
       settle: (reply, note) => this.settle(reply, 'other', note),
@@ -289,14 +321,9 @@ export class TrustedPage {
     this.call('security.cancel', { requestId }, reply => this.settle(reply))
   }
 
-  // A choice in the stopped mode that applied at once, with confirmOff on, starts hetu again as a Confirm does
   ask(change: Change): void {
     const stopped = this.last?.stopped ?? null
-    this.call('security.request', { change }, reply => {
-      const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
-      if (applied && stopped !== null) this.call('app.relaunch')
-      this.settle(reply, 'request')
-    })
+    this.call('security.request', { change }, reply => this.settleRequest(reply, stopped))
   }
 
   stop(plugin: string): void {
@@ -311,23 +338,31 @@ export class TrustedPage {
     this.call('app.relaunch')
   }
 
-  // The OS folder dialog in main, then the folder picked asked for as luoshu.pick, which waits for the Confirm. A
-  // cancelled dialog asks for nothing
+  // The OS folder dialog in main, which asks for the folder picked as luoshu.pick itself, answering as a request does.
+  // A cancelled dialog asks for nothing
   pickFolder(): void {
+    const stopped = this.last?.stopped ?? null
     this.call('app.pickFolder', undefined, reply => {
-      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.pick', folder: reply.result })
-      else if (reply.ok !== true) this.settle(reply)
+      if (reply.ok !== true || reply.result !== null) this.settleRequest(reply, stopped)
     })
   }
 
-  // The startup screen closed for now or shown again from the menu, for this window's life
-  closeStartup(): void {
-    this.startup = 'closed'
+  // The tab the human picked, for this window's life
+  pickTab(tab: Tab): void {
+    this.tab = tab
     this.redraw()
   }
 
-  showStartup(): void {
-    this.startup = 'shown'
+  // The guide's step the human went to with Next or Back, for this window's life
+  guideTo(step: number): void {
+    const last = this.last === null ? 1 : startupScreen(this.last, null)?.steps.length ?? 1
+    this.step = Math.min(Math.max(step, 0), last - 1)
+    this.redraw()
+  }
+
+  // Away from the guide to the plugin list. Its tab shows it again
+  leaveGuide(): void {
+    this.tab = 'plugins'
     this.redraw()
   }
 
@@ -341,12 +376,20 @@ export class TrustedPage {
     this.call('app.quit')
   }
 
+  // A choice in the stopped mode that applied at once, with confirmOff on, starts hetu again as a Confirm does
+  private settleRequest(reply: Reply, stopped: StoppedMode | null): void {
+    const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
+    if (applied && stopped !== null) this.call('app.relaunch')
+    this.settle(reply, 'request')
+  }
+
   // said is a note of the caller's own for an answer the core gave
   private settle(reply: Reply, sent: 'request' | 'other' = 'other', said?: string): void {
     const code = reply.ok === true ? null : reply.refusal?.code
-    // A request answers throttled when its sender's places are full, a Confirm when it came too soon
+    // A Confirm answers throttled when it came too soon. A request answers throttled inside the input delay as well as
+    // when its sender's places are full, told apart by the delay this page keeps beside main's
     if (said !== undefined) this.note = said
-    else if (code === 'throttled' && sent === 'request') this.note = 'Too many requests are waiting. Answer or cancel some first'
+    else if (code === 'throttled' && sent === 'request') this.note = this.inFocusDelay() ? TOO_SOON : TOO_MANY
     else this.note = typeof code === 'string' ? notes[code] ?? `Refused: ${code}` : null
     this.refresh()
   }
@@ -366,7 +409,9 @@ export class TrustedPage {
   }
 
   private redraw(): void {
-    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.startup), this.note)
+    // The first tab is picked once from the first list, so approving a layout mid-guide doesn't move the human away
+    if (this.last !== null && this.tab === null) this.tab = welcomeDue(this.last) ? 'start' : 'plugins'
+    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.tab, this.step), this.note)
   }
 
   private heard(message: unknown): void {

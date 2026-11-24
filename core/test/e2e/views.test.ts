@@ -207,6 +207,45 @@ describe('input by owner', () => {
   })
 })
 
+describe('the views menu', () => {
+  // The layout hears layout.close and draws its skeleton again without the view. The open menu redrew only on a views
+  // reload or a settings change, so it kept Hide until it was opened again
+  it('turns Hide into Show while it stays open, once the layout drew the view away', async () => {
+    const { app, editor } = await started({
+      plugins: { board: { granted: viewer, manifest: { views: view('cards') } }, tiles: { granted: layoutGrants } },
+    })
+    await pickLayout(editor, 'tiles')
+    const layout = await pluginWorker(app, 'tiles')
+    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    await drive(layout, async scope => {
+      const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
+      const instance = state.views[0]!.instance
+      const draw = (shown: boolean) => scope.ctx.ui.layout.draw({
+        kind: 'box', id: 'root', style: { display: 'flex', height: '100%' },
+        children: [
+          ...(shown ? [{ kind: 'slot', id: 's', instance, style: { width: '300px' } }] : []),
+          { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
+        ],
+      })
+      // Each close draws the skeleton again without the view, each open with it
+      const on = (scope.ctx.ui.on as unknown as (topic: string, listener: () => void) => void).bind(scope.ctx.ui)
+      on('layout.close', () => void draw(false))
+      on('layout.open', () => void draw(true))
+      await draw(true)
+    })
+    await until(async () => (await pressed(editor).count()) === 1)
+    await editor.locator('#views').click()
+    const item = editor.locator('#menu li[data-view="board/cards"]')
+    await until(async () => (await item.locator('button', { hasText: 'Hide' }).count()) === 1)
+    await item.locator('button', { hasText: 'Hide' }).click()
+    await until(async () => (await pressed(editor).count()) === 0)
+    await until(async () => (await item.locator('button', { hasText: 'Show' }).count()) === 1)
+    expect(await editor.locator('#menu').isVisible()).toBe(true)
+    await item.locator('button', { hasText: 'Show' }).click()
+    await until(async () => (await item.locator('button', { hasText: 'Hide' }).count()) === 1)
+  })
+})
+
 describe('a layout redrawing to mislead (A-30)', () => {
   async function withLayout(setup: Setup) {
     const made = await started({ ...setup, plugins: { ...setup.plugins, cover: { granted: layoutGrants, ...setup.plugins?.cover } } })

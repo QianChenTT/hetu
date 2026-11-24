@@ -3,15 +3,80 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { configFor, icoFromPng, MSI_NAME, packageHetu } from '../build/package.ts'
+import { configFor, icoFromPng, INSTALL_GUID, packageHetu, SETUP_NAME_TEMPLATE, setupsIn } from '../build/package.ts'
 import { FUSES } from '../build/fuses.ts'
 
 // A release asset's name is changed where it holds a space, so a name with one wouldn't match its line in SHA256SUMS
-describe('the MSI\'s file name', () => {
+describe('the setup\'s file name', () => {
   it('holds the version and the architecture and no space', () => {
-    const name = MSI_NAME.replace('${version}', '0.5.0').replace('${ext}', 'msi')
-    expect(name).toBe('hetu-0.5.0-x64.msi')
-    expect(MSI_NAME).not.toMatch(/\s/)
+    const name = SETUP_NAME_TEMPLATE.replace('${version}', '0.5.0').replace('${ext}', 'exe')
+    expect(name).toBe('hetu-setup-0.5.0-x64.exe')
+    expect(SETUP_NAME_TEMPLATE).not.toMatch(/\s/)
+  })
+
+  it('is the one file of a build SHA256SUMS covers', () => {
+    const out = path.join('dist-package', 'installer')
+    const made = ['hetu-setup-0.5.0-x64.exe', 'hetu-setup-0.5.0-x64.exe.blockmap', 'latest.yml', 'hetu-0.5.0-x64.msi', 'Uninstall hetu.exe']
+    expect(setupsIn(made.map(name => path.join(out, name)))).toEqual([path.join(out, 'hetu-setup-0.5.0-x64.exe')])
+  })
+})
+
+// The installer as configured for electron-builder. The include script locks it to the current user, see
+// installer-script.test.ts
+describe('the Windows installer', () => {
+  const config = configFor('stage', { target: 'installer', locked: true, out: 'out' }, FUSES)
+  const nsis = config.nsis!
+
+  it('is NSIS alone, with no MSI left', () => {
+    expect(config.win?.target).toEqual(['nsis'])
+    expect(config).not.toHaveProperty('msi')
+    expect(configFor('stage', { target: 'dir', locked: true, out: 'out' }, FUSES).win?.target).toEqual(['dir'])
+  })
+
+  it('installs per user with no page that can ask for administrator rights', () => {
+    expect(nsis).not.toHaveProperty('perMachine')
+    expect(nsis).not.toHaveProperty('selectPerMachineByDefault')
+    expect(nsis.oneClick).toBe(false)
+    expect(nsis.allowElevation).toBe(false)
+    expect(nsis.packElevateHelper).toBe(false)
+    expect(nsis.allowToChangeInstallationDirectory).toBe(false)
+  })
+
+  it('runs hetu at the finish, makes the Start menu shortcut and leaves the desktop one to the include script', () => {
+    expect(nsis.runAfterFinish).toBe(true)
+    expect(nsis.createStartMenuShortcut).toBe(true)
+    expect(nsis.createDesktopShortcut).toBe(false)
+    expect(nsis.include).toBe(path.join(import.meta.dirname, '..', 'build', 'installer.nsh'))
+  })
+
+  it('keeps one fixed id, so a newer setup replaces the install instead of adding a second hetu', () => {
+    expect(nsis.guid).toBe(INSTALL_GUID)
+    expect(INSTALL_GUID).toBe('3af4a7b2-eaef-54c1-8e70-b491bbebeebd')
+  })
+
+  // NsisTarget.js derives the id as a UUID v5 of the app id in electron-builder's own namespace when none is given
+  it('is the id electron-builder derives from the app id', () => {
+    const lib = createRequire(createRequire(path.join(path.dirname(createRequire(import.meta.url).resolve('electron-builder/package.json')), 'package.json')).resolve('app-builder-lib/package.json'))
+    const { UUID } = lib('builder-util-runtime') as { UUID: { v5(name: string, namespace: Buffer): string, parse(text: string): Buffer } }
+    expect(UUID.v5(config.appId!, UUID.parse('50e065bc-3134-11e6-9bab-38c9862bdaf3'))).toBe(INSTALL_GUID)
+  })
+
+  // A misspelled option would otherwise be read as unset and the setup built without it
+  it('passes electron-builder\'s own schema, which refuses an option it doesn\'t know', async () => {
+    const require = createRequire(path.join(path.dirname(createRequire(import.meta.url).resolve('electron-builder/package.json')), 'package.json'))
+    const lib = createRequire(require.resolve('app-builder-lib/package.json'))
+    const { validateConfiguration } = lib('./out/util/config/config.js') as { validateConfiguration(config: unknown, logger: unknown): Promise<void> }
+    const { DebugLogger } = lib('builder-util') as { DebugLogger: new (enabled: boolean) => unknown }
+    await expect(validateConfiguration(config, new DebugLogger(false))).resolves.toBeUndefined()
+    await expect(validateConfiguration({ ...config, nsis: { ...nsis, allowElevaton: false } }, new DebugLogger(false))).rejects.toThrow('configuration')
+  })
+
+  it('names the setup and sets the build options electron-builder reads', () => {
+    expect(nsis.artifactName).toBe(SETUP_NAME_TEMPLATE)
+    expect(nsis.differentialPackage).toBe(false)
+    expect(nsis.deleteAppDataOnUninstall).toBe(false)
+    expect(nsis.warningsAsErrors).toBe(true)
+    expect(config.publish).toBeNull()
   })
 })
 

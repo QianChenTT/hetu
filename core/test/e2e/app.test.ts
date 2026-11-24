@@ -7,6 +7,7 @@ import { coreModuleIds } from '../../api/ids.ts'
 import {
   appCommand, cleanup, counting, editorPage, electronPath, env, events, exists, exited, launch, records, repo, sandboxArgs, temp, tick, until,
   visibleWindows,
+  setUp,
 } from './helpers.ts'
 
 afterEach(cleanup)
@@ -75,6 +76,7 @@ describe('hetu as an Electron app', () => {
 
   it('lets one hetu run per data folder: a second start on it quits, one on another folder runs', async () => {
     const dataDir = await temp()
+    await setUp(dataDir)
     const first = await launch(dataDir)
     await editorPage(first)
     const second = spawn(appCommand[0], [...sandboxArgs, ...appCommand[1]], { env: env({ HETU_DATA_DIR: dataDir }), stdio: 'ignore' })
@@ -120,6 +122,7 @@ describe('hetu as an Electron app', () => {
   // Chromium's fake device stands in for one and the permission handler is what answers
   it('keeps the editor page where it is and gives it no new window and no permission', async () => {
     const dataDir = await temp()
+    await setUp(dataDir)
     const app = await launch(dataDir, {}, ['--use-fake-device-for-media-stream'])
     const page = await editorPage(app)
     const network = await counting()

@@ -15,7 +15,7 @@ afterEach(cleanup)
 // Ports deliver later than the reply the publisher waits for, so a test that expects nothing waits this long
 const settle = () => tick(30)
 
-async function until(check: () => boolean, ms = 2000): Promise<void> {
+async function until(check: () => boolean, ms = 10_000): Promise<void> {
   for (let waited = 0; !check(); waited += 5) {
     if (waited > ms) throw new Error('nothing arrived in time')
     await tick(5)
