@@ -352,6 +352,10 @@ window.addEventListener('message', function (event) {
     var data = JSON.parse(message.data)
     if (data && typeof data.steal === 'number') setTimeout(function () { rows[0].focus(); say({ stole: true }) }, data.steal)
     if (data && data.sticky === true) window.addEventListener('blur', function () { setTimeout(function () { rows[0].focus(); say({ stole: true }) }, 0) })
+    if (data && typeof data.hash === 'string') { location.hash = data.hash; say({ moved: location.href }) }
+    if (data && typeof data.push === 'string') {
+      try { history.pushState(null, '', data.push); say({ moved: location.href }) } catch (err) { say({ refused: String(err && err.name) }) }
+    }
   }
   say({ hello: true })
 })
@@ -359,7 +363,7 @@ window.addEventListener('message', function (event) {
 const row = (name: string) => `<button style="display:block;width:200px;height:30px;margin:0">${name}</button>`
 const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<script src="board.js"></script></body></html>`
 
-type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused?: true }
+type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused?: true, moved?: string, refused?: string }
 type Press = { down: boolean, x: number, y: number }
 
 describe('a view frame', () => {
@@ -437,19 +441,19 @@ describe('a view frame', () => {
   // Keys Playwright sends never pass the window's before-input-event, and keys sent with sendInputEvent pass it but go
   // to the page and never to a frame. So main's own handler is handed each key as the window's input would hand it and,
   // when it lets the key go on, the debugger sends it in the same task to the frame holding focus, as the browser sends
-  // a key main let go on. gap is the time between keys, 0 for a burst. Answers the keys main dropped
-  const typeInMain = (app: ElectronApplication, text: string, gap: number) => app.evaluate(async ({ webContents }, [typed, wait]) => {
+  // a key main let go on. gap is the time between keys, 0 for a burst. Answers where in text each key main dropped stood
+  const typeThroughMain = (app: ElectronApplication, text: string, gap: number) => app.evaluate(async ({ webContents }, [typed, wait]) => {
     const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
-    const dropped: string[] = []
-    for (const key of typed) {
+    const dropped: number[] = []
+    for (const [at, key] of [...typed].entries()) {
       const code = `Key${key.toUpperCase()}`
       const windowsVirtualKeyCode = key.toUpperCase().charCodeAt(0)
       for (const type of ['keyDown', 'keyUp'] as const) {
         let prevented = false
         const input = { type, key, code, control: false, meta: false, alt: false, shift: false, isAutoRepeat: false }
         contents.emit('before-input-event', { preventDefault: () => { prevented = true } }, input)
-        if (prevented && type === 'keyDown') dropped.push(key)
+        if (prevented && type === 'keyDown') dropped.push(at)
         if (prevented) continue
         const sent = type === 'keyDown' ? { type, key, code, text: key, windowsVirtualKeyCode } : { type, key, code, windowsVirtualKeyCode }
         void contents.debugger.sendCommand('Input.dispatchKeyEvent', sent)
@@ -460,42 +464,36 @@ describe('a view frame', () => {
   }, [text, gap] as const)
   // Holds the page's thread for ms from after ms on, so the page sees a frame take focus only once it is free and only
   // main stands between the frame and the keys typed meanwhile
-  const busy = (editor: Page, after: number, ms: number) => editor.evaluate(([wait, hold]) => {
+  const holdPage = (editor: Page, after: number, ms: number) => editor.evaluate(([wait, hold]) => {
     setTimeout(() => {
       const end = Date.now() + hold
       while (Date.now() < end) { /* the page's thread held */ }
     }, wait)
   }, [after, ms] as const)
   // A key each 150 ms, or a burst long enough to run past a frame taking focus and the page pulling it back
-  const paces = [{ gap: 150, text: 'abcdefghijkl', steal: 300, from: 150 }, { gap: 0, text: 'abcdefghijklmnopqrstuvwxyz'.repeat(10), steal: 50, from: 0 }]
-  const without = (text: string, dropped: string[]) => {
-    const left = [...dropped]
-    return [...text].filter(key => {
-      if (left[0] !== key) return true
-      left.shift()
-      return false
-    }).join('')
-  }
-  const inNote = (editor: Page) => editor.evaluate(() => document.activeElement?.closest('.cm-content') !== null)
+  const typingPaces = [{ gap: 150, text: 'abcdefghijkl', steal: 300, from: 150 }, { gap: 0, text: 'abcdefghijklmnopqrstuvwxyz'.repeat(10), steal: 50, from: 0 }]
+  // The text with the keys at the places main dropped them taken out
+  const minusDropped = (text: string, dropped: number[]) => [...text].filter((_key, at) => !dropped.includes(at)).join('')
+  const focusIsInNote = (editor: Page) => editor.evaluate(() => document.activeElement?.closest('.cm-content') !== null)
 
-  it.each(paces)('gets none of the typing at a key each $gap ms when it takes focus with no press, which the core records', async ({ gap, text, steal, from }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus with no press, which the core records', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said, dataDir } = await framed()
     await open(editor, 'a.md')
     await shown(editor).click()
     await tell(workers[0]!, { steal })
-    await busy(editor, from, 600)
-    const dropped = await typeInMain(app, text, gap)
+    await holdPage(editor, from, 600)
+    const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
     expect((await said()).some(data => data.stole === true)).toBe(true)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
-    await until(async () => (await shown(editor).innerText()) === without(text, dropped))
+    await until(async () => (await shown(editor).innerText()) === minusDropped(text, dropped))
     expect(await frameOf(editor, 'kanban').count()).toBe(1)
-    await until(() => inNote(editor))
+    await until(() => focusIsInNote(editor))
     await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' }))
   })
 
-  it.each(paces)('gets none of the typing at a key each $gap ms when it focuses itself after the human pressed in it and then back in the note', async ({ gap, text, steal, from }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it focuses itself after the human pressed in it and then back in the note', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said } = await framed()
     await open(editor, 'a.md')
     const at = await inRow(editor, 'kanban')
@@ -503,18 +501,18 @@ describe('a view frame', () => {
     await until(async () => (await said()).some(data => data.opened === 'row-1'))
     await shown(editor).click()
     await tell(workers[0]!, { steal })
-    await busy(editor, from, 600)
-    const dropped = await typeInMain(app, text, gap)
+    await holdPage(editor, from, 600)
+    const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
     expect((await said()).some(data => data.stole === true)).toBe(true)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
-    await until(async () => (await shown(editor).innerText()) === without(text, dropped))
-    await until(() => inNote(editor))
+    await until(async () => (await shown(editor).innerText()) === minusDropped(text, dropped))
+    await until(() => focusIsInNote(editor))
   })
 
   // Pulled back each time it takes focus again, so the two run in a loop and the note may get none of the typing either
-  it.each(paces)('gets none of the typing at a key each $gap ms when it takes focus back each time it loses it', async ({ gap, text }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus back each time it loses it', async ({ gap, text }) => {
     const { app, editor, workers, said } = await framed()
     await open(editor, 'a.md')
     await tell(workers[0]!, { sticky: true })
@@ -524,14 +522,14 @@ describe('a view frame', () => {
     await shown(editor).click()
     await until(async () => (await said()).some(data => data.stole === true))
     await tick(300)
-    await busy(editor, 0, 600)
-    const dropped = await typeInMain(app, text, gap)
+    await holdPage(editor, 0, 600)
+    const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
   })
 
-  it.each(paces)('gets none of the typing at a key each $gap ms when it takes focus from another frame the human pressed in, which the core records for its plugin', async ({ gap, text, steal, from }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus from another frame the human pressed in, which the core records for its plugin', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said, dataDir } = await framed(['kanban', 'board'])
     await open(editor, 'a.md')
     const at = await inRow(editor, 'kanban')
@@ -539,13 +537,13 @@ describe('a view frame', () => {
     await until(async () => (await said(0)).some(data => data.opened === 'row-1'))
     await tick(300)
     await tell(workers[1]!, { steal })
-    await busy(editor, from, 600)
-    const dropped = await typeInMain(app, text, gap)
+    await holdPage(editor, from, 600)
+    const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
     expect((await said(1)).some(data => data.stole === true)).toBe(true)
     expect((await said(1)).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
-    await until(() => inNote(editor))
+    await until(() => focusIsInNote(editor))
     await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'board' }))
     expect(await logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' })).toBe(false)
   })
@@ -559,6 +557,29 @@ describe('a view frame', () => {
     contents.emit('before-input-event', { preventDefault: () => { prevented = true } }, input)
     return prevented
   }, [key, process.platform === 'darwin'] as const)
+
+  it('keeps getting the typing after the human pressed in it and it moved within its own page by hash', async () => {
+    const { app, editor, workers, said } = await framed()
+    await open(editor, 'a.md')
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(300)
+    await tell(workers[0]!, { hash: 'route-2' })
+    await until(async () => (await said()).some(data => data.moved?.endsWith('#route-2') === true))
+    expect(await typeThroughMain(app, 'abc', 150)).toEqual([])
+    await until(async () => (await said()).filter(data => data.key !== undefined).length === 3)
+    expect((await said()).filter(data => data.key !== undefined).map(data => data.key)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('cannot move itself under another ticket of its host by history', async () => {
+    const { editor, workers, said } = await framed()
+    const src = (await frameOf(editor, 'kanban').getAttribute('src'))!
+    const other = src.replace(/\/[0-9a-f]{32}\//,'/ffffffffffffffffffffffffffffffff/')
+    await tell(workers[0]!, { push: other })
+    await until(async () => (await said()).some(data => data.moved !== undefined || data.refused !== undefined))
+    expect((await said()).filter(data => data.moved !== undefined)).toEqual([])
+  })
 
   it('hands the core a core key pressed while focus is in it', async () => {
     const { app, editor, said } = await framed()
@@ -600,7 +621,7 @@ describe('a view frame', () => {
     expect((await said()).filter(data => data.focused === true || data.key !== undefined)).toEqual([])
   })
 
-  it.each(paces)('gets none of the typing at a key each $gap ms when it takes focus back after a second press in it and a core key out of it', async ({ gap, text }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus back after a second press in it and a core key out of it', async ({ gap, text }) => {
     const { app, editor, workers, said } = await framed()
     await open(editor, 'a.md')
     await tell(workers[0]!, { sticky: true })
@@ -611,8 +632,8 @@ describe('a view frame', () => {
     await editor.mouse.click(at.x, at.y)
     expect(await keyInMain(app, '/')).toBe(true)
     await tick(300)
-    await busy(editor, 0, 600)
-    const dropped = await typeInMain(app, text, gap)
+    await holdPage(editor, 0, 600)
+    const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
@@ -634,11 +655,11 @@ describe('a view frame', () => {
     expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
   })
 
-  it.each(paces)('gets none of the typing at a key each $gap ms when it takes focus with no note shown, recorded once', async ({ gap, text, steal, from }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus with no note shown, recorded once', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said, dataDir } = await framed()
     await tell(workers[0]!, { steal })
-    await busy(editor, from, 600)
-    const dropped = await typeInMain(app, text, gap)
+    await holdPage(editor, from, 600)
+    const dropped = await typeThroughMain(app, text, gap)
     await tick(1500)
     expect((await said()).some(data => data.stole === true)).toBe(true)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
