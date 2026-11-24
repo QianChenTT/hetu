@@ -5,7 +5,7 @@ import {
 } from '../../api/editor.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
 import { type DrawerCall, parseDrawerCall, type UiCall, uiNeeds } from '../../api/ui.ts'
-import { normalKey } from './keys.ts'
+import { normalKey } from '../../api/keys.ts'
 import type { CoreLink } from './link.ts'
 import type { SettingsValue } from './settings.ts'
 import { type UiHooks, UiPort, UiRefusal } from './ui-port.ts'
