@@ -2,6 +2,7 @@ import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker as PageWorker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
+import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
@@ -151,6 +152,52 @@ describe('the core\'s log failing while hetu runs', () => {
   })
 })
 
+type NoticeTimes = { timeOrigin: number, shown?: number, clicked?: number }
+
+// Room for a time to trail the moment it records and for the clocks of two processes to differ
+const CLOCK_SLACK_MS = 50
+
+// Put in the editor page before its own code runs, or through evaluate when that came too late: when the notice named
+// first showed and when the first click on it landed, each by the page's clock the shell times notices by, with the
+// page's time origin to turn them into epoch ms. The click is recorded as it bubbles up to the window, after the
+// notice's own handler read the clock. Put in once the notice already showed, shown stays unset
+function recordNoticeTimes(name: string): void {
+  if (!location.href.startsWith('hetu://editor/')) return
+  const holder = window as unknown as { noticeTimes?: NoticeTimes }
+  if (holder.noticeTimes !== undefined) return
+  const times: NoticeTimes = { timeOrigin: performance.timeOrigin }
+  holder.noticeTimes = times
+  const isNotice = (node: unknown) => node instanceof HTMLButtonElement && node.textContent === name
+  const noticeShowing = () => [...document.querySelectorAll('button')].some(isNotice)
+  const alreadyShowing = noticeShowing()
+  new MutationObserver(() => {
+    if (!alreadyShowing && times.shown === undefined && noticeShowing()) times.shown = performance.now()
+  }).observe(document, { subtree: true, childList: true })
+  window.addEventListener('click', event => {
+    if (times.clicked === undefined && isNotice(event.target)) times.clicked = performance.now()
+  })
+}
+
+const noticeTimes = (editor: Page) => editor.evaluate(() => ({ ...(window as unknown as { noticeTimes: NoticeTimes }).noticeTimes }))
+
+// When main created the first window that loads the trusted page, in epoch ms
+const recordTrustedCreated = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => {
+  const holder = globalThis as { trustedCreatedAt?: number }
+  electronApp.on('browser-window-created', (_event, window) => {
+    const created = Date.now()
+    window.once('ready-to-show', () => {
+      if (window.webContents.getURL().startsWith('hetu://trusted/')) holder.trustedCreatedAt ??= created
+    })
+  })
+})
+
+// When main created the first trusted window, waiting up to ms for one
+async function trustedCreatedAt(app: ElectronApplication, ms = 0): Promise<number | undefined> {
+  const created = () => app.evaluate(() => (globalThis as { trustedCreatedAt?: number }).trustedCreatedAt)
+  for (let waited = 0; waited < ms && await created() === undefined; waited += 50) await tick(50)
+  return created()
+}
+
 describe('a prompt a plugin\'s call raises', () => {
   // asker's plugin.call to target asks at its first use, since asker reads notes and target has network, the pair the
   // grant risk classifier makes ask. Both hold class 4 already, so the pass at start raises no notice of a move.
@@ -171,13 +218,32 @@ describe('a prompt a plugin\'s call raises', () => {
   it('waits as a notice, opens the trusted window only on a click past its delay, and a Confirm sent early confirms nothing', async () => {
     const dataDir = await data({ workers })
     const app = await start(dataDir, await install())
+    const name = 'The plugin "asker" asks to use something for the first time'
+    await app.context().addInitScript(recordNoticeTimes, name)
+    await recordTrustedCreated(app)
     const editor = await editorPage(app)
-    const notice = editor.getByRole('button', { name: 'The plugin "asker" asks to use something for the first time' })
+    await editor.evaluate(recordNoticeTimes, name)
+    const notice = editor.getByRole('button', { name })
     await notice.waitFor()
-    // The call opened nothing, and a click as the notice appears opens nothing either
+    // The call opened nothing, and a click as the notice appears opens nothing either. Checked only when the click
+    // landed inside the delay by the page's clock. A slower machine skips it, the delay checked by when the trusted
+    // window was created at the end
     await notice.click()
     await tick(500)
-    expect(await visibleWindows(app)).toEqual(['hetu://editor/'])
+    const times = await noticeTimes(editor)
+    expect(times.shown, 'notice drawn before its times were recorded').toBeDefined()
+    expect(times.clicked, 'the click on the notice was not recorded').toBeDefined()
+    const early = times.clicked! - times.shown! < INPUT_DELAY_MS - CLOCK_SLACK_MS
+    if (early) {
+      expect(await visibleWindows(app)).toEqual(['hetu://editor/'])
+    } else if (await trustedCreatedAt(app, 3000) !== undefined) {
+      // The click past the delay opened the trusted window. Closed, so the click below opens it again with a delay of
+      // its own
+      await app.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) if (window.webContents.getURL().startsWith('hetu://trusted/')) window.close()
+      })
+      await until(() => !app.windows().some(page => page.url() === 'hetu://trusted/'))
+    }
     // No window but the trusted one confirms
     const status = (await ask(editor, 'core.status')).result as { pending: { id: string, kind: string }[] }
     const request = status.pending[0]
@@ -199,6 +265,15 @@ describe('a prompt a plugin\'s call raises', () => {
     await until(() => logged(dataDir, 'security.applied', { kind: 'item.on', target: 'asker' }))
     const entry = (await new StateStore(dataDir).load()).state.plugins.asker
     expect(entry.firstUse).toEqual([])
+
+    // Past the delay the early check above was skipped, so this one shows the trusted window wasn't created sooner
+    // than the delay after the notice showed. Inside the delay the window comes from the later click, so the early
+    // check is the guard there
+    if (!early) {
+      const created = await trustedCreatedAt(app)
+      expect(created).toBeDefined()
+      expect(created! - (times.timeOrigin + times.shown!)).toBeGreaterThanOrEqual(INPUT_DELAY_MS - CLOCK_SLACK_MS)
+    }
   })
 
   it('keeps the trusted page where it is when it tries to navigate', async () => {
