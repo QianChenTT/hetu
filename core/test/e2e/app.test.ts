@@ -62,8 +62,10 @@ describe('hetu as an Electron app', () => {
     expect(lastStop).toBeLessThan(tail.findIndex(record => record.event === 'module.state'))
   })
 
+  // A set-up hetu: on a fresh one the startup flow keeps the trusted window open, so only Quit ends it
   it('quits once the last window closes', async () => {
     const dataDir = await temp()
+    await setUp(dataDir)
     const app = await launch(dataDir)
     await editorPage(app)
     await until(async () => (await events(dataDir)).includes('core.ready'))
