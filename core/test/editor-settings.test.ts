@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CoreLink } from '../frontend/editor/link.ts'
-import { Settings } from '../frontend/editor/settings.ts'
+import { ARRANGEMENT_WRITE_MS, Settings } from '../frontend/editor/settings.ts'
 import { fakeCore, settle } from './editor-fakes.ts'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 function made(stored: unknown = null, arrangement: unknown = null) {
   const space = new Map<string, unknown>([...(stored === null ? [] : [['settings', stored] as const]), ...(arrangement === null ? [] : [['arrangement', arrangement] as const])])
@@ -98,10 +102,36 @@ describe('the window\'s settings', () => {
     let told = 0
     await settings.load()
     settings.onChange = () => void told++
-    await settings.keepArrangement({ widths: { left: 300, right: 240 } })
+    settings.keepArrangement({ widths: { left: 300, right: 240 } })
+    expect(settings.arrangement).toEqual({ widths: { left: 300, right: 240 } })
+    await settings.writeArrangement()
     expect(space.get('arrangement')).toEqual({ widths: { left: 300, right: 240 } })
     expect(space.has('settings')).toBe(false)
     expect(settings.arrangement).toEqual({ widths: { left: 300, right: 240 } })
     expect(told).toBe(0)
+  })
+
+  // A plugin opening and closing a view in a loop moves the layout each time, which writes nothing each time
+  it(`writes a burst of arrangements once, the latest, ${ARRANGEMENT_WRITE_MS} ms after the first, and none with nothing new`, async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { settings, space, core } = made()
+    const load = settings.load()
+    await vi.advanceTimersByTimeAsync(0)
+    await load
+    const writes = () => core.calls('storage.set').length
+    for (let at = 0; at < 50; at++) settings.keepArrangement({ at })
+    await vi.advanceTimersByTimeAsync(ARRANGEMENT_WRITE_MS - 1)
+    expect(writes()).toBe(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(writes()).toBe(1)
+    expect(space.get('arrangement')).toEqual({ at: 49 })
+    await vi.advanceTimersByTimeAsync(ARRANGEMENT_WRITE_MS * 3)
+    await settings.writeArrangement()
+    expect(writes()).toBe(1)
+    settings.keepArrangement({ at: 50 })
+    await settings.writeArrangement()
+    expect(writes()).toBe(2)
+    await vi.advanceTimersByTimeAsync(ARRANGEMENT_WRITE_MS * 3)
+    expect(writes()).toBe(2)
   })
 })
