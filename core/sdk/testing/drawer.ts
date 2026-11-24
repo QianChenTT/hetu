@@ -3,7 +3,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { type BridgeEvent, linkAt, type Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
-import { DRAG_TOKEN_MS, dragTokenOf, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
+import { DRAG_TOKEN_MS, DRAG_TOKENS_PER_PLUGIN, dragTokenOf, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { Editor } from '../editor.ts'
 import type { Theme } from '../frame.ts'
 import type { Transport } from '../transport.ts'
@@ -44,6 +44,10 @@ export type FakeFrame = {
   // The human pressed in the frame, or pressed Enter in it, so one open from the plugin's frames within
   // OPEN_GRACE_MS is theirs
   pressed(): void
+  // Enter went down in the frame while it held focus, a press as pressed is
+  keyed(): void
+  // The human let go of the press, which counts it from then, as for a long press
+  released(): void
   // The frame's open as @hetu/sdk/frame's: the human's after pressed, else the plugin's own in the background. Answers
   // the note's instance, null when nothing opened
   open(path: string): string | null
@@ -168,14 +172,18 @@ export class FakeDrawer {
         onTheme = handler
       },
       pressed: () => this.credit.pressed(SELF),
+      keyed: () => this.credit.keyed(SELF),
+      released: () => this.credit.released(SELF),
       open: path => {
-        if (!asked({ kind: 'open', path })) return null
+        if (!asked({ kind: 'open', path }) || !this.has('ui.view')) return null
         if (this.credit.use(SELF)) return this.humanOpen(path)
         return this.pluginOpen(path) ? [...this.notes].find(([, held]) => held.path === path)?.[0] ?? null : null
       },
       dragToken: path => {
-        if (!asked({ kind: 'drag-token', ask: 0, path }) || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return null
+        if (!asked({ kind: 'drag-token', ask: 0, path }) || !this.has('ui.view') || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return null
         const token = globalThis.crypto.randomUUID().replaceAll('-', '')
+        // Its oldest goes first past the cap, as in hetu's main
+        if (this.dragTokens.size >= DRAG_TOKENS_PER_PLUGIN) this.dragTokens.delete(this.dragTokens.keys().next().value as string)
         this.dragTokens.set(token, { path, until: Date.now() + DRAG_TOKEN_MS })
         return token
       },
@@ -196,7 +204,8 @@ export class FakeDrawer {
     const held = token === null ? undefined : this.dragTokens.get(token)
     if (token === null || held === undefined) return null
     this.dragTokens.delete(token)
-    if (Date.now() > held.until || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [held.path] } })) return null
+    // The fake luoshu holds no links, so the path read is the one named
+    if (Date.now() > held.until || !this.has('ui.view') || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [held.path] } })) return null
     return this.humanOpen(held.path)
   }
 

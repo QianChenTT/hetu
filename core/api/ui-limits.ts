@@ -128,8 +128,9 @@ export class OpenCredit {
   }
 }
 
-// How long a token for dragging a note out of a frame waits for its drop
+// How long a token for dragging a note out of a frame waits for its drop, and the most one plugin holds
 export const DRAG_TOKEN_MS = 30 * 60 * 1000
+export const DRAG_TOKENS_PER_PLUGIN = 1000
 // What a frame puts as text/plain in a drag of a note, the token after it
 export const DRAG_PREFIX = 'hetu-drag:'
 

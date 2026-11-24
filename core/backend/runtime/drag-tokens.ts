@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Caller } from '../../api/envelope.ts'
-import { DRAG_TOKEN_MS } from '../../api/ui-limits.ts'
+import { DRAG_TOKEN_MS, DRAG_TOKENS_PER_PLUGIN } from '../../api/ui-limits.ts'
 import { callerOf, type PluginReach, reachedBy } from './images.ts'
 
 // Tokens for notes dragged out of plugins' frames. The editor page asks one for a note a frame draws and main mints it
@@ -11,7 +11,7 @@ import { callerOf, type PluginReach, reachedBy } from './images.ts'
 // ends after DRAG_TOKEN_MS and when the editor page unloads, and a plugin holds at most DRAG_TOKENS_PER_PLUGIN, its
 // oldest going first
 
-export const DRAG_TOKENS_PER_PLUGIN = 1000
+export { DRAG_TOKENS_PER_PLUGIN }
 
 type Held = { plugin: string, incarnation: number, path: string, until: number }
 
