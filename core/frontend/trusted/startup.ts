@@ -1,10 +1,9 @@
-// The startup flow (D-672, D-679, D-744): four steps, one drawn at a time, on the trusted window's first tab. hetu
-// ships no plugin, so every install goes through it: the notes folder, the first plugin installed with the Install
+// The startup flow (D-672, D-679, D-744, D-750): four steps, one drawn at a time, on the trusted window's first tab.
+// hetu ships no plugin, so every install goes through it: the notes folder, the first plugin installed with the Install
 // button's controls, one line saying where the plugin installed is approved, then what a grant is. Approving itself is
-// no step of the flow
-// TODO: end the flow, by a last step the human clicks through or by a plugin installed, and draw it with no way to
-// leave before that end
+// no step of the flow. While it is due it has no way out. Once a plugin is installed it ends and stays on its tab
 import type { SecurityList } from '../../api/actions.ts'
+import { inPluginFolder, welcomeDue } from '../../api/trusted.ts'
 
 // The release the install step fills in, only as a suggestion the human edits or replaces
 export const SUGGESTED_LINK = 'https://github.com/QianChenTT/hetu-plugins'
@@ -13,11 +12,10 @@ export const SUGGESTED_LINK = 'https://github.com/QianChenTT/hetu-plugins'
 // copied into the plugin folder by hand
 export const APPROVE_LINE = 'Approve what you installed in its Confirm at the top of this window, or with Approve in the Plugins tab for a plugin copied in by hand'
 
-// offers is the control the step draws: the folder dialog, the Install button's controls or none. approve, the
-// plugins waiting for Approve, is offered by no step
-export type StartupStep = { title: string, lines: string[], done: string | null, offers: 'folder' | 'install' | 'approve' | null }
-// at is the step drawn
-export type Startup = { steps: StartupStep[], at: number, suggested: string }
+// offers is the control the step draws: the folder dialog, the Install button's controls or none
+export type StartupStep = { title: string, lines: string[], done: string | null, offers: 'folder' | 'install' | null }
+// at is the step drawn. due says the flow has not ended, so the guide draws no way out
+export type Startup = { steps: StartupStep[], at: number, suggested: string, due: boolean }
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -26,11 +24,11 @@ export function startupScreen(list: SecurityList, at: number | null): Startup | 
   if (list.stopped !== null) return null
   const steps = stepsOf(list)
   const first = steps.findIndex(step => step.done === null)
-  return { steps, at: at ?? (first === -1 ? 0 : first), suggested: SUGGESTED_LINK }
+  return { steps, at: at ?? (first === -1 ? 0 : first), suggested: SUGGESTED_LINK, due: welcomeDue(list) }
 }
 
 function stepsOf(list: SecurityList): StartupStep[] {
-  const inFolder = list.plugins.filter(plugin => plugin.from === 'folder').length
+  const inFolder = inPluginFolder(list)
   return [
       {
         title: 'Pick the notes folder',

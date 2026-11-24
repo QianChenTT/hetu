@@ -188,6 +188,10 @@ async function start(): Promise<void> {
       open: () => {
         const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), editorPreload))
         if (router !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', router)
+        // The startup flow has no way out until a plugin is installed, so the window stays. Quit still closes it
+        window.on('close', event => {
+          if (quitting === null && pluginsManager?.welcomeDue() === true) event.preventDefault()
+        })
         return window
       },
     })

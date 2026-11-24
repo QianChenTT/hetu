@@ -360,8 +360,9 @@ export class TrustedPage {
     this.redraw()
   }
 
-  // Away from the guide to the plugin list. Its tab shows it again
+  // Away from the guide to the plugin list once the flow ended. Its tab shows it again. While it is due there is no way out
   leaveGuide(): void {
+    if (this.last !== null && welcomeDue(this.last)) return
     this.tab = 'plugins'
     this.redraw()
   }

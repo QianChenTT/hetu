@@ -22,11 +22,16 @@ export function quotedPath(path: string): string {
   return quoted(path).replace(HIDDEN, hidden => `\\u${hidden.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }
 
-// The startup flow is due while hetu runs: every install goes through it and nothing cancels it, so main opens the
-// trusted window on it at start and the window opens on its tab
-// TODO: not due once the flow ended, by a last step the human clicked through or by a plugin installed
+// The plugins in the plugin folder, approved, waiting, refused or failed alike
+export function inPluginFolder(list: SecurityList): number {
+  return list.plugins.filter(plugin => plugin.from === 'folder').length
+}
+
+// The startup flow is due while hetu runs and the plugin folder holds no plugin: every install goes through it and
+// nothing cancels it, so main opens the trusted window on it at start and keeps the window open, and the window opens
+// on its tab. It ends once the human installed a plugin, and comes back at the next start if the folder is empty again
 export function welcomeDue(list: SecurityList): boolean {
-  return list.stopped === null
+  return list.stopped === null && inPluginFolder(list) === 0
 }
 
 // One capability as its type and each scope quoted, a target, a topic and a variable name too, so nothing a plugin or
