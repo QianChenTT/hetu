@@ -870,13 +870,23 @@ const writeAll: Capability = { type: 'luoshu.write', paths: ['**'] }
 const files = async (folder: string) => (await readdir(folder, { recursive: true, withFileTypes: true }))
   .filter(entry => entry.isFile()).map(entry => path.relative(folder, path.join(entry.parentPath, entry.name)).split(path.sep).join('/')).sort()
 
+// The writer's worker's notes calls, as the worker holds them
+type Writer = { ctx: { luoshu: {
+  write(args: { path: string, text: string }): Promise<unknown>
+  move(args: { from: string, to: string }): Promise<unknown>
+  read(args: { path: string }): Promise<{ version: string }>
+  remove(args: { path: string, baseVersion: string }): Promise<unknown>
+} } }
 // What the writer's worker gets back for each call, the error's code for a refused one
-const write = (worker: Worker, note: string) => run<string>(worker, `return ctx.luoshu.write({ path: '${note}', text: '' }).then(() => 'ok', err => err.code)`)
-const move = (worker: Worker, from: string, to: string) => run<string>(worker, `return ctx.luoshu.move({ from: '${from}', to: '${to}' }).then(() => 'ok', err => err.code)`)
+const write = (worker: Worker, note: string) => worker.evaluate(at => (globalThis as unknown as Writer).ctx.luoshu.write({ path: at, text: '' })
+  .then(() => 'ok', (err: { code: string }) => err.code), note)
+const move = (worker: Worker, from: string, to: string) => worker.evaluate(([source, target]) => (globalThis as unknown as Writer).ctx.luoshu.move({ from: source, to: target })
+  .then(() => 'ok', (err: { code: string }) => err.code), [from, to] as const)
 // A remove names the version it read, as a plugin binning a note it can see does
-const remove = (worker: Worker, note: string) => run<string>(worker, `
-  return ctx.luoshu.read({ path: '${note}' }).then(read => ctx.luoshu.remove({ path: '${note}', baseVersion: read.version })).then(() => 'ok', err => err.code)
-`)
+const remove = (worker: Worker, note: string) => worker.evaluate(at => {
+  const { luoshu } = (globalThis as unknown as Writer).ctx
+  return luoshu.read({ path: at }).then(read => luoshu.remove({ path: at, baseVersion: read.version })).then(() => 'ok', (err: { code: string }) => err.code)
+}, note)
 
 // Puts back what the Windows recycle bin holds from folder, so no run leaves its notes there. Read through the shell's
 // own view of the bin, which names each item's original folder
