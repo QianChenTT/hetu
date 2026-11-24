@@ -28,6 +28,8 @@ export function noteBar(notice: NoteNotice): { text: string, actions: NoteAction
       return { text: 'This note changed outside hetu while it has unsaved text. Reload keeps your text as a draft', actions: ['reload', 'keep-mine'] }
     case 'locked':
       return { text: 'This note is locked, so it wasn\'t saved. Your text is kept as a draft. Take over frees it and saves', actions: ['take-over', 'dismiss'] }
+    case 'gone':
+      return { text: `This note was moved or deleted, so this tab can't save it${notice.kept ? '. Your text is kept as a draft' : ''}`, actions: ['dismiss'] }
     case 'refused':
       return { text: refusalText(notice.code, notice.reason), actions: ['dismiss'] }
   }
