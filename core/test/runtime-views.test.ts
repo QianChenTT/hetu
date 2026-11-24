@@ -27,7 +27,7 @@ describe('the views host', () => {
   it('mints a single-use URL for a running plugin\'s frame and serves its entry page once', () => {
     const views = made()
     const url = views.mint('kanban', 'board')
-    expect(url).toBe(`hetu://views/${'1'.padStart(32, '0')}/dist/board.html`)
+    expect(url).toBe(`hetu://kanban.views/${'1'.padStart(32, '0')}/dist/board.html`)
     const page = views.serve(url!)
     expect(text(page)).toBe('<script src="board.js"></script>')
     expect(page?.type).toBe('text/html; charset=utf-8')
@@ -57,12 +57,38 @@ describe('the views host', () => {
     const url = views.mint('kanban', 'board')!
     const token = url.split('/')[3]
     const csp = views.serve(url)!.csp
-    expect(csp).toBe(frameCsp(token!))
+    expect(csp).toBe(frameCsp('kanban', token!))
+    const own = `hetu://kanban.views/${token}/`
     for (const part of [
-      "default-src 'none'", `script-src hetu://views/${token}/`, `style-src hetu://views/${token}/`, `img-src hetu://views/${token}/`,
-      `font-src hetu://views/${token}/`, "connect-src 'none'", "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
+      "default-src 'none'", `script-src ${own}`, `style-src ${own}`, `img-src ${own}`, `font-src ${own}`, "connect-src 'none'", "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
       'frame-ancestors hetu://editor',
     ]) expect(csp).toContain(part)
+  })
+
+  it('serves a token only on its own plugin\'s host, never another plugin\'s or the bare views host', () => {
+    const views = made()
+    views.started('other', 1, files, { board: 'dist/board.html' })
+    const url = views.mint('kanban', 'board')!
+    const base = url.replace(/dist\/board\.html$/, '')
+    for (const host of ['other.views', 'views', 'x.kanban.views']) {
+      expect(views.serve(url.replace('kanban.views', host)), host).toBe(null)
+      expect(views.serve(`${base.replace('kanban.views', host)}dist/board.js`), host).toBe(null)
+      expect(views.gone(url.replace('kanban.views', host)), host).toBe(null)
+    }
+    // None of those took the token, which still loads once on its own host
+    expect(text(views.serve(url))).toBe('<script src="board.js"></script>')
+    expect(text(views.serve(`${base}dist/board.js`))).toBe('console.log(1)')
+    expect(views.gone(url)).toEqual({ plugin: 'kanban' })
+  })
+
+  it('mints and serves on the host of a plugin id with an underscore or of 64 characters', () => {
+    const views = made()
+    for (const id of ['my_board', `p${'a'.repeat(62)}z`]) {
+      views.started(id, 1, files, { board: 'dist/board.html' })
+      const url = views.mint(id, 'board')!
+      expect(url.startsWith(`hetu://${id}.views/`), url).toBe(true)
+      expect(text(views.serve(url))).toBe('<script src="board.js"></script>')
+    }
   })
 
   it('mints nothing for a frame the plugin lacks or a plugin not running', () => {
@@ -93,21 +119,39 @@ describe('the views host', () => {
     expect(views.serve(two)).toBe(null)
   })
 
-  it('serves a running plugin\'s icons as svg or png only', () => {
+  it('serves a running plugin\'s icons as svg or png only, on its own host', () => {
     const views = made()
-    expect(views.serve('hetu://views/icon/kanban/dist/icon.svg')?.type).toBe('image/svg+xml')
-    expect(views.serve('hetu://views/icon/kanban/dist/icon.png')?.type).toBe('image/png')
-    expect(views.serve('hetu://views/icon/kanban/dist/board.js')).toBe(null)
-    expect(views.serve('hetu://views/icon/kanban/dist/board.html')).toBe(null)
-    expect(views.serve('hetu://views/icon/other/dist/icon.svg')).toBe(null)
+    expect(views.serve('hetu://kanban.views/icon/dist/icon.svg')?.type).toBe('image/svg+xml')
+    expect(views.serve('hetu://kanban.views/icon/dist/icon.png')?.type).toBe('image/png')
+    expect(views.serve('hetu://kanban.views/icon/dist/board.js')).toBe(null)
+    expect(views.serve('hetu://kanban.views/icon/dist/board.html')).toBe(null)
+    expect(views.serve('hetu://other.views/icon/dist/icon.svg')).toBe(null)
     views.ended('kanban', 1)
-    expect(views.serve('hetu://views/icon/kanban/dist/icon.svg')).toBe(null)
+    expect(views.serve('hetu://kanban.views/icon/dist/icon.svg')).toBe(null)
+  })
+
+  it('refuses an icon asked on another plugin\'s host or the bare views host', () => {
+    const views = made()
+    views.started('other', 1, [file('dist/mine.svg', '<svg/>')], {})
+    expect(views.serve('hetu://other.views/icon/dist/mine.svg')?.type).toBe('image/svg+xml')
+    for (const url of [
+      'hetu://other.views/icon/dist/icon.svg', 'hetu://other.views/icon/kanban/dist/icon.svg', 'hetu://kanban.views/icon/dist/mine.svg',
+      'hetu://kanban.views/icon/other/dist/mine.svg', 'hetu://views/icon/kanban/dist/icon.svg', 'hetu://x.kanban.views/icon/dist/icon.svg',
+    ]) {
+      expect(views.serve(url), url).toBe(null)
+    }
+  })
+
+  it('serves the icons of a plugin whose id has an underscore', () => {
+    const views = made()
+    views.started('my_board', 1, files, {})
+    expect(views.serve('hetu://my_board.views/icon/dist/icon.svg')?.type).toBe('image/svg+xml')
   })
 
   it('refuses a URL off the views host or with a user, a port or a query', () => {
     const views = made()
     const url = views.mint('kanban', 'board')!
-    for (const other of [url.replace('views', 'editor'), url.replace('hetu://', 'hetu://u@'), url.replace('views/', 'views:1/'), `${url}?x=1`]) {
+    for (const other of [url.replace('kanban.views', 'editor'), url.replace('hetu://', 'hetu://u@'), url.replace('views/', 'views:1/'), `${url}?x=1`, `${url}#x`]) {
       expect(views.serve(other), other).toBe(null)
     }
   })
