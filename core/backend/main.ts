@@ -361,9 +361,9 @@ async function start(): Promise<void> {
       contents.on('render-process-gone', unloaded)
       contents.on('destroyed', unloaded)
       contents.on('dom-ready', () => drawers.loaded(contents))
-      // The core keys reach the page whatever has focus, a frame included, and so do the keys a plugin's views bound
+      // The core keys reach the page whatever has focus, a frame included. So do the keys a plugin's views bound
       // while focus is in one of its frames. Enter going on to a plugin's frame is pushed as a press there. A key headed
-      // for a frame the page didn't let focus into stops here, before the frame hears it, and the page takes focus back
+      // for a frame the page didn't let focus into stops here, before the frame hears it and the page takes focus back
       contents.on('before-input-event', (event, input) => {
         const focused = contents.focusedFrame
         const focus = { focused: focused?.url ?? null, frame: childFrameOf(focused) }

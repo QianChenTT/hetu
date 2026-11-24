@@ -161,7 +161,7 @@ export type SentToPage = Exclude<EditorKey, { channel: null }> | { channel: 'het
 // to the page. focus.focused is the URL of the frame holding focus and focus.frame the page's own frame it is in or
 // inside of, null with focus in the page. letIn is the frame the page let focus into, by a press in it or the core's
 // own move. Frames are matched on their ticket, which a frame moving within its own page keeps. A key headed for any
-// other of the page's frames stops here, so a frame that took focus itself hears none of it, and the page takes focus
+// other of the page's frames stops here, so a frame that took focus itself hears none of it and the page takes focus
 // back from it at once. An IME composing in the frame starts with such a key, Process, which main sees and the
 // composition it starts never does, so it follows focus to the note. Only a core key still goes on to the page
 export function guardedKeyOf(
