@@ -152,50 +152,50 @@ describe('the core\'s log failing while hetu runs', () => {
   })
 })
 
-type NoticeMarks = { origin: number, shown?: number, clicked?: number }
+type NoticeTimes = { timeOrigin: number, shown?: number, clicked?: number }
 
-// Room for a mark to trail the moment it marks and for the clocks of two processes to differ
-const SLACK = 50
+// Room for a time to trail the moment it records and for the clocks of two processes to differ
+const CLOCK_SLACK_MS = 50
 
 // Put in the editor page before its own code runs, or through evaluate when that came too late: when the notice named
-// first showed and when the first click on it landed, each by the page's clock the shell times notices by. The click is
-// marked as it bubbles up to the window, after the notice's own handler read the clock. Put in once the notice already
-// showed, shown stays unset
-function markNotice(name: string): void {
+// first showed and when the first click on it landed, each by the page's clock the shell times notices by, with the
+// page's time origin to turn them into epoch ms. The click is recorded as it bubbles up to the window, after the
+// notice's own handler read the clock. Put in once the notice already showed, shown stays unset
+function recordNoticeTimes(name: string): void {
   if (!location.href.startsWith('hetu://editor/')) return
-  const holder = window as unknown as { noticeMarks?: NoticeMarks }
-  if (holder.noticeMarks !== undefined) return
-  const marks: NoticeMarks = { origin: performance.timeOrigin }
-  holder.noticeMarks = marks
+  const holder = window as unknown as { noticeTimes?: NoticeTimes }
+  if (holder.noticeTimes !== undefined) return
+  const times: NoticeTimes = { timeOrigin: performance.timeOrigin }
+  holder.noticeTimes = times
   const isNotice = (node: unknown) => node instanceof HTMLButtonElement && node.textContent === name
-  const showing = () => [...document.querySelectorAll('button')].some(isNotice)
-  const late = showing()
+  const noticeShowing = () => [...document.querySelectorAll('button')].some(isNotice)
+  const alreadyShowing = noticeShowing()
   new MutationObserver(() => {
-    if (!late && marks.shown === undefined && showing()) marks.shown = performance.now()
+    if (!alreadyShowing && times.shown === undefined && noticeShowing()) times.shown = performance.now()
   }).observe(document, { subtree: true, childList: true })
   window.addEventListener('click', event => {
-    if (marks.clicked === undefined && isNotice(event.target)) marks.clicked = performance.now()
+    if (times.clicked === undefined && isNotice(event.target)) times.clicked = performance.now()
   })
 }
 
-const noticeMarks = (editor: Page) => editor.evaluate(() => ({ ...(window as unknown as { noticeMarks: NoticeMarks }).noticeMarks }))
+const noticeTimes = (editor: Page) => editor.evaluate(() => ({ ...(window as unknown as { noticeTimes: NoticeTimes }).noticeTimes }))
 
-// When main made the first window that loads the trusted page, by the epoch clock the editor's marks convert to
-const markTrustedMade = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => {
-  const holder = globalThis as { trustedMade?: number }
+// When main created the first window that loads the trusted page, in epoch ms
+const recordTrustedCreated = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => {
+  const holder = globalThis as { trustedCreatedAt?: number }
   electronApp.on('browser-window-created', (_event, window) => {
-    const made = performance.timeOrigin + performance.now()
+    const created = Date.now()
     window.once('ready-to-show', () => {
-      if (window.webContents.getURL().startsWith('hetu://trusted/')) holder.trustedMade ??= made
+      if (window.webContents.getURL().startsWith('hetu://trusted/')) holder.trustedCreatedAt ??= created
     })
   })
 })
 
-// When main made the first trusted window, waiting up to ms for one
-async function trustedMade(app: ElectronApplication, ms = 0): Promise<number | undefined> {
-  const made = () => app.evaluate(() => (globalThis as { trustedMade?: number }).trustedMade)
-  for (let waited = 0; waited < ms && await made() === undefined; waited += 50) await tick(50)
-  return made()
+// When main created the first trusted window, waiting up to ms for one
+async function trustedCreatedAt(app: ElectronApplication, ms = 0): Promise<number | undefined> {
+  const created = () => app.evaluate(() => (globalThis as { trustedCreatedAt?: number }).trustedCreatedAt)
+  for (let waited = 0; waited < ms && await created() === undefined; waited += 50) await tick(50)
+  return created()
 }
 
 describe('a prompt a plugin\'s call raises', () => {
@@ -219,21 +219,24 @@ describe('a prompt a plugin\'s call raises', () => {
     const dataDir = await data({ workers })
     const app = await start(dataDir, await install())
     const name = 'The plugin "asker" asks to use something for the first time'
-    await app.context().addInitScript(markNotice, name)
-    await markTrustedMade(app)
+    await app.context().addInitScript(recordNoticeTimes, name)
+    await recordTrustedCreated(app)
     const editor = await editorPage(app)
-    await editor.evaluate(markNotice, name)
+    await editor.evaluate(recordNoticeTimes, name)
     const notice = editor.getByRole('button', { name })
     await notice.waitFor()
     // The call opened nothing, and a click as the notice appears opens nothing either. Checked only when the click
     // landed inside the delay by the page's clock. A slower machine skips it, the delay checked by when the trusted
-    // window was made at the end
+    // window was created at the end
     await notice.click()
     await tick(500)
-    const marks = await noticeMarks(editor)
-    if (marks.shown !== undefined && marks.clicked !== undefined && marks.clicked - marks.shown < INPUT_DELAY_MS - SLACK) {
+    const times = await noticeTimes(editor)
+    expect(times.shown, 'notice drawn before its times were recorded').toBeDefined()
+    expect(times.clicked, 'the click on the notice was not recorded').toBeDefined()
+    const early = times.clicked! - times.shown! < INPUT_DELAY_MS - CLOCK_SLACK_MS
+    if (early) {
       expect(await visibleWindows(app)).toEqual(['hetu://editor/'])
-    } else if (await trustedMade(app, 3000) !== undefined) {
+    } else if (await trustedCreatedAt(app, 3000) !== undefined) {
       // The click past the delay opened the trusted window. Closed, so the click below opens it again with a delay of
       // its own
       await app.evaluate(({ BrowserWindow }) => {
@@ -263,10 +266,13 @@ describe('a prompt a plugin\'s call raises', () => {
     const entry = (await new StateStore(dataDir).load()).state.plugins.asker
     expect(entry.firstUse).toEqual([])
 
-    // The trusted window was made no sooner than the delay after the notice showed, whichever click opened it
-    if (marks.shown !== undefined) {
-      const made = await trustedMade(app)
-      expect(made! - (marks.origin + marks.shown)).toBeGreaterThanOrEqual(INPUT_DELAY_MS - SLACK)
+    // Past the delay the early check above was skipped, so this one shows the trusted window wasn't created sooner
+    // than the delay after the notice showed. Inside the delay the window comes from the later click, so the early
+    // check is the guard there
+    if (!early) {
+      const created = await trustedCreatedAt(app)
+      expect(created).toBeDefined()
+      expect(created! - (times.timeOrigin + times.shown!)).toBeGreaterThanOrEqual(INPUT_DELAY_MS - CLOCK_SLACK_MS)
     }
   })
 
