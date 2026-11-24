@@ -448,6 +448,9 @@ export type SecurityList = {
   requests: HeldRequest[]
   identities: ListedIdentity[]
   stopped: StoppedMode | null
+  // The startup flow is due: decided at start, while the plugin folder held no plugin, and ended for the run once one
+  // is installed. Never while hetu is stopped
+  startupDue: boolean
 }
 
 // What a window's banner shows: each policy job's state, the plugins crashed, failed or unresponsive that nobody restarted, the

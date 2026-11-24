@@ -8,7 +8,6 @@ import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { grantSentence } from '../../api/trusted.ts'
 import { watchingModuleIds } from '../../api/ids.ts'
 import { installBox, Installer, type InstallBox, type InstallFlow } from './install.ts'
-import { startupDue } from '../../api/trusted.ts'
 import { startupScreen, type Startup } from './startup.ts'
 
 export type Bridge = {
@@ -247,7 +246,7 @@ export function screen(list: SecurityList, flow: InstallFlow | null = null, tab:
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
     installing: installBox(flow),
     startup: startupScreen(list, at),
-    tab: tab ?? (startupDue(list) ? 'start' : 'plugins'),
+    tab: tab ?? (list.startupDue ? 'start' : 'plugins'),
     tabs: tabs.map(id => ({ id, label: tabLabels[id], mark: id === 'plugins' ? waitingMark(list) : null })),
   }
 }
@@ -362,7 +361,7 @@ export class TrustedPage {
 
   // Away from the guide to the plugin list once the flow ended. Its tab shows it again. While it is due there is no way out
   leaveGuide(): void {
-    if (this.last !== null && startupDue(this.last)) return
+    if (this.last !== null && this.last.startupDue) return
     this.tab = 'plugins'
     this.redraw()
   }
@@ -411,7 +410,7 @@ export class TrustedPage {
 
   private redraw(): void {
     // The first tab is picked once from the first list, so an install mid-guide doesn't move the human away
-    if (this.last !== null && this.tab === null) this.tab = startupDue(this.last) ? 'start' : 'plugins'
+    if (this.last !== null && this.tab === null) this.tab = this.last.startupDue ? 'start' : 'plugins'
     if (this.last === null) return
     const shown = screen(this.last, this.installer.flow, this.tab, this.step)
     // The guide stays on the step it was first drawn at, so a step done, as by an install, never moves the human on by itself

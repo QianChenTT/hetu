@@ -1,7 +1,7 @@
 import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList, type Staged, type StagedPlugin } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { grantClause, grantSentence, sourceLine, UNSIGNED, startupDue } from '../../api/trusted.ts'
+import { grantClause, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
@@ -113,9 +113,16 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     throw { code: 'unavailable' }
   }
 
-  // Whether main opens the trusted window on its startup flow at start
+  // The startup flow, decided once the start scanned the plugin folder: due while it held no plugin. Every install goes
+  // through it and nothing cancels it, so main opens the trusted window on it at start and keeps the window open. It
+  // ends once a plugin is installed and stays ended for the run, so a folder emptied later brings it back only at the
+  // next start
+  private startup = false
+
+  // Whether the startup flow is due, for main and for the trusted window's list
   startupDue(): boolean {
-    return startupDue(this.securityList())
+    if (this.startup && this.list().some(row => row.from === 'folder')) this.startup = false
+    return this.startup && this.stoppedMode === null
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core
@@ -168,6 +175,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       requests,
       identities: this.listedIdentities(),
       stopped: this.stoppedMode,
+      startupDue: this.startupDue(),
     }
   }
 
@@ -351,6 +359,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     await this.serial(() => this.classAll('start'))
     this.classedAtStart = true
     await this.scan()
+    this.startup = !this.list().some(row => row.from === 'folder')
     this.replan()
     await this.settled()
     if (!this.closing) this.note('core.ready', { ...this.policyJobs() })
