@@ -273,7 +273,7 @@ describe('the screen with what a manifest chose in quotes', () => {
       reachable: [{ type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] }],
       callers: [],
     })
-    expect(lines).toContain('Class 4, Powerful: exec of ["git","status"] with "HOME" from your environment')
-    expect(lines).toContain('Through plugin.call it is connected to: plugin.call to "notes", events.subscribe to "notes.saved"')
+    expect(lines).toContain('Class 4, Powerful: it can run the command ["git","status"] outside the sandbox with your rights on this computer, with "HOME" from your environment')
+    expect(lines).toContain('Through the plugins it calls it can call the plugin "notes" and it can hear the events "notes.saved"')
   })
 })

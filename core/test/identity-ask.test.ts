@@ -83,7 +83,7 @@ describe('an ask for a pair\'s items', () => {
     expect(shown.map(one => [one.root, one.field])).toEqual([['mcp-http-handler', 'client-1'], ['beta', 'note-bot']])
     expect(shown[0].text).toBe('Give "client-1" under mcp-http-handler what it asks for through mcp')
     expect(shown[0].notes).toEqual([
-      'It asks for: luoshu.read on "inbox/**"', 'It asks for: luoshu.write on "inbox/**"',
+      'It asks to read the notes at "inbox/**"', 'It asks to create, change, move and delete the notes at "inbox/**"',
       'Each call made for it reaches only what the calling plugin holds as well', 'mcp-http-handler may pass on to it what a plugin it called found that it may read, without holding that itself', 'It holds the items until hetu quits',
       'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
     ])
@@ -159,7 +159,7 @@ describe('an ask for a pair\'s items', () => {
     expect(await ask('client-1', [inbox])).toEqual({ asked: 'granted' })
     expect(pluginsManager.pending()).toEqual([])
     await ask('client-1', [inbox, write])
-    expect((await list()).requests[0].notes[0]).toBe('It asks for: luoshu.write on "inbox/**"')
+    expect((await list()).requests[0].notes[0]).toBe('It asks to create, change, move and delete the notes at "inbox/**"')
   })
 
   it('quotes each scope as a widen does, a quote in it escaped', async () => {
@@ -167,7 +167,7 @@ describe('an ask for a pair\'s items', () => {
     await ask('https://claude.ai/oauth/claude-code-client-metadata#3', [{ type: 'luoshu.read', paths: ['say "yes"/**', 'a, b/**'] }])
     const shown = (await list()).requests[0]
     expect(shown.text).toBe('Give "https://claude.ai/oauth/claude-code-client-metadata" under mcp-http-handler what it asks for through mcp')
-    expect(shown.notes[0]).toBe('It asks for: luoshu.read on "say \\"yes\\"/**", "a, b/**"')
+    expect(shown.notes[0]).toBe('It asks to read the notes at "say \\"yes\\"/**", "a, b/**"')
   })
 
   it('refuses at the raise an ask that would put the pair past a plugin\'s own caps, the items it holds counted', async () => {

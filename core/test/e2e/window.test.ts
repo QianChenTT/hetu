@@ -21,7 +21,7 @@ describe('a window\'s way in', () => {
     const app = await launch(await dataWith({}))
     const page = await editorPage(app)
     // The core holds the gate and the grant risk classifier, so once both started only the notes folder is left to pick
-    const settled = ['pick a luoshu folder']
+    const settled = ['No notes folder is picked yet']
     await until(async () => JSON.stringify(await page.locator('#banner li').allTextContents()) === JSON.stringify(settled))
     expect(await page.locator('#banner li').allTextContents()).toEqual(settled)
   })
@@ -42,7 +42,7 @@ describe('a window\'s way in', () => {
     await writeFile(switches, written)
     const clean = await launch(dataDir)
     const again = await editorPage(clean)
-    await until(async () => (await again.locator('#banner li').allTextContents()).includes('pick a luoshu folder'))
+    await until(async () => (await again.locator('#banner li').allTextContents()).includes('No notes folder is picked yet'))
     expect(await again.locator('#banner li').allTextContents()).not.toContain(line)
   })
 

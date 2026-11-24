@@ -96,9 +96,9 @@ describe('what the trusted window draws', () => {
       })],
     }))
     expect(drawn.plugins[0].items).toMatchObject([
-      { line: 'luoshu.read on "**" · on', on: true },
-      { line: 'luoshu.read on "notes/**" · off · other luoshu.read items still on may reach the same paths', on: false },
-      { line: 'storage · asks at first use', on: false },
+      { line: 'Read all your notes · on', on: true },
+      { line: 'Read the notes at "notes/**" · off · other grants of the same kind still on may reach the same notes', on: false },
+      { line: 'Keep data of its own · asks at first use', on: false },
     ])
   })
 
@@ -278,9 +278,9 @@ describe('what the trusted window draws', () => {
       identities: [{ root: 'mcp-http-handler', field: 'client#1', items: [items[0]], revoked: false }],
     }))
     expect(drawn.plugins[0].items.map(item => item.line)).toEqual([
-      'plugin.call to "notes" · on', 'events.subscribe to "notes.saved" · on', 'exec of ["git","status"] with "HOME" from your environment · on',
+      'Call the plugin "notes" · on', 'Hear the events "notes.saved" · on', 'Run the command ["git","status"] outside the sandbox with your rights on this computer, with "HOME" from your environment · on',
     ])
-    expect(drawn.identities.rows[0].line).toContain('plugin.call to "notes"')
+    expect(drawn.identities.rows[0].line).toContain('Call the plugin "notes"')
   })
 
   it('lists each pair by its field in quotes under its root plugin with its items and a Revoke, a revoked one with no button, then what the list holds', () => {
@@ -293,7 +293,7 @@ describe('what the trusted window draws', () => {
     expect(drawn.identities).toEqual({
       rows: [
         {
-          label: '"client#1"', line: ' under mcp-http-handler · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"',
+          label: '"client#1"', line: ' under mcp-http-handler · Read the notes at "inbox/**" · Create, change, move and delete the notes at "say \\"hi\\"/**"',
           change: { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' },
         },
         { label: '"https://claude.ai/oauth/claude-code-client-metadata#3"', line: ' under mcp-http-handler · revoked until hetu quits', change: null },

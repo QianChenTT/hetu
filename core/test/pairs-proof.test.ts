@@ -151,7 +151,7 @@ describe('a pair\'s items in the joined core', () => {
     expect(shown.map(held => held.text)).toEqual([
       'Give "alpha" under mcp-http-handler what it asks for through mcp', 'Give "beta" under mcp-http-handler what it asks for through mcp',
     ])
-    expect(shown[0].notes[0]).toBe('It asks for: luoshu.read on "inbox/**"')
+    expect(shown[0].notes[0]).toBe('It asks to read the notes at "inbox/**"')
     // Before the Confirm alpha reads nothing, after it inbox and not private
     expect(await read(mcp, one, 'inbox/a.md')).toBe('not-granted')
     await run.pluginsManager.confirm(shown[0].id, {})

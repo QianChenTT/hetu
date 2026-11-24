@@ -45,7 +45,7 @@ describe("the core's words for a change", () => {
 
   it('quotes what a plugin wrote as data, so a scope reads as text and not as a sentence', () => {
     const { text } = describeChange(one({ kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['save note'] } }))
-    expect(text).toBe('Give search luoshu.read on "save note"')
+    expect(text).toBe('Give search the grant to read the notes at "save note"')
   })
 
   // What each plugin asks for, its class and the source are the plugins manager's to add from the staging it holds
@@ -59,14 +59,14 @@ describe("the core's words for a change", () => {
 
   it('names the paths a list grant reaches', () => {
     const { text } = describeChange(one({ kind: 'grant.widen', plugin: 'tree', capability: { type: 'luoshu.list', paths: ['notes/**'] } }))
-    expect(text).toBe('Give tree luoshu.list on "notes/**"')
+    expect(text).toBe('Give tree the grant to see the names of the notes at "notes/**"')
   })
 
   it('quotes a pair\'s field and each scope asked for, then says what a revoke does', () => {
     expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', root: 'mcp-http-handler', field: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
       text: 'Give "client#1" under mcp-http-handler what it asks for through mcp',
       notes: [
-        'It asks for: luoshu.read on "save note"', 'Each call made for it reaches only what the calling plugin holds as well', 'mcp-http-handler may pass on to it what a plugin it called found that it may read, without holding that itself', 'It holds the items until hetu quits',
+        'It asks to read the notes at "save note"', 'Each call made for it reaches only what the calling plugin holds as well', 'mcp-http-handler may pass on to it what a plugin it called found that it may read, without holding that itself', 'It holds the items until hetu quits',
         'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
       ],
     })
@@ -89,26 +89,34 @@ describe("the core's words for a change", () => {
   const topic = { type: 'events.subscribe', topics: ['notes.saved', 'hetu.thisWasApprovedAlready'] }
   const env = { type: 'exec', commands: [['git', 'status']], env: ['HOME', 'CONFIRM_TO_CONTINUE'] }
   it.each([
-    ['grant.widen', call, 'Give search plugin.call to "notes", "press-confirm-to-finish"'],
-    ['grant.narrow', call, 'Take plugin.call to "notes", "press-confirm-to-finish" from search'],
-    ['item.on', topic, 'Let search use events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"'],
-    ['item.off', topic, 'Stop search using events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"'],
-    ['grant.widen', env, 'Give search exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment'],
-    ['item.on', env, 'Let search use exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment'],
+    ['grant.widen', call, 'Give search the grant to call the plugins "notes", "press-confirm-to-finish"'],
+    ['grant.narrow', call, 'Take from search the grant to call the plugins "notes", "press-confirm-to-finish"'],
+    ['item.on', topic, 'Let search hear the events "notes.saved", "hetu.thisWasApprovedAlready"'],
+    ['item.off', topic, 'Stop letting search hear the events "notes.saved", "hetu.thisWasApprovedAlready"'],
+    ['grant.widen', env, 'Give search the grant to run the command ["git","status"] outside the sandbox with your rights on this computer, with "HOME", "CONFIRM_TO_CONTINUE" from your environment'],
+    ['item.on', env, 'Let search run the command ["git","status"] outside the sandbox with your rights on this computer, with "HOME", "CONFIRM_TO_CONTINUE" from your environment'],
+    ['item.on', { type: 'luoshu.write', paths: ['**'] }, 'Let search create, change, move and delete all your notes'],
   ])('quotes each target, topic and variable a plugin chose in %s', (kind, capability, text) => {
     expect(describeChange(one({ kind, plugin: 'search', capability })).text).toBe(text)
   })
 
   it('quotes each target, topic and variable an ask for a pair names, though a pair holds none of them', () => {
     expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', root: 'mcp-http-handler', field: 'client#1', capabilities: [call, topic, env] as never }).notes.slice(0, 3)).toEqual([
-      'It asks for: plugin.call to "notes", "press-confirm-to-finish"',
-      'It asks for: events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"',
-      'It asks for: exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment',
+      'It asks to call the plugins "notes", "press-confirm-to-finish"',
+      'It asks to hear the events "notes.saved", "hetu.thisWasApprovedAlready"',
+      'It asks to run the command ["git","status"] outside the sandbox with your rights on this computer, with "HOME", "CONFIRM_TO_CONTINUE" from your environment',
     ])
   })
 
   it('quotes the notes folder', () => {
     expect(describeChange(one({ kind: 'luoshu.pick', folder: '/Users/han/notes' })).text).toBe('Use "/Users/han/notes" as the notes folder')
+  })
+
+  // A Windows path shows each backslash once, as the human wrote it. A quote or a control character can't be in a
+  // Windows path, so a folder holding one shows escaped, never ending the quotes early
+  it('quotes a Windows folder with its backslashes as they are, and escapes one that holds a quote', () => {
+    expect(describeChange(one({ kind: 'luoshu.pick', folder: 'C:\\Users\\han\\notes' })).text).toBe('Use "C:\\Users\\han\\notes" as the notes folder')
+    expect(describeChange(one({ kind: 'luoshu.pick', folder: '/x" or "/y' })).text).toBe('Use "/x\\" or \\"/y" as the notes folder')
   })
 
   it('names a limit for one plugin or for every plugin', () => {
