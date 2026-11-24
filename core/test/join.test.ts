@@ -842,17 +842,17 @@ describe('the windows\' own actions', () => {
     expect(asked).toEqual([])
   })
 
-  // Main opens the trusted window on its welcome guide at start while this holds
-  it('say the welcome is due until an approved plugin holds ui.layout', async () => {
+  // Main opens the trusted window on its startup flow at start while this holds
+  it('say the startup flow is due at every start, a plugin approved or not', async () => {
     const bare = await joined()
     await bare.pluginsManager.start()
     expect(bare.pluginsManager.welcomeDue()).toBe(true)
-    const laid = await joined({
-      folder: { tiles: filesFor(workerManifest('tiles', { capabilities: [{ type: 'ui.layout' }] })) },
-      entries: { tiles: { granted: [{ type: 'ui.layout' }] } },
+    const viewed = await joined({
+      folder: { tiles: filesFor(workerManifest('tiles', { capabilities: [{ type: 'ui.view' }] })) },
+      entries: { tiles: { granted: [{ type: 'ui.view' }] } },
     })
-    await laid.pluginsManager.start()
-    expect(laid.pluginsManager.welcomeDue()).toBe(false)
+    await viewed.pluginsManager.start()
+    expect(viewed.pluginsManager.welcomeDue()).toBe(true)
   })
 
   it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {

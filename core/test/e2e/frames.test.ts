@@ -121,7 +121,7 @@ async function started(frame: Frame, notes: Record<string, string> = {}, more: M
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
   await writeOpener(dataDir)
-  // TODO: drop once the startup screen no longer waits on an approved ui.layout plugin to leave the welcome guide
+  // TODO: drop once the startup flow has an end a set-up hetu reaches
   await setUp(dataDir)
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': worker })

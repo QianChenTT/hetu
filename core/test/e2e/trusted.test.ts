@@ -38,15 +38,15 @@ self.onmessage = event => {
 
 type Worker = { code: string, manifest?: object, entry?: Partial<Plugin> }
 
-// An approved plugin holding ui.layout that never draws, so the welcome guide isn't due and the trusted window opens
-// only when asked. welcome leaves it out
-const quietLayout: Worker = { code: lifecycle(), manifest: { capabilities: [{ type: 'ui.layout' }] }, entry: { granted: [{ type: 'ui.layout' }] } }
+// An approved plugin holding nothing that never draws. welcome leaves it out
+// TODO: end the startup flow beside it once the flow has an end, so the trusted window opens only when asked
+const quiet: Worker = { code: lifecycle(), manifest: { capabilities: [] }, entry: { granted: [] } }
 
 async function data(options: { switches?: Partial<Switches>, workers?: Record<string, Worker>, before?: (dataDir: string) => Promise<void>, welcome?: boolean } = {}): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), ...options.switches })
-  const workers = { ...(options.welcome === true ? {} : { 'quiet-layout': quietLayout }), ...options.workers }
+  const workers = { ...(options.welcome === true ? {} : { quiet }), ...options.workers }
   for (const [id, worker] of Object.entries(workers)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, worker.manifest ?? {}), { 'worker.js': worker.code }))
@@ -540,8 +540,8 @@ describe('a plugin', () => {
   })
 })
 
-// hetu ships no plugin, so the trusted window opens by itself over the editor on its welcome guide until a layout is
-// approved
+// hetu ships no plugin, so the trusted window opens by itself over the editor on the startup flow every install goes
+// through
 describe('the welcome guide', () => {
   it('opens over the editor at start and goes a step at a time, leaves for Plugins and shows again from its tab', async () => {
     const app = await start(await data({ welcome: true }), await install())
@@ -554,7 +554,7 @@ describe('the welcome guide', () => {
     expect(await guide.getByRole('button', { name: 'Pick a folder' }).count()).toBe(1)
     await tick(PAST_DELAY)
     await guide.getByRole('button', { name: 'Next' }).click()
-    await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()) === 'Step 2 of 4: Install the plugins you want')
+    await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()) === 'Step 2 of 4: Install your first plugin')
     expect(await guide.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
     await guide.getByRole('button', { name: 'Back' }).click()
     await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()) === 'Step 1 of 4: Pick the notes folder')
@@ -581,9 +581,9 @@ describe('the welcome guide', () => {
     const steps = guide.getByRole('list', { name: 'Steps' })
     await until(async () => await guide.count() === 1)
     await tick(PAST_DELAY)
-    await steps.getByRole('button', { name: 'Install the plugins you want' }).click()
-    await until(async () => (await heading()) === 'Step 2 of 4: Install the plugins you want')
-    expect(await steps.getByRole('button', { name: 'Install the plugins you want' }).getAttribute('aria-current')).toBe('step')
+    await steps.getByRole('button', { name: 'Install your first plugin' }).click()
+    await until(async () => (await heading()) === 'Step 2 of 4: Install your first plugin')
+    expect(await steps.getByRole('button', { name: 'Install your first plugin' }).getAttribute('aria-current')).toBe('step')
     await guide.getByRole('button', { name: 'Install from a zip' }).click()
     await showing(page, '"Greeter" (greeter), version 1.0.0')
     await tick(PAST_DELAY)
@@ -591,15 +591,18 @@ describe('the welcome guide', () => {
     await showing(page, 'greeter: Class 1, Reader')
     const confirm = page.getByRole('button', { name: 'Confirm' })
     // A step picked while the Confirm is new arms nothing early
-    await steps.getByRole('button', { name: 'Approve them' }).click()
-    await until(async () => (await heading()) === 'Step 3 of 4: Approve them')
+    await steps.getByRole('button', { name: 'Approve it' }).click()
+    await until(async () => (await heading()) === 'Step 3 of 4: Approve it')
+    // One line says where the plugin installed is approved, with no Approve of its own
+    expect(await guide.locator('.guide-step p').first().innerText()).toBe('Approve what you installed in its Confirm at the top of this window, or with Approve in the Plugins tab for a plugin copied in by hand')
+    expect(await guide.getByRole('button', { name: 'Approve', exact: true }).count()).toBe(0)
     expect(await confirm.isDisabled()).toBe(true)
-    await steps.getByRole('button', { name: 'Install the plugins you want' }).click()
+    await steps.getByRole('button', { name: 'Install your first plugin' }).click()
     await tick(PAST_DELAY)
     await confirm.click()
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'greeter' }))
     await showing(page, '1 plugin in the plugin folder')
-    expect(await heading()).toBe('Step 2 of 4: Install the plugins you want')
+    expect(await heading()).toBe('Step 2 of 4: Install your first plugin')
   })
 })
 

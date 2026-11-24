@@ -41,8 +41,8 @@ describe('hetu with every core module and the door switched off', () => {
     // write
     const expected = new Set([...coreModuleIds.flatMap(id => [`${id === 'luoshu' ? 'notes access' : id} off`, `${id}: off`]), 'no notes folder is picked yet'])
     expect((await page.locator('#banner li').allTextContents()).filter(line => !expected.has(line))).toEqual([])
-    // main answered, so no modal box holds it. No layout is approved, so the trusted window opened over the editor on
-    // its welcome guide
+    // main answered, so no modal box holds it. The startup flow is due at every start, so the trusted window opened over
+    // the editor on it
     expect((await visibleWindows(app)).sort()).toEqual(['hetu://editor/', 'hetu://trusted/'])
     expect(thrown).toEqual([])
   })
