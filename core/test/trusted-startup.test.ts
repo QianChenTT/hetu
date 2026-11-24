@@ -18,7 +18,7 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
   id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, on: true, items: [], class: 1,
-  ...over,
+  madeFor: null, ...over,
 })
 const found = (id: string) => plugin({ id, state: 'found', reason: 'new', on: false, class: null })
 

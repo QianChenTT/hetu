@@ -1,6 +1,9 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { SecurityList } from '../api/actions.ts'
+import type { Caller } from '../api/envelope.ts'
+import { API_VERSION } from '../api/manifest.ts'
 import type { Plugin } from '../backend/boot/state.ts'
 import {
   cleanup, entryFor, filesFor, harness, hashOf, manifest, oldFirstPartyEntry, plant, reasonOf, stateOf, workerManifest,
@@ -144,6 +147,26 @@ describe('where a plugin\'s code came from', () => {
       expect(made.link.events('plugin.refused')).toContainEqual({ plugin: id, reason })
     }
     expect(made.runtime.order().filter(id => folders.some(([folder]) => folder === id))).toEqual([])
+  })
+
+  // The trusted window's list says which side of this hetu a plugin refused api was made for
+  it('lists a plugin refused api with the hetu it was made for', async () => {
+    const made = await harness({
+      folder: {
+        tiles: filesFor(workerManifest('tiles', { api: '^5', capabilities: [{ type: 'ui.layout' }] })),
+        later: filesFor(workerManifest('later', { api: `^${API_VERSION + 1}` })),
+        outline: outline(),
+      },
+      entries: { tiles: signed(), later: signed(), outline: signed() },
+    })
+    await made.pluginsManager.start()
+    const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    const rows = Object.fromEntries(list.plugins.map(row => [row.id, row]))
+    expect(rows.tiles).toMatchObject({ state: 'refused', reason: 'api', madeFor: 'older' })
+    expect(rows.later).toMatchObject({ state: 'refused', reason: 'api', madeFor: 'newer' })
+    expect(rows.outline).toMatchObject({ madeFor: null })
+    expect(rows.gate).toMatchObject({ madeFor: null })
   })
 
   it('refuses a manifest naming a removed type under another id with id', async () => {

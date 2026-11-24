@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SecurityList, Staged } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
+import { API_VERSION } from '../api/manifest.ts'
 import type { Fetch } from '../backend/lib/github.ts'
 import { InstallStagings, MAX_STAGINGS } from '../backend/plugins-manager/stagings.ts'
 import { cleanup, filesFor, harness, tempBase, tick, until, workerManifest, writeFolder, type Files } from './plugins-manager-fakes.ts'
@@ -261,6 +262,28 @@ describe('the install actions main serves', () => {
     expect(() => made.pluginsManager.canStage()).toThrow()
     await made.pluginsManager.start()
     made.pluginsManager.canStage()
+  })
+
+  // A plugin refused api says which side of this hetu it was made for. One naming a type a later major removed shows
+  // that type and never the rest of its list as what it asks for
+  it('answers a plugin refused api with the hetu it was made for and the removed types it names, asking for nothing', async () => {
+    const made = await joined()
+    await made.pluginsManager.start()
+    const under = (id: string, extra: object) => Object.fromEntries(Object.entries(plugin(id, extra)).map(([name, data]) => [`${id}/${name}`, data]))
+    const files = {
+      ...under('tiles', { api: '^5', capabilities: [{ type: 'ui.layout' }, notes] }),
+      ...under('keys', { api: '^4', capabilities: [{ type: 'ui.keys' }] }),
+      ...under('later', { api: `^${API_VERSION + 1}`, capabilities: [notes] }),
+      ...under('search', { capabilities: [notes] }),
+    }
+    const staged = await made.pluginsManager.stagedAnswer(await made.stagings.stagePicked('folder', await picked(made.base, files)))
+    if (!('staged' in staged)) throw new Error('nothing staged')
+    const rows = Object.fromEntries(staged.plugins.map(row => [row.id, row]))
+    expect(rows.tiles).toMatchObject({ name: 'tiles', problem: 'api', madeFor: 'older', removedTypes: ['ui.layout'], capabilities: [], class: null })
+    // ui.layout went in a later major too, but this manifest never named it
+    expect(rows.keys).toMatchObject({ problem: 'api', madeFor: 'older', removedTypes: ['ui.keys'], capabilities: [] })
+    expect(rows.later).toMatchObject({ problem: 'api', madeFor: 'newer', removedTypes: [], capabilities: [notes] })
+    expect(rows.search).toMatchObject({ problem: null, madeFor: null, removedTypes: [], capabilities: [notes] })
   })
 
   it('answers a picked staging with each plugin\'s class, then installs it on the Confirm and starts it', async () => {

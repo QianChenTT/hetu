@@ -29,6 +29,7 @@ function staged(id: string, extra: Partial<StagedRead> & { asks?: Capability[], 
     digest: DIGEST,
     manifest: folderManifest.parse(workerManifest(id, { ...(name === undefined ? {} : { name }), ...(version === undefined ? {} : { version }), ...(asks === undefined ? {} : { capabilities: asks }) })),
     problem: null,
+    removedTypes: [],
     ...rest,
   }
 }
@@ -36,7 +37,7 @@ function staged(id: string, extra: Partial<StagedRead> & { asks?: Capability[], 
 // One staged plugin's bytes as main reads them again for the install: its manifest and worker as written
 function bytesOf(plugin: StagedRead): Read {
   const files = Object.entries(filesFor({ ...plugin.manifest })).map(([name, text]) => ({ path: name, bytes: Buffer.from(text) }))
-  return { files, hash: hashFiles(files), manifest: plugin.manifest, problem: null }
+  return { files, hash: hashFiles(files), manifest: plugin.manifest, problem: null, removedTypes: [] }
 }
 
 // The stagings as main holds them: each by its handle, the plugins read again for an install and the stagings dropped

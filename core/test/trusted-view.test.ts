@@ -9,7 +9,7 @@ import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
   id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, on: true, items: [], class: 1,
-  ...over,
+  madeFor: null, ...over,
 })
 
 const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
@@ -56,6 +56,23 @@ describe('what the trusted window draws', () => {
       'history · ships with hetu · core · failed (start-failed)',
       'search · plugin folder · sandboxed · crashed (flood) · class 1',
       'tool · plugin folder · sandboxed · ready · class unknown, counted as 4',
+    ])
+  })
+
+  // An api refusal says which side of this hetu the plugin was made for, so an older one reads as needing its author
+  // and a newer one as needing an update of hetu
+  it('names an api refusal by the hetu the plugin was made for', () => {
+    const drawn = screen(calm({
+      plugins: [
+        plugin({ id: 'later', state: 'refused', reason: 'api', madeFor: 'newer' }),
+        plugin({ id: 'odd', state: 'refused', reason: 'api' }),
+        plugin({ id: 'tiles', state: 'refused', reason: 'api', madeFor: 'older' }),
+      ],
+    }))
+    expect(drawn.plugins.map(row => row.line)).toEqual([
+      'later · plugin folder · sandboxed · refused (made for a newer hetu) · class 1',
+      'odd · plugin folder · sandboxed · refused (api) · class 1',
+      'tiles · plugin folder · sandboxed · refused (made for an older hetu) · class 1',
     ])
   })
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  API_VERSION, apiChanges, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, removedSince, retiredGrantTypes, supportsApi,
+  API_VERSION, apiChanges, apiMadeFor, folderManifest, grantTypesDroppedOnRead, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, supportsApi,
+  typesRemovedAfter,
 } from '../api/manifest.ts'
 
 const raw = (text: string) => JSON.parse(text)
@@ -235,33 +236,50 @@ describe('a manifest', () => {
 })
 
 // A manifest written before a major that removed a type may still name it. The schema has no place for the type, so
-// the read refuses such a manifest api by this list rather than invalid
+// the read sets such items aside and refuses the manifest api rather than invalid
 describe('the types removed since a range', () => {
   it('names each type a major after the range removed, oldest first', () => {
-    expect(removedSince('^5')).toEqual(['ui.layout'])
-    expect(removedSince('^4')).toEqual(['ui.keys', 'ui.layout'])
-    expect(removedSince('^1')).toEqual(['ui.panel', 'ui.statusBar', 'ui.keys', 'ui.layout'])
+    expect(typesRemovedAfter('^5')).toEqual(['ui.layout'])
+    expect(typesRemovedAfter('^4')).toEqual(['ui.keys', 'ui.layout'])
+    expect(typesRemovedAfter('^1')).toEqual(['ui.panel', 'ui.statusBar', 'ui.keys', 'ui.layout'])
   })
 
   it('names none for this major, a newer one, 0 or a range that does not parse', () => {
-    expect(removedSince(`^${API_VERSION}`)).toEqual([])
-    expect(removedSince(`^${API_VERSION + 1}`)).toEqual([])
-    expect(removedSince('^0')).toEqual([])
-    expect(removedSince('5')).toEqual([])
-    expect(removedSince('^5.0')).toEqual([])
+    expect(typesRemovedAfter(`^${API_VERSION}`)).toEqual([])
+    expect(typesRemovedAfter(`^${API_VERSION + 1}`)).toEqual([])
+    expect(typesRemovedAfter('^0')).toEqual([])
+    expect(typesRemovedAfter('5')).toEqual([])
+    expect(typesRemovedAfter('^5.0')).toEqual([])
   })
 
   it('reads the record it is given', () => {
     const changes = { 2: { added: [], removed: ['a'], reshaped: [], actionsChanged: false }, 3: { added: [], removed: ['b'], reshaped: [], actionsChanged: false } }
-    expect(removedSince('^1', 3, changes)).toEqual(['a', 'b'])
-    expect(removedSince('^2', 3, changes)).toEqual(['b'])
+    expect(typesRemovedAfter('^1', 3, changes)).toEqual(['a', 'b'])
+    expect(typesRemovedAfter('^2', 3, changes)).toEqual(['b'])
   })
 
   // A stored grant of a retired type is dropped when the state is read. Each one is a type a major removed with nothing
   // in its place, unlike ui.keys, which the state reads under its new name
-  it('holds every retired grant type among the removed ones', () => {
-    expect(retiredGrantTypes).toEqual(['ui.layout'])
-    for (const type of retiredGrantTypes) expect(removedSince('^1')).toContain(type)
+  it('holds every grant type dropped on read among the removed ones', () => {
+    expect(grantTypesDroppedOnRead).toEqual(['ui.layout'])
+    for (const type of grantTypesDroppedOnRead) expect(typesRemovedAfter('^1')).toContain(type)
+  })
+})
+
+// An api refusal says which side of this hetu the manifest's major is on
+describe('the hetu a range was made for', () => {
+  it('is older below this major, 0 included, and newer above it', () => {
+    expect(apiMadeFor(`^${API_VERSION - 1}`)).toBe('older')
+    expect(apiMadeFor('^1')).toBe('older')
+    expect(apiMadeFor('^0')).toBe('older')
+    expect(apiMadeFor(`^${API_VERSION + 1}`)).toBe('newer')
+    expect(apiMadeFor('^5', 4)).toBe('newer')
+  })
+
+  it('is neither for this major or a range that does not parse', () => {
+    expect(apiMadeFor(`^${API_VERSION}`)).toBe(null)
+    expect(apiMadeFor('5')).toBe(null)
+    expect(apiMadeFor('^5.0')).toBe(null)
   })
 })
 

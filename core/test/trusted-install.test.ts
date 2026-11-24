@@ -86,7 +86,7 @@ describe('a grant as a plain sentence', () => {
 
 const found = (over: Partial<StagedPlugin>): StagedPlugin => ({
   id: 'search', name: 'Search', version: '1.2.0', capabilities: [{ type: 'luoshu.read', paths: ['**'] }], class: 1, lines: [], replaces: null,
-  digest: (over.id ?? 'search').padEnd(64, '0').replace(/[^0-9a-f]/g, '0').slice(0, 64), problem: null,
+  digest: (over.id ?? 'search').padEnd(64, '0').replace(/[^0-9a-f]/g, '0').slice(0, 64), problem: null, madeFor: null, removedTypes: [],
   ...over,
 })
 
@@ -132,6 +132,25 @@ describe('what the install box draws', () => {
     expect(box.plugins[1]).toMatchObject({ label: 'odd', grants: ['Keep data of its own'], problem: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed', picked: false })
     // A manifest that doesn't check out says nothing of what it asks for
     expect(box.plugins[2]).toMatchObject({ grants: [], problem: 'Its manifest doesn’t parse or check out, so what it asks for can’t be read and it can’t be installed' })
+  })
+
+  // D-752: a plugin made for an older hetu needs its author, one made for a newer hetu needs an update of hetu. A
+  // removed type it names is shown as one this hetu no longer has, never the rest of its list as what it asks for
+  it('says an api refusal was made for an older or a newer hetu and names the removed types it holds', () => {
+    const box = installBox(staging([
+      found({ id: 'tiles', capabilities: [], class: null, problem: 'api', madeFor: 'older', removedTypes: ['ui.layout'] }),
+      found({ id: 'keys', capabilities: [], class: null, problem: 'api', madeFor: 'older', removedTypes: ['ui.keys', 'ui.layout'] }),
+      found({ id: 'later', class: null, problem: 'api', madeFor: 'newer' }),
+    ]))
+    if (box?.step !== 'found') throw new Error('no found box')
+    const older = 'It was written for an older hetu than this one, so it can’t be installed. Ask its author for a version made for this hetu'
+    expect(box.plugins[0]).toMatchObject({ grants: ['It names ui.layout, which this hetu no longer has'], problem: older, picked: false })
+    expect(box.plugins[1]).toMatchObject({
+      grants: ['It names ui.keys, which this hetu no longer has', 'It names ui.layout, which this hetu no longer has'], problem: older,
+    })
+    expect(box.plugins[2]).toMatchObject({
+      grants: ['Read all your notes'], problem: 'It was written for a newer hetu than this one, so it can’t be installed. Update hetu first', picked: false,
+    })
   })
 
   // The same reasons the approval's Confirm showed, from the grant risk classifier through the core
