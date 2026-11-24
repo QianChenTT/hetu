@@ -8,7 +8,7 @@ import { IMAGE_CSP, type Served } from './lib.ts'
 // plugin's worker, never read from disk again. A frame loads once from a single-use hetu://<id>.views/<token>/<entry>:
 // the entry page is served once, the plugin's other files under the token for as long as the frame lives, and no other
 // page, so a frame that navigates finds nothing. A token is served only on its own plugin's host.
-// Icons come from hetu://<host>.views/icon/<plugin>/<file>, svg or png only.
+// Icons come from hetu://<id>.views/icon/<file>, svg or png only, so a plugin's host shows no other plugin's icons.
 // Every token of an incarnation ends with it, and every token ends when the editor page unloads
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -24,7 +24,6 @@ const TYPES: Readonly<Record<string, string>> = Object.freeze({
 // with a dot, so none is . or .., and nothing escaped gets through
 const PATH = /^(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*\.(html|css|js|svg|png|woff2)$/
 const TOKEN = /^[0-9a-f]{32}$/
-const PLUGIN = /^[a-z0-9][a-z0-9-]{0,63}$/
 const VIEWS = '.views'
 
 // The plugin whose views a host serves: the host is exactly <id>.views for a plugin id, else null. The editor page's
@@ -103,7 +102,7 @@ export class ViewFiles {
   serve(url: string): Served | null {
     const at = parts(url)
     if (at === null) return null
-    if (at.first === 'icon') return this.icon(at.rest)
+    if (at.first === 'icon') return this.icon(at.plugin, at.rest)
     const held = TOKEN.test(at.first) ? this.tokens.get(at.first) : undefined
     const path = at.rest.join('/')
     const match = PATH.exec(path)
@@ -119,11 +118,10 @@ export class ViewFiles {
     return { bytes, type: TYPES[match[1] as string] as string, csp: frameCsp(held.plugin, at.first) }
   }
 
-  private icon(rest: string[]): Served | null {
-    const [plugin, ...way] = rest
-    const path = way.join('/')
+  private icon(plugin: string, rest: string[]): Served | null {
+    const path = rest.join('/')
     const match = PATH.exec(path)
-    if (plugin === undefined || !PLUGIN.test(plugin) || match === null || (match[1] !== 'svg' && match[1] !== 'png')) return null
+    if (match === null || (match[1] !== 'svg' && match[1] !== 'png')) return null
     const bytes = this.running.get(plugin)?.files.get(path)
     return bytes === undefined ? null : { bytes, type: TYPES[match[1]] as string, csp: IMAGE_CSP }
   }

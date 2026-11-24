@@ -151,7 +151,7 @@ function start(bridge: Bridge): void {
       if (payload.type === 'note') void openNote(payload.value, owner)
     },
     divider: (node, index, event, split) => dividerDrag(owner, surface, node, index, event, split),
-    iconUrl: src => `hetu://views/icon/${owner}/${src}`,
+    iconUrl: src => `hetu://${owner}.views/icon/${src}`,
     imageUrl: async path => {
       const got = await link.call('editor.image', { plugin: owner, path })
       return got.ok ? (got.result as { url: string }).url : null
