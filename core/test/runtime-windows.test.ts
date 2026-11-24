@@ -87,7 +87,7 @@ describe('quiet windows for runs from the source', () => {
     expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: '1' }, displays: displays.slice(0, 1), cursorDisplay: 1 })).toEqual({ quiet: true })
   })
 
-  it('opens as usual otherwise, and always in a packaged build', () => {
+  it('opens as usual otherwise and always in a packaged build', () => {
     expect(quietPlacement({ packaged: false, env: {}, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
     expect(quietPlacement({ packaged: true, env: { HETU_QUIET_WINDOWS: '1' }, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
     expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: '0' }, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
@@ -312,7 +312,7 @@ describe('a key main drops before it reaches a frame the page did not let focus 
     expect(guardedKeyOf(press('a', { type: 'keyUp' }), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: null })
   })
 
-  it('drops a key down or up headed for a frame not let in, with none let in or another, and has the page take focus back', () => {
+  it('drops a key down or up headed for a frame not let in, with none let in or another, then has the page take focus back', () => {
     expect(guardedKeyOf(press('a'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
     expect(guardedKeyOf(press('a'), inKanban, board, bound, false)).toEqual({ prevented: true, sent: keyDropped })
     expect(guardedKeyOf(press('a', { type: 'keyUp' }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
@@ -362,7 +362,7 @@ describe('a key main drops before it reaches a frame the page did not let focus 
     expect(guardedKeyOf(press('Enter'), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: { channel: 'hetu:press', sent: { key: true, url: kanban } } })
   })
 
-  it("names the page's frame focus is in or inside of, and none with focus in the page or nowhere", () => {
+  it("names the page's frame focus is in or inside of and none with focus in the page or nowhere", () => {
     const top = { url: 'hetu://editor/', parent: null }
     const frame = { url: kanban, parent: top }
     const inner = { url: 'about:blank', parent: frame }

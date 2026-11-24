@@ -12,7 +12,7 @@ describe('a frame\'s loads', () => {
     expect(loads.loaded('v1')).toBe('navigated')
   })
 
-  it('reads a load of a frame it no longer holds as gone, and a frame started again afresh', () => {
+  it('reads a load of a frame it no longer holds as gone and a frame started again afresh', () => {
     const loads = new FrameLoads()
     expect(loads.loaded('v1')).toBe('gone')
     loads.started('v1')
@@ -69,7 +69,7 @@ describe('focus going into a frame', () => {
     expect(guard.judge('v1')).toBe('in')
   })
 
-  it('takes a move with no press behind it as the frame\'s own once the hold ends, and holds it no second time', () => {
+  it('takes a move with no press behind it as the frame\'s own once the hold ends and holds it no second time', () => {
     let now = 0
     const guard = new FocusGuard(() => now)
     expect(guard.judge('v1')).toBe('wait')
@@ -275,7 +275,7 @@ describe("an open from a frame counted as the human's", () => {
     expect(credit.use('kanban')).toBe(false)
   })
 
-  it('takes no open of a plugin once a frame of its went, as on a stop or restart, and leaves another plugin\'s', () => {
+  it('takes no open of a plugin once a frame of its went, as on a stop or restart, but leaves another plugin\'s', () => {
     const credit = new OpenCredit(() => 0)
     credit.pressed('kanban')
     credit.forget('kanban')
