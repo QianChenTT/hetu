@@ -79,6 +79,19 @@ describe('focus going into a frame', () => {
     expect(guard.entered('v1')).toBe(false)
   })
 
+  it('uses a press credit once, so a second press in the frame holding focus lets nothing in after focus is back in the page', () => {
+    const guard = new FocusGuard(() => 0)
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+    guard.left()
+    expect(guard.entered('v1')).toBe(false)
+    guard.allow('v1')
+    guard.left()
+    expect(guard.entered('v1')).toBe(false)
+  })
+
   it('takes a move from one frame into another with no press as the other\'s own', () => {
     const guard = new FocusGuard(() => 0)
     guard.allow('v1')
