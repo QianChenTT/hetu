@@ -166,7 +166,7 @@ describe('the startup screen on the page', () => {
     expect(drawn.at(-1)?.tab).toBe('start')
   })
 
-  // Every plugin removed after the flow ended leaves the folder empty, and the flow comes back only at the next start
+  // Every plugin removed after the flow ended leaves the folder empty. The flow comes back only at the next start
   it('stays ended when the plugin folder is empty again, leaving for Plugins as before', () => {
     const { page, drawn, sent, hears } = started(calm())
     hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
