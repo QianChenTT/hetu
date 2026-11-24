@@ -3,8 +3,8 @@ import { CoreLink } from '../frontend/editor/link.ts'
 import { Settings } from '../frontend/editor/settings.ts'
 import { fakeCore, settle } from './editor-fakes.ts'
 
-function made(stored: unknown = null) {
-  const space = new Map<string, unknown>(stored === null ? [] : [['settings', stored]])
+function made(stored: unknown = null, arrangement: unknown = null) {
+  const space = new Map<string, unknown>([...(stored === null ? [] : [['settings', stored] as const]), ...(arrangement === null ? [] : [['arrangement', arrangement] as const])])
   const core = fakeCore({
     'storage.get': args => ({ ok: true, result: space.get((args as { key: string }).key) ?? null }),
     'storage.set': args => {
@@ -138,5 +138,27 @@ describe('the window\'s settings', () => {
     await settings.favorite('tree/files', true)
     await settle()
     expect(told).toBe(2)
+  })
+
+  it("reads the layout's arrangement kept under arrangement apart from the settings, null with none kept", async () => {
+    const kept = { places: { 'p/board': { column: 'left', order: 0, byHand: true } } }
+    const { settings } = made(null, kept)
+    await settings.load()
+    expect(settings.arrangement).toEqual(kept)
+    const none = made()
+    await none.settings.load()
+    expect(none.settings.arrangement).toBeNull()
+  })
+
+  it("keeps the layout's arrangement under arrangement without telling the settings' listener", async () => {
+    const { settings, space } = made()
+    let told = 0
+    await settings.load()
+    settings.onChange = () => void told++
+    await settings.keepArrangement({ widths: { left: 300, right: 240 } })
+    expect(space.get('arrangement')).toEqual({ widths: { left: 300, right: 240 } })
+    expect(space.has('settings')).toBe(false)
+    expect(settings.arrangement).toEqual({ widths: { left: 300, right: 240 } })
+    expect(told).toBe(0)
   })
 })
