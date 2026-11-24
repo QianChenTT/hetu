@@ -1,3 +1,4 @@
+import { frameTicketOf } from '../../api/ids.ts'
 import { dragTokenOf, type FrameAsks, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { lay } from './layers.ts'
 import type { CoreLink } from './link.ts'
@@ -274,9 +275,12 @@ export class Frames {
     }
   }
 
-  // The instance whose frame main served from this URL
+  // The instance whose frame main served under the ticket of this URL, which a frame moving within its own page by
+  // hash or history keeps, as main matches it
   instanceAt(url: string): string | null {
-    for (const [instance, held] of this.mounted) if (held.url === url) return instance
+    const ticket = frameTicketOf(url)
+    if (ticket === null) return null
+    for (const [instance, held] of this.mounted) if (frameTicketOf(held.url) === ticket) return instance
     return null
   }
 

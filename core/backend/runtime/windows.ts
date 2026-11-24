@@ -1,7 +1,7 @@
 import type { BrowserWindow, Session, WebContents, WebPreferences } from 'electron'
 import { type CoreKey, coreKeyOf, keyName } from '../../api/keys.ts'
 import { SCHEME } from './before-ready.ts'
-import { frameOwner } from '../../api/ids.ts'
+import { frameOwner, frameTicketOf } from '../../api/ids.ts'
 
 export const EDITOR_URL = `${SCHEME}://editor/`
 
@@ -153,16 +153,6 @@ export function childFrameOf(focused: FrameChain | null): string | null {
   let frame = focused
   while (frame.parent !== null && frame.parent.parent !== null) frame = frame.parent
   return frame.url
-}
-
-// The plugin's host and the single-use ticket main served a frame under, which the frame can't change by moving within its
-// own page by hash or history. null for any URL not served on a ticket
-export function frameTicketOf(url: string | null): string | null {
-  if (url === null || !URL.canParse(url)) return null
-  const at = new URL(url)
-  const ticket = at.pathname.split('/')[1] ?? ''
-  if (at.protocol !== `${SCHEME}:` || frameOwner(at.hostname) === null || !/^[0-9a-f]{32}$/.test(ticket)) return null
-  return `${SCHEME}://${at.hostname}/${ticket}`
 }
 
 export type SentToPage = Exclude<EditorKey, { channel: null }> | { channel: 'hetu:press', sent: { key: true, url: string } } | { channel: 'hetu:pull-back', sent: null }
