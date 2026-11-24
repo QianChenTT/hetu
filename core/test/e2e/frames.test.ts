@@ -472,14 +472,17 @@ describe('WebRTC from a view frame', () => {
 
 const frameSdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'frame.ts').split(path.sep).join('/')
 
-// A frame's script on @hetu/sdk/frame: tells its worker the theme it connected with and each theme it hears after
+// A frame's script on @hetu/sdk/frame: tells its worker the theme it connected with, the background color the
+// hetu-theme.css its page links to gave it and each theme it hears after
 const themed = `
 import { connect } from '${frameSdk}'
 void connect().then(view => {
-  view.post({ connected: view.theme() })
+  const sheet = getComputedStyle(document.documentElement).getPropertyValue('--hetu-color-bg').trim()
+  view.post({ connected: view.theme(), sheet })
   view.onTheme(theme => view.post({ changed: theme }))
 })
 `
+const linked = '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="hetu-theme.css"><script src="board.js"></script></head><body></body></html>'
 
 // The theme the page set on the frames' layer
 const pageTheme = (editor: Page) => editor.locator('#editors').evaluate(element => {
@@ -487,16 +490,24 @@ const pageTheme = (editor: Page) => editor.locator('#editors').evaluate(element 
   return Object.fromEntries(Array.from(style).filter(name => name.startsWith('--hetu-')).map(name => [name, style.getPropertyValue(name)]))
 })
 
+// The variables of the hetu-theme.css main serves beside the first frame's page, asked from main as the frame's loads are
+async function sheetTheme(app: ElectronApplication): Promise<Record<string, string>> {
+  const url = (await framed(app)).find(frame => frame.url.startsWith('hetu://kanban.views/'))!.url.replace(/board\.html$/, 'hetu-theme.css')
+  const text = await app.evaluate(async ({ session }, [name, at]) => (await session.fromPartition(name as string).fetch(at as string)).text(), [partition('editor'), url])
+  return Object.fromEntries([...text.matchAll(/(--hetu-[a-z0-9-]+): ([^;]*);/g)].map(match => [match[1], match[2]]))
+}
+
 describe('the theme in a frame', () => {
-  it('hands a frame the page\'s theme with its port and each change after, to a frame open since before and one opened since', async () => {
+  it('hands a frame the page\'s theme with its port, in hetu-theme.css beside its page and on each change, to a frame open since before and one opened since', async () => {
     const source = await temp()
     await writeFolder(source, { 'src/board.ts': themed })
     const [built] = await buildPlugin(source, { entries: { 'board.js': 'src/board.ts' }, write: false })
     // The editor's own colors fail the contrast floor, so the page's variables are the drawer's and not the theme's
     const theme = { tokens: { 'color-bg': '#202020', 'color-accent': '#ff8800', 'color-editor-fg': '#fefefe', 'color-editor-bg': '#ffffff' } }
-    const { editor, worker } = await started({ html: page('board.js'), files: { 'board.js': built!.text } }, {}, { theme })
+    const { app, editor, worker } = await started({ html: linked, files: { 'board.js': built!.text } }, {}, { theme })
     await until(async () => (await messages(worker)).length === 1)
-    expect(await messages(worker)).toEqual([{ connected: {} }])
+    expect(await messages(worker)).toEqual([{ connected: {}, sheet: '' }])
+    expect(await sheetTheme(app)).toEqual(await pageTheme(editor))
     await editor.locator('#views').click()
     await until(async () => editor.locator('#menu').isVisible())
     await editor.locator('#menu select').nth(1).selectOption('kanban')
@@ -505,13 +516,14 @@ describe('the theme in a frame', () => {
     const variables = await pageTheme(editor)
     expect(variables).toMatchObject({ '--hetu-color-bg': '#202020', '--hetu-color-editor-fg': '#1f1f1f' })
     expect((await messages(worker))[1]).toEqual({ changed: variables })
+    await until(async () => JSON.stringify(await sheetTheme(app)) === JSON.stringify(variables))
 
     await worker.evaluate(async () => {
       const scope = globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }
       await scope.ctx.ui.views.open('board')
     })
     await until(async () => (await messages(worker)).length === 3)
-    expect((await messages(worker))[2]).toEqual({ connected: variables })
+    expect((await messages(worker))[2]).toEqual({ connected: variables, sheet: '#202020' })
     await tick(300)
     expect(await messages(worker)).toHaveLength(3)
   })

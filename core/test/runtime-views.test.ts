@@ -117,6 +117,22 @@ describe('the frames\' hosts', () => {
     expect(views.mint('kanban', 'board')).not.toBe(null)
   })
 
+  it('serves hetu-theme.css beside a frame\'s page from the theme it holds, under the frame\'s CSP, in place of a plugin\'s file of that name', () => {
+    const views = new ViewFiles({ token: () => '1'.padStart(32, '0') })
+    views.started('kanban', 1, [...files, file('hetu-theme.css', 'p { color: red }')], { board: 'dist/board.html' })
+    const base = views.mint('kanban', 'board')!.replace(/dist\/board\.html$/, '')
+    const sheet = views.serve(`${base}hetu-theme.css`)
+    expect(text(sheet)).toBe(':root {}\n')
+    expect(sheet?.type).toBe('text/css; charset=utf-8')
+    expect(sheet?.csp).toBe(frameCsp('kanban', '1'.padStart(32, '0')))
+    views.theme({ '--hetu-color-bg': '#202020', '--hetu-font-ui': 'Inter, sans-serif' })
+    expect(text(views.serve(`${base}hetu-theme.css`))).toBe(':root {\n  --hetu-color-bg: #202020;\n  --hetu-font-ui: Inter, sans-serif;\n}\n')
+    expect(views.serve(`${base}dist/hetu-theme.css`)).toBe(null)
+    expect(views.serve(`${base.replace('kanban.views', 'other.views')}hetu-theme.css`)).toBe(null)
+    expect(views.gone(`${base}dist/board.html`)).toEqual({ plugin: 'kanban' })
+    expect(views.serve(`${base}hetu-theme.css`)).toBe(null)
+  })
+
   it('revokes a token that is gone and every token when the editor page unloads', () => {
     const views = made()
     const one = views.mint('kanban', 'board')!
