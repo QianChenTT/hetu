@@ -49,15 +49,13 @@ export class FocusGuard {
     if (instance !== this.holder) this.holder = null
   }
 
-  // Focus is in this frame now: true when it was let in already or just allowed
+  // Focus is in this frame now: true when it was let in already or just allowed. A press credit for another frame stays
+  // for that frame, which focus may not have reached yet
   entered(instance: string): boolean {
-    if (this.holder === instance) {
-      this.allowed = null
-      return true
-    }
     const allowed = this.allowed
-    const ok = allowed !== null && allowed.instance === instance && this.clock() - allowed.at <= FOCUS_GRACE_MS
-    this.allowed = null
+    if (allowed?.instance === instance) this.allowed = null
+    if (this.holder === instance) return true
+    const ok = allowed?.instance === instance && this.clock() - allowed.at <= FOCUS_GRACE_MS
     this.holder = ok ? instance : null
     return ok
   }
