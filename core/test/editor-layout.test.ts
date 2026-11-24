@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LayoutState, LayoutView, UiNode } from '../api/ui.ts'
 import type { Arrangement } from '../frontend/editor/layout/arrange.ts'
-import { startLayout } from '../frontend/editor/layout/layout.ts'
+import { MAX_ARRANGED, startLayout } from '../frontend/editor/layout/layout.ts'
 
 const view = (instance: string, name: string, extra: Partial<LayoutView> = {}): LayoutView => ({
   instance, owner: 'p', view: name, kind: 'view', title: name, size: {}, priority: null, favorite: null, down: false, ...extra,
@@ -102,6 +102,39 @@ describe("the drawer's layout", () => {
       expect(columnOf(held.tree, 'v1'), JSON.stringify(saved)).toBe('col-left')
       expect(columnOf(held.tree, 'v2'), JSON.stringify(saved)).toBe('col-right')
     }
+  })
+
+  // Storage holds what JSON.parse made of the file, so a key __proto__ is an own key there. It is dropped as it is read
+  it('drops a kept key __proto__ and refuses kept places or recent views holding a key that names no view', () => {
+    const board = { column: 'left', order: 0, byHand: true }
+    const cases: [unknown, string][] = [
+      [JSON.parse('{"__proto__": {"column": "right", "order": 0}, "p/board": {"column": "left", "order": 0, "byHand": true}}'), 'col-left'],
+      [{ 'p/board': board, constructor: board }, 'col-right'],
+      [{ 'p/board': board, 'p/x/y': board }, 'col-right'],
+    ]
+    for (const [places, board2] of cases) {
+      const { layout, held } = started({ places, recent: JSON.parse('{"__proto__": 3, "p/x/y": 4}') })
+      layout.state(state())
+      expect(columnOf(held.tree, 'v2'), JSON.stringify(places)).toBe(board2)
+      layout.drop('v1', 'right', 1, 0)
+      expect(Object.getPrototypeOf(held.kept?.places)).toBe(Object.prototype)
+      expect(Object.keys(held.kept?.places ?? {}).sort()).toEqual(['p/board', 'p/tree'])
+      expect(Object.keys(held.kept?.recent ?? {})).toEqual(['p/tree'])
+    }
+  })
+
+  it(`refuses kept places, recent views and hidden views past ${MAX_ARRANGED} each, and sizes past their bounds`, () => {
+    const many = Object.fromEntries(Array.from({ length: MAX_ARRANGED + 1 }, (_, at) => [`p/view${at}`, { column: 'right', order: at }]))
+    const { layout, held } = started({ places: { ...many, 'p/tree': { column: 'right', order: 0 } }, widths: { left: -5, right: 99_999 }, bottom: { height: 2, open: false } })
+    layout.state(state())
+    expect(columnOf(held.tree, 'v1')).toBe('col-left')
+    layout.resized('nothing', [])
+    layout.close('v2')
+    expect(held.kept?.widths).toEqual({ left: 240, right: 240 })
+    expect(held.kept?.bottom).toEqual({ height: 200, open: false })
+    const hidden = started({ hidden: Array.from({ length: MAX_ARRANGED + 1 }, (_, at) => `p/view${at}`).concat('p/tree') })
+    hidden.layout.state(state())
+    expect(columnOf(hidden.held.tree, 'v1')).toBe('col-left')
   })
 
   it('folds the lowest-ranked side to a rail in a narrow window and keeps a favorite open', () => {
