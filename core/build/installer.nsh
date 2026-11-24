@@ -70,14 +70,39 @@
 !macroend
 
 # un.onInit's first line made $OUTDIR the folder the uninstaller was started for, its own or the one _?= names, and
-# nothing before this changes $OUTDIR. An uninstaller for any other folder refuses before it removes anything
+# nothing before this changes $OUTDIR. An uninstaller for any other folder refuses before it removes anything. The
+# folder is kept in a variable of its own, since electron-builder's command line flags such as ${isForAllUsers} write
+# their answer into $R9
 !macro customUnInit
-  StrCpy $R9 $OUTDIR
+  Var /GLOBAL hetuStartedFor
+  StrCpy $hetuStartedFor $OUTDIR
   !insertmacro hetuLockToCurrentUser
   !insertmacro hetuForceInstallDir
-  ${If} $R9 != $INSTDIR
+  ${If} $hetuStartedFor != $INSTDIR
     !insertmacro hetuRefuseFolder
   ${EndIf}
+!macroend
+
+# How the setup takes a failed uninstall of the older version, in place of the template's, whose message box has no
+# answer for a silent run and so waits for a click no one gives. Not able to start the uninstaller goes on as before,
+# an uninstaller that failed ends the setup with exit code 2
+!macro hetuOlderUninstallChecked
+  ${If} ${Errors}
+    DetailPrint `Uninstall was not successful. Not able to launch uninstaller!`
+  ${ElseIf} $R0 != 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0" /SD IDOK
+    DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+!macroend
+
+!macro customUnInstallCheck
+  !insertmacro hetuOlderUninstallChecked
+!macroend
+
+!macro customUnInstallCheckCurrentUser
+  !insertmacro hetuOlderUninstallChecked
 !macroend
 
 !macro customWelcomePage
