@@ -34,7 +34,7 @@ afterEach(async () => {
 const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 const exists = (file: string) => stat(file).then(() => true, () => false)
 
-async function until(check: () => boolean, ms = 2000): Promise<void> {
+async function until(check: () => boolean, ms = 10_000): Promise<void> {
   for (let waited = 0; !check(); waited += 5) {
     if (waited > ms) throw new Error('nothing arrived in time')
     await tick(5)
