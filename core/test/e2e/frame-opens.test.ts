@@ -89,7 +89,7 @@ async function pluginWorker(app: ElectronApplication, id: string): Promise<Worke
 }
 
 const viewer = (reads: string[]): Capability[] => [{ type: 'ui.view' }, { type: 'luoshu.read', paths: reads }]
-const notes = { 'a.md': 'alpha', 'b.md': 'beta', 'c.md': 'gamma', 'd.md': 'delta', 'secret.md': 'hidden' }
+const notes = { 'a.md': 'alpha', 'b.md': 'beta', 'c.md': 'gamma', 'd.md': 'delta', 'e.md': 'epsilon', 'secret.md': 'hidden' }
 
 // kanban and board each draw the rows in a frame and read every note but secret.md. marks reads notes through ui.read
 // alone, so it hears only of the human's opens. tiles lays the frames out in columns beside the note's editor
@@ -105,7 +105,7 @@ async function started() {
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const framed = { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views: { board: { title: 'Board', kind: 'view', frame: 'board' } } }
   const plugins: Record<string, { granted: Capability[], manifest?: object, files?: Record<string, string> }> = {
-    kanban: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
+    kanban: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md', 'e.md']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
     board: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
     marks: { granted: [{ type: 'ui.read', paths: ['**'] }] },
     tiles: { granted: [{ type: 'ui.layout' }] },
@@ -180,37 +180,49 @@ describe('a note opened from a frame', () => {
     await until(async () => (await opened(marks)).length === 2)
   })
 
-  it('opens nothing asked on a timer, on a pointer move, on the wheel or right after a click in another plugin\'s frame', async () => {
+  it('opens in the background, never in front or as the human\'s, what it asks on a timer, a pointer move, the wheel or right after a click in another plugin\'s frame, and nothing outside its read', async () => {
     const { editor, kanban, marks, said } = await started()
-    await tell(kanban, { timer: 'a.md', after: 0 })
-    await tell(kanban, { onMove: 'b.md' })
+    // The human's note in front, opened from the other plugin's frame
+    const front = await inFrame(editor, 'board', 0)
+    await editor.mouse.click(front.x, front.y)
+    await until(async () => (await title(editor)).startsWith('a.md'))
+    await until(async () => (await opened(marks)).length === 1)
+    await tick(700)
+    await tell(kanban, { timer: 'b.md', after: 0 })
+    await tell(kanban, { onMove: 'c.md' })
     await tick(200)
     const at = await inFrame(editor, 'kanban', 'pad')
     await editor.mouse.move(at.x, at.y)
     await editor.mouse.move(at.x + 5, at.y + 5)
-    await tell(kanban, { onWheel: 'c.md' })
+    await tell(kanban, { onWheel: 'd.md' })
     await tick(200)
     await editor.mouse.wheel(0, 40)
-    await tell(kanban, { timer: 'd.md', after: 300 })
+    await tell(kanban, { timer: 'secret.md', after: 0 })
+    await tell(kanban, { timer: 'e.md', after: 300 })
     const other = await inFrame(editor, 'board', 'pad')
     await editor.mouse.click(other.x, other.y)
-    await until(async () => (await said()).filter(data => data.asked !== undefined).length === 4)
+    await until(async () => (await said()).filter(data => data.asked !== undefined).length === 5)
+    await until(async () => (await notesOpen(editor)) === 5)
     await tick(700)
-    expect((await said()).filter(data => data.asked !== undefined).map(data => data.asked)).toEqual(['a.md', 'b.md', 'c.md', 'd.md'])
-    expect(await notesOpen(editor)).toBe(0)
-    expect(await humanOpened(marks)).toEqual([])
+    expect((await said()).filter(data => data.asked !== undefined).map(data => data.asked)).toEqual(['b.md', 'c.md', 'd.md', 'secret.md', 'e.md'])
+    expect(await notesOpen(editor)).toBe(5)
+    expect(await title(editor)).toMatch(/^a\.md/)
+    expect(await humanOpened(marks)).toEqual(['a.md'])
   })
 
-  it('opens one note in front for three asked on one click', async () => {
-    const { editor, kanban, said } = await started()
+  it('opens one note in front as the human\'s and the other two in the background for three asked on one click', async () => {
+    const { editor, kanban, marks, said } = await started()
     await tell(kanban, { many: true })
     await tick(200)
     const at = await inFrame(editor, 'kanban', 0)
     await editor.mouse.click(at.x, at.y)
     await until(async () => (await said()).filter(data => data.asked !== undefined).length === 3)
     await until(async () => (await title(editor)).startsWith('a.md'))
+    await until(async () => (await notesOpen(editor)) === 3)
     await tick(700)
-    expect(await notesOpen(editor)).toBe(1)
+    expect(await notesOpen(editor)).toBe(3)
+    expect(await title(editor)).toMatch(/^a\.md/)
+    expect(await humanOpened(marks)).toEqual(['a.md'])
   })
 
   // Keys Playwright sends never pass the window's before-input-event, so main's own handler is handed the key as the
@@ -221,7 +233,7 @@ describe('a note opened from a frame', () => {
     contents.emit('before-input-event', { preventDefault: () => {} }, input)
   })
 
-  it('opens as the human\'s on Enter in a frame holding focus, which main pushes, and on no Enter main never saw', async () => {
+  it('opens as the human\'s on Enter in a frame holding focus, which main pushes, and in the background on an Enter main never saw', async () => {
     const { app, editor, marks, said } = await started()
     const pad = await inFrame(editor, 'kanban', 'pad')
     await editor.mouse.click(pad.x, pad.y)
@@ -229,11 +241,11 @@ describe('a note opened from a frame', () => {
     expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
     await editor.keyboard.press('Enter')
     await until(async () => (await said()).filter(data => data.asked !== undefined).length === 1)
+    await until(async () => (await notesOpen(editor)) === 1)
     await tick(700)
-    expect(await notesOpen(editor)).toBe(0)
+    expect(await humanOpened(marks)).toEqual([])
     await enterInMain(app)
     await editor.keyboard.press('Enter')
-    await until(async () => (await title(editor)).startsWith('b.md'))
     await until(async () => (await opened(marks)).length === 1)
     expect(await humanOpened(marks)).toEqual(['b.md'])
   })

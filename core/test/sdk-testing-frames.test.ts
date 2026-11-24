@@ -143,23 +143,28 @@ describe('opens and drags from a frame in the fake drawer', () => {
     vi.useRealTimers()
   })
 
-  it('opens a note as the human\'s only once after the test says the human pressed the frame', async () => {
+  it('opens a note as the human\'s only once after the test says the human pressed the frame, and in the background otherwise', async () => {
     const { drawer, frame } = await opening()
-    expect(frame.open('notes/a.md')).toBeNull()
     frame.pressed()
     const opened = frame.open('notes/a.md')
     expect(opened).not.toBeNull()
     expect(drawer.isHuman(opened!)).toBe(true)
     expect(drawer.text(opened!)).toBe('aye')
-    expect(frame.open('notes/b.md')).toBeNull()
+    const background = frame.open('notes/b.md')
+    expect(background).not.toBeNull()
+    expect(drawer.isHuman(background!)).toBe(false)
+    expect(drawer.opened).toEqual(['notes/b.md'])
   })
 
-  it(`opens nothing past ${OPEN_GRACE_MS} ms after the press`, async () => {
-    const { frame } = await opening()
+  it(`opens in the background past ${OPEN_GRACE_MS} ms after the press, and nothing outside the plugin's read`, async () => {
+    const { drawer, frame } = await opening()
     vi.useFakeTimers({ toFake: ['Date'] })
     frame.pressed()
     vi.setSystemTime(Date.now() + OPEN_GRACE_MS + 1)
-    expect(frame.open('notes/a.md')).toBeNull()
+    const late = frame.open('notes/a.md')
+    expect(drawer.isHuman(late!)).toBe(false)
+    expect(frame.open('secret/c.md')).toBeNull()
+    expect(drawer.opened).toEqual(['notes/a.md'])
   })
 
   it('opens a dragged note as the human\'s once on a drop of its token, and nothing for a replay, an unknown token or other text', async () => {

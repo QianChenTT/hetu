@@ -372,6 +372,18 @@ describe('editor.open', () => {
     expect(await board.call('editor.open', { path: 'public/a.md' })).toMatchObject({ ok: true })
     expect(resolved).toEqual({ 'private/x.md': false, 'public/a.md': true })
   })
+
+  // A frame's open with no press of the human's behind it goes the same way
+  it('opens the same way for a frame\'s open with no press behind it, a real read only and judged where the path leads', async () => {
+    const { drawer, opened, resolved, core } = started({ kanban: { verbs: ['ui.view'], read: ['a.md', 'public/link/x.md'], list: ['names/b.md'], uiRead: ['shown/c.md'] } })
+    await connected(drawer, 'kanban')
+    await drawer.ui.pluginOpen('kanban', 'a.md')
+    for (const path of ['names/b.md', 'shown/c.md', 'secret.md']) await expect(drawer.ui.pluginOpen('kanban', path)).rejects.toMatchObject({ code: 'not-granted' })
+    await drawer.ui.pluginOpen('kanban', 'public/link/x.md')
+    expect(opened).toEqual(['a.md', 'public/link/x.md'])
+    expect(resolved).toEqual({ 'a.md': true, 'private/x.md': false })
+    expect(core.calls('luoshu.read')).toEqual([])
+  })
 })
 
 describe('keys in the design\'s order', () => {
