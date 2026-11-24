@@ -20,3 +20,8 @@ updates:
       interval: monthly
     cooldown:
       default-days: 7
+    # codeql-action's init and analyze refuse to run on different versions, so they move together
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
