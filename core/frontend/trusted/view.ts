@@ -163,7 +163,7 @@ function itemsOf(plugin: ListedPlugin): Screen['plugins'][number]['items'] {
     if (item.firstUse && !item.off) return { line: `${text} · asks at first use`, on: false, capability }
     if (!item.off) return { line: `${text} · on`, on: true, capability }
     const wider = plugin.items.some(other => other !== item && !other.off && !other.firstUse && other.capability.type === capability.type)
-    return { line: `${text} · off${wider ? ' · other grants of the same kind still on may reach the same notes' : ''}`, on: false, capability }
+    return { line: `${text} · off${wider ? ' · another grant of this kind still on may cover the same' : ''}`, on: false, capability }
   })
 }
 

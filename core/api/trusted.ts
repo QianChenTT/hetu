@@ -10,10 +10,16 @@ export const INPUT_DELAY_MS = 1000
 
 const quoted = (value: string) => JSON.stringify(value)
 
-// A folder or file path in quotes. A path that holds no quote and no control character, as no Windows path can, shows
-// as it is, each backslash once. Any other is escaped as data, so it can't end its quotes early
+// Characters that draw nothing or reorder the text around them
+const HIDDEN = /[\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g
+
+// A folder or file path in quotes. A path that holds no quote, no control or hidden character, no lone surrogate and
+// no backslash at its end, as an ordinary Windows path, shows as it is, each backslash once. Any other is escaped as
+// data with each hidden character as its code, so it can't end its quotes early or reorder what follows them
 export function quotedPath(path: string): string {
-  return /["\u0000-\u001f\u007f]/.test(path) ? quoted(path) : `"${path}"`
+  const plain = path.isWellFormed() && !/["\u0000-\u001f]/.test(path) && path.search(HIDDEN) === -1 && !path.endsWith('\\')
+  if (plain) return `"${path}"`
+  return quoted(path).replace(HIDDEN, hidden => `\\u${hidden.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }
 
 // A plugin-folder plugin the human approved: found and new is one waiting for its approval
@@ -104,8 +110,10 @@ const sentences: Sentences = {
   'door.handle': () => 'Answer the requests other programs on this computer send to hetu',
 }
 
+// A type no row names, which a parsed manifest never holds, shows as its name in quotes
 export function grantSentence(granted: Capability): string {
-  return (sentences[granted.type] as (granted: Capability) => string)(granted)
+  const sentence = sentences[granted.type] as ((granted: Capability) => string) | undefined
+  return sentence === undefined ? `Use ${quoted(granted.type)}` : sentence(granted)
 }
 
 // The sentence to follow a plugin's name or "it can": its first letter lower case, as in "Let search read all your notes"

@@ -5,7 +5,7 @@ import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import type { CoreLink } from './link.ts'
 
 // What the banner calls a core module switched off, by its id where the id isn't a plain word
-const moduleWords: Readonly<Record<string, string>> = Object.freeze({ luoshu: 'notes access' })
+const moduleLabels: ReadonlyMap<string, string> = new Map([['luoshu', 'notes access']])
 
 // What the banner says: the state files that failed their check, each policy job not on, the plugins down, each switch that
 // weakens a check, each core module switched off and a notes folder not picked. Nothing while all is well
@@ -17,9 +17,9 @@ export function bannerLines(status: CoreStatus): string[] {
   if (status.devMode.length > 0) lines.push(`dev mode: ${status.devMode.join(', ')}`)
   if (status.allowUnsigned > 0) lines.push(`${status.allowUnsigned} plugin build${status.allowUnsigned === 1 ? '' : 's'} trusted with no signature`)
   if (status.skipVerification) lines.push('verification skipped')
-  for (const id of status.modulesOff) lines.push(`${moduleWords[id] ?? id} off`)
+  for (const id of status.modulesOff) lines.push(`${moduleLabels.get(id) ?? id} off`)
   if (!status.logWrites) lines.push("the log can't write")
-  if (!status.luoshuPicked) lines.push('No notes folder is picked yet')
+  if (!status.luoshuPicked) lines.push('no notes folder is picked yet')
   return lines
 }
 
