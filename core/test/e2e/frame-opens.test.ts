@@ -42,6 +42,7 @@ var port = null
 var tokens = {}
 var minted = rows.map(function (row) { return row.textContent })
 var many = false
+document.addEventListener('keydown', function (event) { say({ key: event.key }) })
 function say(data) { if (port) port.postMessage(JSON.stringify(data)) }
 function open(path) { port.postMessage({ v: 1, kind: 'open', path: path }); say({ asked: path }) }
 rows.forEach(function (row, at) {
@@ -78,7 +79,7 @@ const row = (name: string) => `<button draggable="true">${name}</button>`
 const framePage = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="board.css"></head><body>${['a.md', 'b.md', 'c.md', 'secret.md'].map(row).join('')}<div id="pad"></div><script src="board.js"></script></body></html>`
 const frameStyle = 'body { margin: 0 } button { display: block; box-sizing: border-box; width: 200px; height: 30px; margin: 0 } #pad { height: 60px }'
 
-type Said = { hello?: true, asked?: string, token?: string, is?: string | null }
+type Said = { hello?: true, asked?: string, token?: string, is?: string | null, key?: string }
 type Heard = { topic: string, instance?: string, data?: unknown, state?: unknown }
 const heard = (worker: Worker) => worker.evaluate('globalThis.heard') as Promise<Heard[]>
 const opened = (worker: Worker) => worker.evaluate('globalThis.opened') as Promise<string[]>
@@ -170,13 +171,19 @@ const humanOpened = async (marks: Worker) => {
 }
 
 describe('a note opened from a frame', () => {
-  it('opens in front as the human\'s on a click on its row, and on a long press counted from its release', async () => {
-    const { editor, marks } = await started()
+  it('opens in front as the human\'s on a click on its row, leaving the next key to the frame, and on a long press counted from its release', async () => {
+    const { editor, marks, said } = await started()
     const at = await inFrame(editor, 'kanban', 1)
     await editor.mouse.click(at.x, at.y)
     await until(async () => (await title(editor)).startsWith('b.md'))
     await until(async () => (await opened(marks)).length === 1)
     expect(await humanOpened(marks)).toEqual(['b.md'])
+    // Focus stays in the frame the human clicked, so the next key is the frame's and never lands in the note
+    await tick(300)
+    await editor.keyboard.press('x')
+    await until(async () => (await said()).some(data => data.key === 'x'))
+    expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
+    expect(await editor.locator('.editor:not([hidden]) .cm-content').innerText()).toBe('beta')
     // A long press counts from its release
     const held = await inFrame(editor, 'kanban', 2)
     await editor.mouse.move(held.x, held.y)
@@ -297,6 +304,8 @@ describe('a note dragged out of a frame', () => {
     const text = await dragged(cdp, await inFrame(editor, 'kanban', 1), onNote)
     expect(text).toBe(`hetu-drag:${tokens['b.md']}`)
     await until(async () => (await title(editor)).startsWith('b.md'))
+    // A drop is aimed at the editor, so focus goes to the note it opened
+    await until(async () => editor.evaluate(() => document.activeElement?.closest('.cm-editor') !== null && document.activeElement?.closest('.cm-editor') !== undefined))
     await until(async () => (await opened(marks)).length === 2)
     expect(await humanOpened(marks)).toEqual(['a.md', 'b.md'])
     await droppedText(cdp, onNote, text)
