@@ -5,8 +5,7 @@ import { accepts, type Rect, DragGesture, fraction, splitSizes, zoneAt } from '.
 import { type DrawHooks, fillerOf, taggedOf } from './draw.ts'
 import { EditorViews } from './editor.ts'
 import { viewsHost } from '../../api/ids.ts'
-import { CORE_KEY_NAMES, type CoreKey, coreKeyOf } from '../../api/keys.ts'
-import { keyName } from './keys.ts'
+import { CORE_KEY_NAMES, type CoreKey, coreKeyOf, keyName } from '../../api/keys.ts'
 import { Layers } from './layers.ts'
 import { type Bridge, CoreLink } from './link.ts'
 import { drawMenu, type MenuData } from './menu.ts'
@@ -668,6 +667,12 @@ function start(bridge: Bridge): void {
       else coreKey(data.key as CoreKey)
       return
     }
+    // Main moving focus into a frame, which counts as the core's own move
+    if (data?.hetu === 'focus-frame') {
+      const instance = typeof data.url === 'string' ? theFrames.instanceAt(data.url) : null
+      if (instance !== null) theFrames.focusFrame(instance)
+      return
+    }
     // A key a plugin's views bound, pressed while focus was in that frame of the plugin's
     if (data?.hetu === 'view-key') {
       const instance = typeof data.url === 'string' ? theFrames.instanceAt(data.url) : null
@@ -691,9 +696,9 @@ function start(bridge: Bridge): void {
 
   // A frame that took focus on its own gives it back to the note and the core records it. The page sees focus leave its
   // own document for a frame as a blur
-  theFrames.onTheft = url => {
+  theFrames.onTheft = (url, again) => {
     views.focus()
-    if (url !== null) void link.call('editor.focusTaken', { url })
+    if (!again) void link.call('editor.focusTaken', { url })
   }
   window.addEventListener('blur', () => theFrames.focusMoved())
   document.addEventListener('focusin', () => theFrames.focusMoved())

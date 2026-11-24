@@ -22,6 +22,10 @@ ipcRenderer.on('hetu:key', (_event, key: unknown) => {
 ipcRenderer.on('hetu:view-key', (_event, pressed: { url?: unknown, key?: unknown }) => {
   window.postMessage({ hetu: 'view-key', url: pressed.url, key: pressed.key }, location.origin)
 })
+// Main moving focus into the frame served from that URL
+ipcRenderer.on('hetu:focus-frame', (_event, asked: { url?: unknown }) => {
+  window.postMessage({ hetu: 'focus-frame', url: asked.url }, location.origin)
+})
 // Each press and release in the window, a frame's included, at its point on the page, as main saw it
 ipcRenderer.on('hetu:press', (_event, press: unknown) => {
   window.postMessage({ hetu: 'press', press }, location.origin)

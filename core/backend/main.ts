@@ -335,12 +335,13 @@ async function start(): Promise<void> {
         const took = editorKeyOfInput(input, contents.focusedFrame?.url ?? null, viewKeys, process.platform === 'darwin')
         if (took === null) return
         event.preventDefault()
-        if (took.channel !== null) contents.send(took.channel, took.sent)
+        if (took.channel !== null && !contents.isDestroyed()) contents.send(took.channel, took.sent)
       })
       // Each press and release to the page at once, a frame's included, which the page alone never hears. A press in a
       // frame comes with the frame's own x and y, so the point on the page is taken from the screen
       contents.on('before-mouse-event', (_event, mouse) => {
         if ((mouse.type !== 'mouseDown' && mouse.type !== 'mouseUp') || mouse.globalX === undefined || mouse.globalY === undefined) return
+        if (contents.isDestroyed()) return
         const content = window.getContentBounds()
         const zoom = contents.getZoomFactor()
         contents.send('hetu:press', { down: mouse.type === 'mouseDown', x: (mouse.globalX - content.x) / zoom, y: (mouse.globalY - content.y) / zoom })

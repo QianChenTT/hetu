@@ -42,7 +42,10 @@ export class FocusGuard {
 
   // Focus is in this frame now: true when it was let in already or just allowed
   entered(instance: string): boolean {
-    if (this.holder === instance) return true
+    if (this.holder === instance) {
+      this.allowed = null
+      return true
+    }
     const allowed = this.allowed
     const ok = allowed !== null && allowed.instance === instance && this.clock() - allowed.at <= FOCUS_GRACE_MS
     this.allowed = null
@@ -50,9 +53,10 @@ export class FocusGuard {
     return ok
   }
 
-  // Focus is in the page's own document again
+  // Focus is in the page's own document again. A press credit not yet used goes with it
   left(): void {
     this.holder = null
+    this.allowed = null
   }
 }
 
@@ -121,8 +125,11 @@ export class Frames {
   private readonly guard = new FocusGuard()
   private checking = false
   private watch: ReturnType<typeof setInterval> | null = null
-  // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note
-  onTheft: ((url: string | null) => void) | null = null
+  // The frame caught taking focus and not yet out of it, told once
+  private caught: string | null = null
+  // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note.
+  // again says the same frame still holds it from a theft already told
+  onTheft: ((url: string, again: boolean) => void) | null = null
 
   // relay hands what a frame sent to its owner's worker. gone says an instance is closed or its owner down
   constructor(link: CoreLink, host: HTMLElement, relay: (owner: string, instance: string, data: unknown) => void, gone: (instance: string) => boolean) {
@@ -169,16 +176,32 @@ export class Frames {
     const found = this.at(document.activeElement)
     if (found === null) {
       this.guard.left()
+      this.caught = null
       this.watching(false)
       return
     }
     const [instance, held] = found
     if (this.guard.entered(instance)) {
+      this.caught = null
       this.watching(true)
       return
     }
+    const again = this.caught === instance
+    this.caught = instance
     // TODO: decide what a plugin caught taking focus gets (stop it, a notice), only pulled back for now
-    this.onTheft?.(held.url)
+    if (held.url !== null) this.onTheft?.(held.url, again)
+    // With no note shown to take focus back, the frame lets go of it to the page itself
+    if (held.element !== null && document.activeElement === held.element) held.element.blur()
+    // A frame that keeps focus all the same is looked at again
+    this.watching(true)
+  }
+
+  // The core moving focus into a frame itself, which the guard lets in
+  focusFrame(instance: string): void {
+    const element = this.mounted.get(instance)?.element
+    if (element === null || element === undefined) return
+    this.guard.allow(instance)
+    element.focus()
   }
 
   private watching(on: boolean): void {
