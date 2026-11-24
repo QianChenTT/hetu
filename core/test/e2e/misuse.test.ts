@@ -428,10 +428,11 @@ describe('a view frame', () => {
   })
 
   // Tells the plugin's frame what to do, as data
-  const tell = (worker: Worker, data: object) => run(worker, `
-    const instance = heard.find(e => e.topic === 'view.opened').instance
-    await ctx.ui.views.post(instance, ${JSON.stringify(data)})
-  `)
+  const tell = (worker: Worker, data: object) => worker.evaluate(async told => {
+    const own = globalThis as unknown as { heard: Heard[], ctx: { ui: { views: { post: (instance: string, data: unknown) => Promise<unknown> } } } }
+    const instance = own.heard.find(e => e.topic === 'view.opened')!.instance!
+    await own.ctx.ui.views.post(instance, told)
+  }, data)
 
   it('gets none of the typing at a key each 150 ms when it takes focus with no press, which the core records', async () => {
     const { editor, workers, said, dataDir } = await framed()
