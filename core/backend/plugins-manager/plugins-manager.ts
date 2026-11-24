@@ -1,7 +1,7 @@
 import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList, type Staged, type StagedPlugin } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { capabilityText, grantSentence, sourceLine, UNSIGNED, welcomeDue } from '../../api/trusted.ts'
+import { grantClause, grantSentence, sourceLine, UNSIGNED, welcomeDue } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
@@ -182,7 +182,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       if (k === undefined || manifest === undefined || manifest === null) return []
       const asks = manifest.capabilities ?? []
       return [
-        `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`)),
+        `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks to ${grantClause(granted)}`)),
         ...this.classes('approve', change.plugin, this.approval(k), true).lines,
       ]
     }

@@ -10,6 +10,12 @@ export const INPUT_DELAY_MS = 1000
 
 const quoted = (value: string) => JSON.stringify(value)
 
+// A folder or file path in quotes. A path that holds no quote and no control character, as no Windows path can, shows
+// as it is, each backslash once. Any other is escaped as data, so it can't end its quotes early
+export function quotedPath(path: string): string {
+  return /["\u0000-\u001f\u007f]/.test(path) ? quoted(path) : `"${path}"`
+}
+
 // A plugin-folder plugin the human approved: found and new is one waiting for its approval
 const approved = (plugin: ListedPlugin) => plugin.from === 'folder' && !(plugin.state === 'found' && plugin.reason === 'new')
 
@@ -102,6 +108,12 @@ export function grantSentence(granted: Capability): string {
   return (sentences[granted.type] as (granted: Capability) => string)(granted)
 }
 
+// The sentence to follow a plugin's name or "it can": its first letter lower case, as in "Let search read all your notes"
+export function grantClause(granted: Capability): string {
+  const sentence = grantSentence(granted)
+  return sentence.charAt(0).toLowerCase() + sentence.slice(1)
+}
+
 // Why a link or a source gave nothing to install, as the trusted window says it. main's fetch from GitHub answers its
 // problems with these words too
 export const installProblemWords: Readonly<Record<InstallProblem, string>> = Object.freeze({
@@ -134,7 +146,7 @@ export const UNSIGNED = 'Unsigned: nothing proves who made these plugins. Instal
 // The source as the core staged it, a link's with the release it took the zip from and whether its bytes matched the
 // checksum GitHub lists, which says they arrived as GitHub holds them and never who made them
 export function sourceLine(source: StagedSource): string {
-  if (source.kind !== 'link') return `From the ${source.kind} ${quoted(source.path)}`
+  if (source.kind !== 'link') return `From the ${source.kind} ${quotedPath(source.path)}`
   const checked = source.verified ? 'matching the checksum GitHub lists for it' : 'with no checksum from GitHub to check it against'
   return `From ${quoted(source.asset)} in the release ${quoted(source.tag)} of ${quoted(source.link)}, ${checked}`
 }
