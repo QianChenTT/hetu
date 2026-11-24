@@ -157,15 +157,19 @@ describe('the rows of a list', () => {
     expect(await row(editor, 10).evaluate(element => element.style.backgroundColor)).toBe('')
   })
 
+  // The window grows to more than three times the list's small height, past the rows drawn a screen beyond each edge,
+  // and no taller than the display allows, which on a CI runner's display is under 1000
   it('fills a list whose box grew with the window', async () => {
     const { app, editor } = await started()
-    await sizeTo(app, 900, 320)
-    await until(async () => (await list(editor).evaluate(element => element.clientHeight)) < 320)
+    await sizeTo(app, 900, 220)
+    await until(async () => (await list(editor).evaluate(element => element.clientHeight)) < 220)
+    const small = await list(editor).evaluate(element => element.clientHeight)
     // Drawn again at the small size
     await scrollTo(editor, ROW_HEIGHT)
     await scrollTo(editor, 0)
-    await sizeTo(app, 900, 1000)
-    await until(async () => (await list(editor).evaluate(element => element.clientHeight)) > 800)
+    const tall = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workAreaSize.height)
+    await sizeTo(app, 900, Math.min(1000, tall))
+    await until(async () => (await list(editor).evaluate(element => element.clientHeight)) > small * 3)
     const height = await list(editor).evaluate(element => element.clientHeight)
     await until(async () => Math.max(...(await drawn(editor)).map(at => at.bottom)) >= height, 5_000)
   })
