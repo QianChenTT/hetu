@@ -20,7 +20,7 @@ export const SCHEME = 'hetu'
 // What before ready needs from Electron's app, faked in the tests. commandLine is Chromium's own parse of the
 // arguments, so a switch spelled with another prefix or case is found as Chromium would find it
 export type EarlyApp = {
-  readonly commandLine: { hasSwitch(name: string): boolean, appendSwitch(name: string, value: string): void }
+  readonly commandLine: { hasSwitch(name: string): boolean, getSwitchValue(name: string): string, appendSwitch(name: string, value: string): void }
   setPath(name: 'userData', value: string): void
   requestSingleInstanceLock(): boolean
   enableSandbox(): void
@@ -70,6 +70,14 @@ export function beforeReady(
   // not on the command line, so app.relaunch, which starts the first argv again, doesn't hand it to a locked build
   // https://www.electronjs.org/docs/latest/api/command-line-switches#--host-resolver-rulesrules
   app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND')
+  // Turns on the focus-without-user-activation policy, which Chromium 156 leaves experimental and ignores otherwise. A
+  // view frame's focus(), window.focus(), showModal(), select() or any other focus it makes with no user activation of
+  // its own then does nothing, so it never takes focus, or an IME composition, from the note. It can go once Electron is
+  // on Chromium 158, where the policy ships. Chromium reads only the last --enable-blink-features, so this one carries
+  // any already there
+  // https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/runtime_enabled_features.json5
+  const blink = app.commandLine.getSwitchValue('enable-blink-features')
+  app.commandLine.appendSwitch('enable-blink-features', [blink, 'BlockingFocusWithoutUserActivation'].filter(name => name !== '').join(','))
   // A second call replaces the first list rather than failing, so this is the only one
   protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true } }])
   return found
