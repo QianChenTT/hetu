@@ -160,10 +160,11 @@ async function inFrame(editor: Page, id: string, at: number | 'pad') {
 const notesOpen = (editor: Page) => editor.locator('.editor').count()
 const title = (editor: Page) => editor.locator('#title').innerText()
 // Tells a plugin's frame what to do, as data
-const tell = (worker: Worker, data: object) => run(worker, `
-  const instance = heard.find(e => e.topic === 'view.opened').instance
-  await ctx.ui.views.post(instance, ${JSON.stringify(data)})
-`)
+const tell = (worker: Worker, data: object) => worker.evaluate(async told => {
+  const own = globalThis as unknown as { heard: Heard[], ctx: { ui: { views: { post: (instance: string, data: unknown) => Promise<unknown> } } } }
+  const instance = own.heard.find(e => e.topic === 'view.opened')!.instance!
+  await own.ctx.ui.views.post(instance, told)
+}, data)
 // The paths of the notes a ui.read plugin heard the human open
 const humanOpened = async (marks: Worker) => {
   const instances = await run<{ instance: string, path: string }[]>(marks, 'return await ctx.editor.instances()')
