@@ -551,6 +551,8 @@ async function openSockets(pids: number[]): Promise<string[]> {
 }
 
 const onWindows = process.platform === 'win32'
+// UDP 5353 is mDNS, which Chromium's network service asks and answers on for WebRTC with its mDNS hiding on
+const onMdnsPort = (entry: string) => entry.endsWith(' 5353')
 
 // Each expected failure below holds only its last expect. What it stands on runs as a plain test before it, so a
 // start, a report or a capture going wrong fails the run instead of passing as the expected failure
@@ -573,16 +575,24 @@ describe('the sockets of a frame\'s WebRTC', () => {
       stun.close()
     }
   })
-  // TODO: a frame's RTCPeerConnection makes Chromium's network service bind UDP 5353 on 0.0.0.0 and :: for its mDNS
-  // responder and a UDP pair on 0.0.0.0 and :: for each connection's gathering, under disable_non_proxied_udp, which
-  // raises the firewall's prompt. Drop fails once hetu stops them and run it on macOS once checked there
+  // With WebRTC's mDNS hiding on, Chromium's network service bound UDP 5353 on 0.0.0.0 and :: for its mDNS responder.
+  // The look every 300 ms can miss a short bind, so the packets test checks binds by the net log as well
+  it.runIf(onWindows)('leaves no hetu process holding the mDNS port 5353 while a frame offers', () => {
+    expect(open?.filter(onMdnsPort)).toEqual([])
+  })
+  // Accepted as it stands: libwebrtc binds a UDP pair on 0.0.0.0 and :: for each peer connection's gathering, under
+  // disable_non_proxied_udp, and holds it for the connection's life. It sends nothing and what it reads reaches nothing.
+  // No switch or policy in the app stops it and it raises the firewall's prompt. Fails while the pair is there
+  // TODO: run the socket and packet tests on macOS once checked there
   it.runIf(onWindows).fails('leaves no hetu process holding a socket on an address other than loopback while a frame offers', () => {
-    expect(open).toEqual([])
+    expect(open?.filter(entry => !onMdnsPort(entry))).toEqual([])
   })
 })
 
-// The addresses other than loopback the network service sent UDP to while the frame tried what it was sent, by the net log
-async function sentOffLoopback(app: ElectronApplication, worker: Worker, servers: object[], mdns?: string): Promise<string[]> {
+// While the frame tried what it was sent, by the net log: the addresses other than loopback the network service sent UDP
+// to and the local addresses it bound a UDP socket on the mDNS port at. The log holds every bind, however short, where
+// a look at the sockets every 300 ms can miss one
+async function udpByNetLog(app: ElectronApplication, worker: Worker, servers: object[], mdns?: string): Promise<{ sent: string[], mdns: string[] }> {
   const log = path.join(await temp(), 'net.json')
   await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
   const report = await rtcReport(worker, servers, mdns)
@@ -590,23 +600,24 @@ async function sentOffLoopback(app: ElectronApplication, worker: Worker, servers
   expect(report).toEqual({ tried: [expect.any(String)] })
   const { constants, events } = JSON.parse(await readFile(log, 'utf8')) as { constants: { logEventTypes: Record<string, number> }, events: { type: number, params?: { address?: string } }[] }
   expect(constants.logEventTypes.UDP_BYTES_SENT).toEqual(expect.any(Number))
-  const sent = events.filter(event => event.type === constants.logEventTypes.UDP_BYTES_SENT).map(event => event.params?.address ?? '')
-  return sent.filter(address => !/^(127\.|\[::1\])/.test(address))
+  expect(constants.logEventTypes.UDP_LOCAL_ADDRESS).toEqual(expect.any(Number))
+  const addresses = (type: number | undefined) => events.filter(event => event.type === type).map(event => event.params?.address ?? '')
+  return {
+    sent: addresses(constants.logEventTypes.UDP_BYTES_SENT).filter(address => !/^(127\.|\[::1\])/.test(address)),
+    mdns: addresses(constants.logEventTypes.UDP_LOCAL_ADDRESS).filter(address => address.endsWith(':5353')),
+  }
 }
 
+// With WebRTC's mDNS hiding on, a remote candidate on <name>.local made Chromium's network service send an mDNS query
+// for ~NOTFOUND, the name host-resolver-rules maps it to, to 224.0.0.251 and ff02::fb on every interface when the frame
+// said, from sockets on 5353 that also read the LAN's mDNS traffic
 describe('the packets of a frame\'s WebRTC', () => {
-  let sent: string[] | undefined
-  it.runIf(onWindows)('sends nothing off loopback while a frame offers a peer connection, then the frame handing a remote mDNS candidate', async () => {
+  it.runIf(onWindows)('sends nothing off loopback and binds nothing on the mDNS port 5353 while a frame offers a peer connection or hands a remote mDNS candidate, by the net log', async () => {
     const { app, workers: { kanban: worker } } = await started(rtcFiles)
-    // The control: a peer connection offering to a STUN server on loopback, under the policy, sends nothing anywhere
-    expect(await sentOffLoopback(app, worker!, [{ urls: 'stun:127.0.0.1:9' }])).toEqual([])
-    sent = await sentOffLoopback(app, worker!, [], `hetu${randomBytes(6).toString('hex')}`)
-    await found('packets sent', sent)
-  })
-  // TODO: a remote candidate on <name>.local makes Chromium's network service send an mDNS query for ~NOTFOUND, the name
-  // host-resolver-rules maps it to, to 224.0.0.251 and ff02::fb on every interface. The name stays home but the packet
-  // leaves when the frame says. Drop fails once hetu stops it and run it on macOS once checked there
-  it.runIf(onWindows).fails('sends no packet to an address other than loopback when a frame hands a remote mDNS candidate, by the net log', () => {
-    expect(sent).toEqual([])
+    // A peer connection offering to a STUN server on loopback, under the policy, sends nothing anywhere
+    const offered = await udpByNetLog(app, worker!, [{ urls: 'stun:127.0.0.1:9' }])
+    const handed = await udpByNetLog(app, worker!, [], `hetu${randomBytes(6).toString('hex')}`)
+    await found('udp by the net log', { offered, handed })
+    expect({ offered, handed }).toEqual({ offered: { sent: [], mdns: [] }, handed: { sent: [], mdns: [] } })
   })
 })
