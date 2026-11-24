@@ -5,7 +5,8 @@ import type { CoreLink } from './link.ts'
 import type { Rect } from './drag.ts'
 
 // View frames: a view whose plugin draws it in a frame of its own files, for a canvas or its own framework. Main mints a
-// single-use URL on the views host for each mount, served from the bytes the plugin started with. The frame is sandboxed
+// single-use URL on the plugin's own views host for each mount, served from the bytes the plugin started with, and the
+// frame's src is that URL as main answered it, so each plugin's frames get a renderer of their own. The frame is sandboxed
 // with scripts only, so its origin is opaque. It gets a port on its first load and on any later one it is removed and
 // main records frame.navigated, so a navigated frame never gets a port. A frame talks only to its own plugin's worker
 // through the drawer, plain data as JSON text within the cap at a rate. Frames sit in the lifted layer over their
