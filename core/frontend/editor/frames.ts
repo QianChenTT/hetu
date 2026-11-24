@@ -12,7 +12,7 @@ import type { Rect } from './drag.ts'
 // slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
 // it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
 // move ends, which leaves it a key or none of what the human types. hetu's theme is offered to every frame as the
-// page sets it on the frames' layer, never checked or forced on one
+// page sets it, never checked or forced on one
 
 // How long after a press, or the core's own move, focus may still go into that frame
 export const FOCUS_GRACE_MS = 500
@@ -104,7 +104,7 @@ export class Frames {
   // again says the same frame still holds it from a theft already told
   onTheft: ((url: string, again: boolean) => void) | null = null
   // The theme's variables as last offered to the frames
-  private theme: Record<string, string> = {}
+  private variables: Readonly<Record<string, string>> = {}
 
   // relay hands what a frame sent to its owner's worker. gone says an instance is closed or its owner down
   constructor(link: CoreLink, host: HTMLElement, relay: (owner: string, instance: string, data: unknown) => void, gone: (instance: string) => boolean) {
@@ -112,21 +112,13 @@ export class Frames {
     this.host = host
     this.relay = relay
     this.gone = gone
-    this.offerTheme()
   }
 
-  // The --hetu- variables the page sets on the host go to each frame with its port and again on each change, as an
-  // object so no text a worker sends reads as one
-  private offerTheme(): void {
-    const read = () => {
-      const style = this.host.style
-      const next = Object.fromEntries(Array.from(style).filter(name => name.startsWith('--hetu-')).map(name => [name, style.getPropertyValue(name)]))
-      if (JSON.stringify(next) === JSON.stringify(this.theme)) return
-      this.theme = next
-      for (const held of this.mounted.values()) held.port?.postMessage({ v: 1, kind: 'theme', variables: next })
-    }
-    read()
-    new MutationObserver(read).observe(this.host, { attributes: true, attributeFilter: ['style'] })
+  // The theme's variables as the page set them, to each frame with its port and now to each holding one, as an object
+  // so no text a worker sends reads as one
+  theme(variables: Readonly<Record<string, string>>): void {
+    this.variables = variables
+    for (const held of this.mounted.values()) held.port?.postMessage({ v: 1, kind: 'theme', variables })
   }
 
   // The frame drawing a view instance laid over its slot, mounted on first use, or hidden while no slot holds it
@@ -293,6 +285,6 @@ export class Frames {
     // '*' is the only target a frame sandboxed to scripts alone accepts, since its origin is opaque. The port goes only
     // on the first load of the single-use path main served, and a frame that navigates after it is removed with no port
     // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-    held.element.contentWindow.postMessage({ v: 1, kind: 'view', variables: this.theme }, '*', [port2])
+    held.element.contentWindow.postMessage({ v: 1, kind: 'view', variables: this.variables }, '*', [port2])
   }
 }

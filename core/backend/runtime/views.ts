@@ -10,7 +10,8 @@ import { IMAGE_CSP, type Served } from './lib.ts'
 // the token for as long as the frame lives, and no other page, so a frame that navigates finds nothing. A token is
 // served only on its own plugin's host. Icons come from hetu://<id>.views/icon/<file>, svg or png only, so a plugin's
 // host shows no other plugin's icons.
-// Every token of an incarnation ends with it, and every token ends when the editor page unloads
+// Every token of an incarnation ends with it, and every token ends when the editor page unloads. Beside each frame's
+// page, hetu-theme.css holds hetu's theme as the editor page last set it, offered to the frame and never checked
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
   html: 'text/html; charset=utf-8',
@@ -25,6 +26,13 @@ const TYPES: Readonly<Record<string, string>> = Object.freeze({
 // with a dot, so none is . or .., and nothing escaped gets through
 const PATH = /^(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*\.(html|css|js|svg|png|woff2)$/
 const TOKEN = /^[0-9a-f]{32}$/
+const THEME_FILE = 'hetu-theme.css'
+
+// The variables as one rule on :root. editor.theme's schema holds names and values to text that stays inside it
+function sheetOf(variables: Readonly<Record<string, string>>): Uint8Array {
+  const lines = Object.entries(variables).map(([name, value]) => `\n  ${name}: ${value};`).join('')
+  return new TextEncoder().encode(`:root {${lines}${lines === '' ? '' : '\n'}}\n`)
+}
 
 // The proposal's frame policy: everything only from the token's own path on the plugin's host, no network, frames,
 // forms or base, and embedded only by the editor page
@@ -44,6 +52,8 @@ export class ViewFiles {
   private readonly running = new Map<string, Running>()
   private readonly tokens = new Map<string, Token>()
   private readonly token: () => string
+  // hetu opens one editor window per run, so the theme its page last set is the one every frame gets
+  private themeSheet = sheetOf({})
 
   constructor(options: { token?: () => string } = {}) {
     this.token = options.token ?? (() => randomBytes(16).toString('hex'))
@@ -85,6 +95,11 @@ export class ViewFiles {
     return { plugin: held.plugin }
   }
 
+  // The theme's variables the editor page set
+  theme(variables: Readonly<Record<string, string>>): void {
+    this.themeSheet = sheetOf(variables)
+  }
+
   // The editor page went, and every frame with it
   unloaded(): void {
     this.tokens.clear()
@@ -100,6 +115,7 @@ export class ViewFiles {
     if (held === undefined || held.plugin !== at.plugin || match === null) return null
     const running = this.running.get(held.plugin)
     if (running === undefined || running.incarnation !== held.incarnation) return null
+    if (path === THEME_FILE) return { bytes: this.themeSheet, type: TYPES.css as string, csp: frameCsp(held.plugin, at.first) }
     if (match[1] === 'html') {
       if (path !== held.entry || held.served) return null
       held.served = true

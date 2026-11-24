@@ -360,6 +360,7 @@ function start(bridge: Bridge): void {
 
   // The picked theme's variables on the base and lifted layers only, never the core layer
   let themed: string[] = []
+  let offered: string | null = null
   function applyTheme(): void {
     const spec = declared.find(plugin => plugin.plugin === settings.value.theme)?.theme ?? null
     const { variables, editorFallback } = themeStyle(spec)
@@ -369,6 +370,12 @@ function start(bridge: Bridge): void {
       for (const [name, value] of Object.entries(variables)) target.style.setProperty(name, value)
     }
     themed = Object.keys(variables)
+    // The same variables offered to the frames and to main, which serves them beside each frame's page, once at the
+    // start and again only when they change
+    if (offered === JSON.stringify(variables)) return
+    offered = JSON.stringify(variables)
+    theFrames.theme(variables)
+    void link.call('editor.theme', { variables })
   }
 
   settings.onChange = () => {

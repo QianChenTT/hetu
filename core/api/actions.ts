@@ -116,6 +116,11 @@ const frameName = localName.refine(name => name !== 'worker' && name !== 'host' 
 export const FRAME_TOKEN = /^[0-9a-f]{32}$/
 const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/([a-z0-9-]+\.views)\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
   .refine(url => frameOwner(url.slice('hetu://'.length, url.indexOf('/', 'hetu://'.length))) !== null, 'no plugin\'s frames')
+// The theme's variables as the editor page sets them. hetu's own names, and values with no character that could end a
+// declaration, open a rule or load anything, since main writes them into a stylesheet
+const MAX_THEME_VARIABLES = 32
+const themeVariables = z.record(z.string().max(48).regex(/^--hetu-[a-z][a-z0-9-]*$/), z.string().max(200).regex(/^[A-Za-z0-9 #,._-]*$/))
+  .refine(variables => Object.keys(variables).length <= MAX_THEME_VARIABLES, `at most ${MAX_THEME_VARIABLES} variables`)
 
 // The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub
 // link whose release main lists the zip assets of. The core copies the source into a staging folder of its own and
@@ -200,6 +205,9 @@ const coreTable = {
   // A single-use URL main serves one image of the notes folder from for a plugin's image node, inside that plugin's
   // luoshu.read scope. Only the editor window's drawer gets one
   'editor.image': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: imagePath }) },
+  // The theme the editor page set, at its start and on each change, which main serves beside each frame's page as
+  // hetu-theme.css. Offered to frames, never checked in one
+  'editor.theme': { from: 'windows', args: z.strictObject({ variables: themeVariables }) },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
   // <plugin id>.refused coalesced by reason
   'core.refused': {
@@ -500,6 +508,7 @@ export type ActionResults = InstallResults & {
   'editor.focusTaken': null
   'editor.viewKeys': null
   'editor.image': { url: string }
+  'editor.theme': null
   // null when the notes hold nothing the last commit doesn't
   'history.commit': { commit: string | null }
   'history.log': { commits: HistoryCommit[] }
