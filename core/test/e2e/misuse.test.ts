@@ -769,6 +769,27 @@ describe('a view frame', () => {
     expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
   })
 
+  it('takes focus on a press in it whose push reaches the page after the move it caused, which the core records as no theft', async () => {
+    const { app, editor, said, dataDir } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    // Main's push of each press reaches the page 25 ms late, after the frame took focus from it
+    await app.evaluate(({ webContents }) => {
+      const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
+      const send = contents.send.bind(contents)
+      contents.send = (channel: string, ...args: unknown[]) => {
+        if (channel === 'hetu:press') setTimeout(() => send(channel, ...args), 25)
+        else send(channel, ...args)
+      }
+    })
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(500)
+    expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
+    expect(await logged(dataDir, 'frame.focus-taken')).toBe(false)
+  })
+
   it('is found under a press at its point on the page with the page zoomed to 150%', async () => {
     const { app, editor, said } = await framed(['kanban', 'board'])
     await app.evaluate(({ webContents }) => {
