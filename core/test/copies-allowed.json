@@ -460,6 +460,18 @@
     },
     {
       "files": [
+        "core/backend/runtime/trusted.ts",
+        "core/frontend/editor/frames.ts"
+      ],
+      "hash": "527132e7298837da",
+      "at": [
+        "core/backend/runtime/trusted.ts:18-22",
+        "core/frontend/editor/frames.ts:30-36"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
         "core/backend/runtime/views.ts",
         "core/frontend/editor/frames.ts"
       ],
@@ -633,7 +645,7 @@
       ],
       "hash": "2bd770ef0f36c627",
       "at": [
-        "core/frontend/editor/page.ts:734-740",
+        "core/frontend/editor/page.ts:677-683",
         "core/frontend/workers/page.ts:19-25"
       ],
       "judged": "not yet"
@@ -645,7 +657,7 @@
       ],
       "hash": "79f7f7ba160279fe",
       "at": [
-        "core/frontend/editor/page.ts:734-740",
+        "core/frontend/editor/page.ts:741-747",
         "core/frontend/workers/preload.ts:10-14"
       ],
       "judged": "not yet"
