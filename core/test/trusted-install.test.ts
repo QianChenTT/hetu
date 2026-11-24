@@ -13,6 +13,7 @@ const calm = (): SecurityList => ({
   requests: [],
   identities: [],
   stopped: null,
+  startupDue: true,
 })
 
 // One capability of each type, scoped where the type takes a scope

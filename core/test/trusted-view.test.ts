@@ -20,6 +20,8 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   requests: [],
   identities: [],
   stopped: null,
+  // As the core decides it at start: due with no plugin in the plugin folder and hetu not stopped
+  startupDue: over.stopped == null && !(over.plugins ?? []).some(one => one.from === 'folder'),
   ...over,
 })
 

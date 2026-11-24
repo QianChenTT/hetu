@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import type { ListedPlugin, SecurityList } from '../api/actions.ts'
-import { startupDue } from '../api/trusted.ts'
 import { APPROVE_LINE, SUGGESTED_LINK } from '../frontend/trusted/startup.ts'
 import { screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
@@ -12,6 +11,8 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   requests: [],
   identities: [],
   stopped: null,
+  // As the core decides it at start: due with no plugin in the plugin folder and hetu not stopped
+  startupDue: over.stopped == null && !(over.plugins ?? []).some(one => one.from === 'folder'),
   ...over,
 })
 
@@ -49,21 +50,16 @@ describe('the startup screen', () => {
     expect(one?.steps.map(step => step.done)).toEqual([null, '1 plugin in the plugin folder', null, null])
   })
 
-  // Every install goes through the flow and nothing cancels it. It ends once the plugin folder holds a plugin, the
-  // human having learned to install one, approved or not. A core part is no plugin installed
-  it('is due while the plugin folder holds no plugin and ends once it holds one, approved, waiting, refused or failed', () => {
-    expect(startupDue(calm())).toBe(true)
-    expect(startupDue(calm({ luoshu: '/notes', plugins: [plugin({ id: 'gate', from: 'core', place: 'core', class: null })] }))).toBe(true)
-    expect(startupDue(calm({ plugins: [plugin({ id: 'search' })] }))).toBe(false)
-    expect(startupDue(calm({ plugins: [found('tags')] }))).toBe(false)
-    expect(startupDue(calm({ plugins: [plugin({ id: 'layout', state: 'refused', reason: 'invalid' })] }))).toBe(false)
-    expect(startupDue(calm({ plugins: [plugin({ id: 'tags', state: 'failed', reason: 'start-failed' })] }))).toBe(false)
+  // The core decides at start whether the flow is due and ends it once a plugin is installed, so the screen draws what
+  // the list says and never counts the plugin folder for it
+  it('is due as the list says, whatever the plugin folder holds', () => {
     expect(screen(calm()).startup?.due).toBe(true)
     expect(screen(calm({ plugins: [found('tags')] })).startup?.due).toBe(false)
+    expect(screen(calm({ startupDue: false })).startup?.due).toBe(false)
+    expect(screen(calm({ startupDue: false })).tab).toBe('plugins')
   })
 
-  it('is not due and draws nothing while hetu is stopped', () => {
-    expect(startupDue(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))).toBe(false)
+  it('draws nothing while hetu is stopped', () => {
     expect(screen(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } })).startup).toBeNull()
   })
 
@@ -168,6 +164,18 @@ describe('the startup screen on the page', () => {
     hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
     hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ plugins: [plugin({ id: 'tags' })] }) })
     expect(drawn.at(-1)?.tab).toBe('start')
+  })
+
+  // Every plugin removed after the flow ended leaves the folder empty, and the flow comes back only at the next start
+  it('stays ended when the plugin folder is empty again, leaving for Plugins as before', () => {
+    const { page, drawn, sent, hears } = started(calm())
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ plugins: [plugin({ id: 'tags' })] }) })
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 3 })
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ startupDue: false }) })
+    expect(drawn.at(-1)?.startup?.due).toBe(false)
+    page.leaveGuide()
+    expect(drawn.at(-1)?.tab).toBe('plugins')
   })
 
   it('opens on Plugins once it ended and shows the guide again from its tab', () => {
