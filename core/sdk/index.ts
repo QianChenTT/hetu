@@ -9,7 +9,7 @@ export { attempt, Refused, type TryResult } from './refused.ts'
 export type { Handler, IncomingCall } from './serving.ts'
 export type { Transport } from './transport.ts'
 export { diffTree, type UiClient } from './ui.ts'
-export type { LayoutState, LayoutView, Op, UiEvent, UiNode, UiTopic } from '../api/ui.ts'
+export type { Op, UiEvent, UiNode, UiTopic } from '../api/ui.ts'
 // The core's own check for a path segment no note path holds, for a plugin that keeps paths from an older build
 export { isDotName } from '../api/names.ts'
 // The core's own check for a path no action takes, so a plugin refuses one as hetu would, with no zod in its bundle
