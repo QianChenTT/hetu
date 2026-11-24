@@ -556,7 +556,8 @@ describe('a view frame', () => {
   // An IME composing passes main's before-input-event only with the key it composes with, Process on Windows, never
   // with the composition or its commit. Once focus is in the frame of host, main's own handler is handed that key and
   // the debugger sends the composition and its commit to the frame holding focus once focus left the frame, or after
-  // 5 s. Answers whether main dropped the key and whether focus left the frame
+  // 40 ms, before the page's own pull back could end its 50 ms hold. Answers whether main dropped the key and whether
+  // focus left the frame in time
   const composeThroughMain = (app: ElectronApplication, host: string) => app.evaluate(async ({ webContents }, frameHost) => {
     const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
@@ -565,12 +566,12 @@ describe('a view frame', () => {
       while (frame?.parent?.parent) frame = frame.parent
       return frame?.parent !== null && frame?.parent !== undefined && new URL(frame.url).host === frameHost
     }
-    const waited = async (done: () => boolean) => {
-      const end = Date.now() + 5000
+    const waited = async (done: () => boolean, ms: number) => {
+      const end = Date.now() + ms
       while (!done() && Date.now() < end) await new Promise(resolve => setImmediate(resolve))
       return done()
     }
-    if (!await waited(inFrame)) return { dropped: false, left: false }
+    if (!await waited(inFrame, 5000)) return { dropped: false, left: false }
     let dropped = false
     for (const type of ['keyDown', 'keyUp'] as const) {
       let prevented = false
@@ -579,7 +580,7 @@ describe('a view frame', () => {
       if (type === 'keyDown') dropped = prevented
       if (!prevented) void contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: type === 'keyDown' ? 'rawKeyDown' : 'keyUp', key: 'Process', code: '', windowsVirtualKeyCode: 229 })
     }
-    const left = await waited(() => !inFrame())
+    const left = await waited(() => !inFrame(), 40)
     await contents.debugger.sendCommand('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 })
     await contents.debugger.sendCommand('Input.imeSetComposition', { text: '你', selectionStart: 1, selectionEnd: 1 })
     await contents.debugger.sendCommand('Input.insertText', { text: '你好' })
