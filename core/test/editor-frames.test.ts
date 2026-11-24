@@ -168,6 +168,27 @@ describe('the frame focus is in', () => {
     guard.left()
     expect(guard.holding('v1')).toBe(false)
   })
+
+  it('names the frame it let in for main, none before it entered and none once a press lands elsewhere or focus left', () => {
+    const guard = new FocusGuard(() => 0)
+    expect(guard.held()).toBe(null)
+    guard.allow('v1')
+    expect(guard.held()).toBe(null)
+    guard.entered('v1')
+    expect(guard.held()).toBe('v1')
+    guard.allow('v1')
+    expect(guard.held()).toBe('v1')
+    guard.allow('v2')
+    expect(guard.held()).toBe(null)
+    guard.entered('v2')
+    expect(guard.held()).toBe('v2')
+    guard.entered('v1')
+    expect(guard.held()).toBe(null)
+    guard.allow('v1')
+    guard.entered('v1')
+    guard.left()
+    expect(guard.held()).toBe(null)
+  })
 })
 
 describe("an open from a frame counted as the human's", () => {
