@@ -1,5 +1,5 @@
 import { plainProblem } from './measure.ts'
-import { MAX_SCOPE_LENGTH } from './paths.ts'
+import { pathProblem } from './paths.ts'
 
 // The caps on what plugins draw and what a view frame sends, with no schema, so the SDK can hold to them without zod in
 // its bundle
@@ -80,7 +80,8 @@ export function frameAsks(clock: () => number): FrameAsks {
 function askOf(message: unknown): FrameAsk | null {
   if (typeof message !== 'object' || message === null) return null
   const { v, kind, path, ask } = message as Record<string, unknown>
-  if (v !== 1 || typeof path !== 'string' || path === '' || path.length > MAX_SCOPE_LENGTH) return null
+  // A note's path as the worker's editor.open takes one
+  if (v !== 1 || typeof path !== 'string' || pathProblem(path) !== null) return null
   if (kind === 'open') return { kind, path }
   if (kind === 'drag-token' && typeof ask === 'number' && Number.isSafeInteger(ask) && ask >= 0) return { kind, ask, path }
   return null
