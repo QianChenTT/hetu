@@ -1,10 +1,10 @@
 import type { LayoutState, UiNode } from '../../api/ui.ts'
 import { type DrawHooks, TreeView } from './draw.ts'
 import type { Rect } from './drag.ts'
-import { SKELETON, type UiPort } from './ui-port.ts'
+import { LAYOUT_OWNER, SKELETON, type UiPort } from './ui-port.ts'
 
 // The editor window's layers below the core layer. The base layer holds the layout's skeleton, or the drawer's plain
-// layout until a layout has drawn one. The lifted layer above it holds every view, the editors, the titles and the
+// layout until the layout has drawn one and while it can't. The lifted layer above it holds every view, the editors, the titles and the
 // frames, each laid over its placeholder and clipped to it, so no node of the layout's covers them or hears what
 // happens in them, whatever its CSS does. The overlay layer above that holds popovers under the strip naming their
 // owner. Theme variables reach the base and lifted layers only. Each owner's redraws are held to a budget of writes
@@ -98,7 +98,7 @@ export class Layers {
 
   // A surface changed: draw it again within the owner's budget, then place everything in the next frame
   drawn(owner: string, surface: string): void {
-    if (surface === SKELETON && this.ui.layout() !== owner) return
+    if (surface === SKELETON && owner !== LAYOUT_OWNER) return
     const now = performance.now()
     let spent = this.spent.get(owner)
     if (spent === undefined || now - spent.start >= 1000) {
@@ -121,11 +121,9 @@ export class Layers {
     this.schedule()
   }
 
-  // The layout drawing the window changed, or views came or went
+  // The layout's skeleton came or went, or views came or went
   changed(): void {
-    const layout = this.ui.layout()
-    if (layout === null) this.skeleton = null
-    else this.treeOf(layout, SKELETON).render(this.ui.surfaces.tree(layout, SKELETON))
+    this.treeOf(LAYOUT_OWNER, SKELETON).render(this.ui.surfaces.tree(LAYOUT_OWNER, SKELETON))
     for (const [instance, tree] of this.views) {
       if (this.ui.views.owner(instance) === tree.owner) continue
       tree.root.remove()
@@ -269,8 +267,8 @@ export class Layers {
   }
 
   // With no layout drawing, the drawer's own plain arrangement: every view in one column, each under its title, the
-  // items under them and the editor beside them. A view, a file list or a quick open, works with no layout plugin and
-  // after a layout fails. Made again only when the views change
+  // items under them and the editor beside them. A view, a file list or a quick open, works before the layout drew and
+  // after it fails. Made again only when the views change
   private ensurePlain(): { node: UiNode, element: HTMLElement }[] {
     const all = this.ui.views.all()
     const views = all.filter(held => held.spec.kind !== 'item').sort((a, b) => this.rankOf(a.owner, a.view) - this.rankOf(b.owner, b.view))

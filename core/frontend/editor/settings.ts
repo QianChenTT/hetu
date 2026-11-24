@@ -2,12 +2,11 @@ import { z } from 'zod'
 import { localName, pluginId } from '../../api/ids.ts'
 import type { CoreLink } from './link.ts'
 
-// The editor window's own settings, kept under settings in its storage space: the layout the human picked, the theme,
-// the favorite views and which plugin owns a key two plugins bind. Picking a layout or a theme is a normal setting
-// with no Confirm, since neither gains any reach. Favorites are the drawer's, so they survive a change of layout
+// The editor window's own settings, kept under settings in its storage space: the theme, the favorite views and which
+// plugin owns a key two plugins bind, and apart from them the layout's arrangement. Picking a theme is a normal setting
+// with no Confirm, since it gains no reach
 
-// layout is the layout the human picked, null for none, which draws the plain layout. plain says the human picked it
-export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keyOwners: Record<string, string> }
+export type SettingsValue = { theme: string | null, favorites: string[], keyOwners: Record<string, string> }
 
 const KEY = 'settings'
 // The layout's arrangement, under a key of its own, so a drag or a resize draws no settings again
@@ -16,8 +15,6 @@ export const MAX_FAVORITES = 64
 export const MAX_KEY_OWNERS = 64
 
 const shape = z.strictObject({
-  layout: pluginId.nullable(),
-  plain: z.boolean(),
   theme: pluginId.nullable(),
   favorites: z.array(z.string().max(130).refine(value => {
     const [owner, view, ...rest] = value.split('/')
@@ -26,22 +23,22 @@ const shape = z.strictObject({
   keyOwners: z.record(z.string().max(40), pluginId).refine(owners => Object.keys(owners).length <= MAX_KEY_OWNERS),
 })
 
-// Settings stored before keyOwners had its name held it as keys, read under the new name so the rest is kept
+// Settings stored before keyOwners had its name held it as keys, read under the new name so the rest is kept. Settings
+// stored while a layout was picked held the pick as layout and plain, which are dropped
 function renamed(stored: unknown): unknown {
-  if (typeof stored !== 'object' || stored === null || Array.isArray(stored) || !Object.hasOwn(stored, 'keys') || Object.hasOwn(stored, 'keyOwners')) return stored
-  const { keys, ...rest } = stored as Record<string, unknown>
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored
+  const { layout: _layout, plain: _plain, ...kept } = stored as Record<string, unknown>
+  if (!Object.hasOwn(kept, 'keys') || Object.hasOwn(kept, 'keyOwners')) return kept
+  const { keys, ...rest } = kept
   return { ...rest, keyOwners: keys }
 }
 
-const defaults = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
+const defaults = (): SettingsValue => ({ theme: null, favorites: [], keyOwners: {} })
 
 export class Settings {
   private readonly link: CoreLink
   private held: SettingsValue = defaults()
   private kept: unknown = null
-  private loaded = false
-  // The layouts that came before the settings loaded, in the order they came, each with whether it is still connected
-  private early: { id: string, connected: () => boolean }[] = []
   onChange: (() => void) | null = null
 
   constructor(link: CoreLink) {
@@ -62,32 +59,12 @@ export class Settings {
     this.kept = arranged.ok ? arranged.result : null
     const parsed = got.ok ? shape.safeParse(renamed(got.result)) : null
     this.held = parsed?.success === true ? { ...parsed.data, keyOwners: { ...parsed.data.keyOwners } } : defaults()
-    this.loaded = true
     this.onChange?.()
-    const first = this.early.find(one => one.connected())
-    this.early = []
-    if (first !== undefined) await this.pickIfNone(first.id)
-  }
-
-  // A layout plugin that came: with no layout picked the first picks itself, so the first layout installed draws. The
-  // human's pick and the plain layout picked stay, and a layout coming later changes no pick. One that came before the
-  // settings loaded waits for them and is picked only while connected says it is still there
-  async pickIfNone(id: string, connected: () => boolean = () => true): Promise<void> {
-    if (!this.loaded) {
-      this.early.push({ id, connected })
-      return
-    }
-    if (this.held.layout === null && !this.held.plain) await this.pickLayout(id)
   }
 
   async favorite(view: string, on: boolean): Promise<void> {
     const rest = this.held.favorites.filter(each => each !== view)
     await this.set({ ...this.held, favorites: on ? [...rest, view] : rest })
-  }
-
-  // A layout plugin by id, or null for the drawer's plain layout
-  async pickLayout(id: string | null): Promise<void> {
-    await this.set({ ...this.held, layout: id, plain: id === null })
   }
 
   async pickTheme(id: string | null): Promise<void> {

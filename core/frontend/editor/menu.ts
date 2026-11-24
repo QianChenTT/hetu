@@ -1,11 +1,8 @@
-// The views menu in the core layer, drawn by the drawer in fixed styles no theme reaches: the layout and the theme the
-// human picks, every declared view with its plugin's name, running or not, starred as a favorite and shown or hidden,
+// The views menu in the core layer, drawn by the drawer in fixed styles no theme reaches: the theme the human picks, every declared view with its plugin's name, running or not, starred as a favorite and shown or hidden,
 // and the keys two plugins bind with the owner the human picked. Everything is text. No plugin code runs in this page,
 // so every event here is the human's
 
 export type MenuData = {
-  layouts: { id: string, name: string }[]
-  layout: string | null
   themes: { id: string, name: string }[]
   theme: string | null
   themeFallback: boolean
@@ -15,7 +12,6 @@ export type MenuData = {
 }
 
 export type MenuActions = {
-  pickLayout(id: string | null): void
   pickTheme(id: string | null): void
   favorite(key: string, on: boolean): void
   show(instance: string): void
@@ -58,7 +54,6 @@ function action(text: string, act: () => void): HTMLButtonElement {
 export function drawMenu(body: HTMLElement, data: MenuData, actions: MenuActions): void {
   const parts: HTMLElement[] = [
     heading('Look'),
-    choice('Layout', data.layouts, 'Plain', data.layout, actions.pickLayout),
     choice('Theme', data.themes, 'hetu', data.theme, actions.pickTheme),
   ]
   if (data.themeFallback) {
