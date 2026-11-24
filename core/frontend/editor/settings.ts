@@ -10,6 +10,8 @@ import type { CoreLink } from './link.ts'
 export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keyOwners: Record<string, string> }
 
 const KEY = 'settings'
+// The layout's arrangement, under a key of its own, so a drag or a resize draws no settings again
+const ARRANGEMENT = 'arrangement'
 export const MAX_FAVORITES = 64
 export const MAX_KEY_OWNERS = 64
 
@@ -36,6 +38,7 @@ const defaults = (): SettingsValue => ({ layout: null, plain: false, theme: null
 export class Settings {
   private readonly link: CoreLink
   private held: SettingsValue = defaults()
+  private kept: unknown = null
   private loaded = false
   // The layouts that came before the settings loaded, in the order they came, each with whether it is still connected
   private early: { id: string, connected: () => boolean }[] = []
@@ -49,8 +52,14 @@ export class Settings {
     return this.held
   }
 
+  // The layout's arrangement as storage held it, read by the layout in its own shape
+  get arrangement(): unknown {
+    return this.kept
+  }
+
   async load(): Promise<void> {
-    const got = await this.link.call('storage.get', { key: KEY })
+    const [got, arranged] = await Promise.all([this.link.call('storage.get', { key: KEY }), this.link.call('storage.get', { key: ARRANGEMENT })])
+    this.kept = arranged.ok ? arranged.result : null
     const parsed = got.ok ? shape.safeParse(renamed(got.result)) : null
     this.held = parsed?.success === true ? { ...parsed.data, keyOwners: { ...parsed.data.keyOwners } } : defaults()
     this.loaded = true
@@ -91,6 +100,12 @@ export class Settings {
     if (plugin === null) delete keyOwners[key]
     else keyOwners[key] = plugin
     await this.set({ ...this.held, keyOwners })
+  }
+
+  // Kept for the run even when storage refuses, as the settings are
+  async keepArrangement(value: unknown): Promise<void> {
+    this.kept = value
+    await this.link.call('storage.set', { key: ARRANGEMENT, value })
   }
 
   // Kept for the run even when storage refuses, so the human's pick holds until hetu quits
