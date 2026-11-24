@@ -327,7 +327,7 @@ describe('a busy view', () => {
 
 // A frame's rows: arrow keys move between them and Enter or a click opens one, as a file list would. It tells its
 // worker each key it hears, each row opened and anything composed or put in its text field. Told to, it takes focus on
-// its own, once after a while to a row or its text field or each time it loses it
+// its own, once after a while to a row or its text field, each time it loses it or at set times
 const frameScript = `
 var rows = [].slice.call(document.querySelectorAll('button'))
 var current = 0
@@ -357,6 +357,9 @@ window.addEventListener('message', function (event) {
     if (data && typeof data.steal === 'number') setTimeout(function () { rows[0].focus(); say({ stole: true }) }, data.steal)
     if (data && typeof data.field === 'number') setTimeout(function () { field.focus(); say({ stole: true }) }, data.field)
     if (data && data.sticky === true) window.addEventListener('blur', function () { setTimeout(function () { rows[0].focus(); say({ stole: true }) }, 0) })
+    if (data && data.turns) for (var turn = 0; turn < data.turns.times; turn++) {
+      setTimeout(function () { rows[0].focus(); say({ stole: true, at: Date.now() }) }, data.turns.start + data.turns.offset + turn * data.turns.every - Date.now())
+    }
     if (data && typeof data.hash === 'string') { location.hash = data.hash; say({ moved: location.href }) }
     if (data && typeof data.push === 'string') {
       try { history.pushState(null, '', data.push); say({ moved: location.href }) } catch (err) { say({ refused: String(err && err.name) }) }
@@ -368,7 +371,7 @@ window.addEventListener('message', function (event) {
 const row = (name: string) => `<button style="display:block;width:200px;height:30px;margin:0">${name}</button>`
 const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<input id="field" style="display:block;width:200px;height:30px;margin:0"><script src="board.js"></script></body></html>`
 
-type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused?: true, moved?: string, refused?: string, composed?: string, text?: string | null }
+type Said = { hello?: true, opened?: string, key?: string, stole?: true, at?: number, focused?: true, moved?: string, refused?: string, composed?: string, text?: string | null }
 type Press = { down: boolean, x: number, y: number }
 
 describe('a view frame', () => {
@@ -436,12 +439,12 @@ describe('a view frame', () => {
     expect(await editor.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME')
   })
 
-  // Tells the plugin's frame what to do, as data
-  const tell = (worker: Worker, data: object) => worker.evaluate(async told => {
-    const own = globalThis as unknown as { heard: Heard[], ctx: { ui: { views: { post: (instance: string, data: unknown) => Promise<unknown> } } } }
-    const instance = own.heard.find(e => e.topic === 'view.opened')!.instance!
-    await own.ctx.ui.views.post(instance, told)
-  }, data)
+  // Tells the plugin's frame what to do, as data, the frame of the view it opened at that place in turn
+  const tell = (worker: Worker, data: object, at = 0) => worker.evaluate(async ([told, which]) => {
+    const scope = globalThis as unknown as { ctx: { ui: { views: { post(instance: string, data: unknown): Promise<void> } } }, heard: Heard[] }
+    const instance = scope.heard.filter(event => event.topic === 'view.opened')[which]!.instance!
+    await scope.ctx.ui.views.post(instance, told)
+  }, [data, at] as const)
 
   // Keys Playwright sends never pass the window's before-input-event, and keys sent with sendInputEvent pass it but go
   // to the page and never to a frame. So main's own handler is handed each key as the window's input would hand it and,
@@ -731,6 +734,38 @@ describe('a view frame', () => {
     await tell(workers[0]!, { field: 0 })
     await until(async () => (await said()).some(data => data.stole === true))
     await until(() => focusIsInNote(editor), 2000)
+    await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' }))
+  })
+
+  // The page hears nothing when focus moves from one frame to another, so a hold started afresh on each move would
+  // see the other frame each time it ends and never end
+  it('is pulled back once the hold ends when two frames of its plugin take focus from each other in turns, which the core records', async () => {
+    const { editor, workers, said, dataDir } = await framed()
+    await workers[0]!.evaluate(() => (globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }).ctx.ui.views.open('board'))
+    await until(async () => (await said()).filter(data => data.hello === true).length === 2)
+    await until(async () => ((await frameOf(editor, 'kanban').nth(1).boundingBox())?.width ?? 0) > 0)
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    await tick(300)
+    await editor.evaluate(() => {
+      const scope = window as unknown as { backAt: number | null }
+      scope.backAt = null
+      document.addEventListener('focusin', event => {
+        if (scope.backAt === null && event.target instanceof Element && event.target.closest('.cm-content') !== null) scope.backAt = Date.now()
+      })
+    })
+    // The first takes focus from the note, then each takes it from the other every 50 ms, half way between the page's
+    // looks at the end of each 50 ms hold started afresh, so each look would find the other one
+    const start = Date.now() + 300
+    await tell(workers[0]!, { turns: { start, offset: 0, every: 100, times: 1 } }, 0)
+    await tell(workers[0]!, { turns: { start, offset: 25, every: 100, times: 5 } }, 1)
+    await tell(workers[0]!, { turns: { start, offset: 75, every: 100, times: 5 } }, 0)
+    await until(async () => (await said()).filter(data => data.at !== undefined).length === 11)
+    const steals = (await said()).flatMap(data => data.at === undefined ? [] : [data.at]).sort((a, b) => a - b)
+    const backAt = await editor.evaluate('window.backAt') as number | null
+    expect(backAt).not.toBe(null)
+    // Pulled back at the end of the first hold, before the second frame took focus a second time
+    expect(backAt!).toBeLessThan(steals[3]!)
     await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' }))
   })
 
