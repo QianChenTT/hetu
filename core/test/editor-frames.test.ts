@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit } from '../api/ui-limits.ts'
+import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit, DRAG_PREFIX, dragTokenOf } from '../api/ui-limits.ts'
 import { FOCUS_GRACE_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
 import type { CoreLink } from '../frontend/editor/link.ts'
 
@@ -251,5 +251,15 @@ describe('what a frame asks of the page', () => {
     expect(asks({ v: 1, kind: 'drag-token', ask: 1, path: 'a.md' })).toEqual({ ask: { kind: 'drag-token', ask: 1, path: 'a.md' }, ok: false })
     now = 1000
     expect(asks({ v: 1, kind: 'open', path: 'a.md' })?.ok).toBe(true)
+  })
+})
+
+describe('a note dragged out of a frame', () => {
+  it('carries its token after the prefix, read back only from text holding exactly that', () => {
+    const token = '0123456789abcdef0123456789abcdef'
+    expect(dragTokenOf(`${DRAG_PREFIX}${token}`)).toBe(token)
+    for (const text of ['', token, `${DRAG_PREFIX}`, `${DRAG_PREFIX}${token}0`, `${DRAG_PREFIX}${token.toUpperCase()}`, ` ${DRAG_PREFIX}${token}`, `hetu-note:${token}`, `${DRAG_PREFIX}${token}\n`]) {
+      expect(dragTokenOf(text)).toBeNull()
+    }
   })
 })

@@ -148,3 +148,35 @@ describe('a frame asking hetu to open a note', () => {
     close()
   })
 })
+
+describe('a frame asking for a drag token', () => {
+  it('asks once per call as a numbered object and hands each call the token answered for its own number', async () => {
+    const { view, drawer, close } = await connected()
+    const asked: { ask: number, path: string }[] = []
+    drawer.onmessage = event => asked.push(event.data)
+    const first = view.dragToken('a.md')
+    const second = view.dragToken('b.md')
+    await settle()
+    expect(asked.map(each => ({ ...each, ask: typeof each.ask }))).toEqual([
+      { v: 1, kind: 'drag-token', ask: 'number', path: 'a.md' },
+      { v: 1, kind: 'drag-token', ask: 'number', path: 'b.md' },
+    ])
+    expect(asked[0]!.ask).not.toBe(asked[1]!.ask)
+    drawer.postMessage({ v: 1, kind: 'drag-token', ask: asked[1]!.ask, token: null })
+    drawer.postMessage(JSON.stringify({ v: 1, kind: 'drag-token', ask: asked[0]!.ask, token: 'f'.repeat(32) }))
+    drawer.postMessage({ v: 1, kind: 'drag-token', ask: asked[0]!.ask, token: '0'.repeat(32) })
+    expect(await second).toBeNull()
+    expect(await first).toBe('0'.repeat(32))
+    close()
+  })
+
+  it('hands the worker a token answer it never asked for as nothing', async () => {
+    const { view, drawer, close } = await connected()
+    const messages: unknown[] = []
+    view.onMessage(data => messages.push(data))
+    drawer.postMessage({ v: 1, kind: 'drag-token', ask: 7, token: '0'.repeat(32) })
+    await settle()
+    expect(messages).toEqual([])
+    close()
+  })
+})
