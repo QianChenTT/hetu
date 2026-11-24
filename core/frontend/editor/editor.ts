@@ -344,6 +344,14 @@ export class EditorViews implements Editors {
     return this.shownId
   }
 
+  // Where an editor is in the window's pixels, not the stage's that place takes, null while it is hidden
+  windowBox(id: string): Rect | null {
+    const open = this.open.get(id)
+    if (open === undefined || open.element.hidden) return null
+    const { left, top, width, height } = open.element.getBoundingClientRect()
+    return { left, top, width, height }
+  }
+
   focus(): void {
     if (this.shownId !== null) this.open.get(this.shownId)?.view.focus()
   }

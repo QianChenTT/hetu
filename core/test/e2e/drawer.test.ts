@@ -249,7 +249,7 @@ describe('the drawer', () => {
   })
 
   // Hiding the markers is the hidden-marks plugin's, proved with it in hetu-plugins
-  it('shows the real text in the raw view over the whole window', async () => {
+  it('shows the real text in the raw view over the note’s editor, the bar above it left in sight', async () => {
     const { editor } = await started({ notes: { 'a.md': '# Title\n\n**bold** text' } })
     await open(editor, 'a.md')
     await until(async () => (await shown(editor).innerText()).includes('**bold** text'))
@@ -258,10 +258,12 @@ describe('the drawer', () => {
     await until(async () => editor.locator('#raw').isVisible())
     expect(await editor.locator('#raw-title').innerText()).toBe('a.md')
     expect(await editor.locator('#raw-text').innerText()).toBe('# Title\n\n**bold** text')
-    // Over the whole window, whatever is under it
-    const box = await editor.locator('#raw').boundingBox()
-    const size = editor.viewportSize() ?? await editor.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-    expect(box).toMatchObject({ x: 0, y: 0, width: size.width, height: size.height })
+    // With no layout the editor fills the stage, so the raw view covers the stage and not the bar
+    const box = (await editor.locator('#raw').boundingBox())!
+    const stage = (await editor.locator('#stage').boundingBox())!
+    for (const side of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(box[side] - stage[side])).toBeLessThan(2)
+    const bar = (await editor.locator('#bar').boundingBox())!
+    expect(bar.y + bar.height).toBeLessThanOrEqual(box.y + 1)
     await editor.keyboard.press('Escape')
     await until(async () => !(await editor.locator('#raw').isVisible()))
   })
