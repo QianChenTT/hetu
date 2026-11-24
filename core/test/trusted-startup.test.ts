@@ -106,6 +106,25 @@ describe('the startup screen on the page', () => {
     expect(sent.length).toBe(before)
   })
 
+  it('stays on the step it was drawn at when a step is done, as after an install, until the human moves', () => {
+    const { page, drawn, sent, hears } = started(calm({ luoshu: '/notes' }))
+    expect(drawn.at(-1)?.startup?.at).toBe(1)
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ luoshu: '/notes', plugins: [plugin({ id: 'tags' })] }) })
+    expect(drawn.at(-1)?.startup?.at).toBe(1)
+    page.guideTo(2)
+    expect(drawn.at(-1)?.startup?.at).toBe(2)
+  })
+
+  it('opens at the first step not done when the guide is first drawn after the plugin list', () => {
+    const { page, drawn, sent, hears } = started(calm({ luoshu: '/notes', plugins: [layout()] }))
+    expect(drawn.at(-1)?.tab).toBe('plugins')
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ luoshu: '/notes', plugins: [layout(), plugin({ id: 'tags' })] }) })
+    page.pickTab('start')
+    expect(drawn.at(-1)?.startup?.at).toBe(3)
+  })
+
   it('leaves for the Plugins tab, and the Get started tab shows it again', () => {
     const { page, drawn } = started(calm())
     expect(drawn.at(-1)?.tab).toBe('start')
