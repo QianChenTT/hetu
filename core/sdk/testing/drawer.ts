@@ -8,7 +8,9 @@ import type { Transport } from '../transport.ts'
 import { holds } from './gate.ts'
 
 // An editor page's drawer in memory, for a plugin's tests: the plugin's views and skeleton applied as the drawer would,
-// notes the test opens served through the editor bridge, and events the test sends. It holds the plugin to its
+// notes the test opens served through the editor bridge, and events the test sends. A note is the human's when the
+// test opens it as the human or presses a node carrying it, never when a plugin opened it with editor.open, which
+// opens it in the background. A plugin reading notes through ui.read alone hears only of the human's. It holds the plugin to its
 // manifest's ui items and scopes. Edits are taken only at the note's current version with no rebase and told back as
 // the note's next change. Marks are kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's
 // editor draws only after the plugin asked with editor.viewports and only of a note it reads, each range once. A
@@ -23,7 +25,8 @@ type Selection = { anchor: number, head: number }[]
 // The range the note's editor draws, stamped in the order the test moved it. It goes in the note's version when sent,
 // as hetu's drawer sends the range the editor still draws
 type Drawn = { from: number, to: number, stamp: number }
-type Note = { path: string, text: Text, version: number, drawn: Drawn, selection?: { anchor: number, head: number } }
+// human: the human opened it, so ui.read reaches it
+type Note = { path: string, text: Text, version: number, drawn: Drawn, human: boolean, selection?: { anchor: number, head: number } }
 
 class Refusal {
   readonly code: string
@@ -37,7 +40,7 @@ export class FakeDrawer {
   // The client the plugin's ctx.editor and ctx.ui use, which the fake core hands to each run of the plugin anew, so a
   // stopped run's handlers hear nothing
   editor = new Editor()
-  // Notes the plugin opened with editor.open
+  // Notes the plugin opened with editor.open, each in the background and never as the human's
   readonly opened: string[] = []
   readonly marks = new Map<string, Mark[]>()
   // The version each set of marks was sent for, by instance and set
@@ -46,6 +49,8 @@ export class FakeDrawer {
   readonly calls: string[] = []
   private granted: readonly Capability[] = []
   private views: Record<string, ViewSpec> = {}
+  // A note's text in the fake core's luoshu, which a note the plugin or a pressed node opens is read from
+  private noteText: (path: string) => string | undefined = () => undefined
   private readonly trees = new Map<string, UiNode>()
   private readonly instancesOf = new Map<string, string>()
   private readonly notes = new Map<string, Note>()
@@ -73,10 +78,11 @@ export class FakeDrawer {
     return this.editor
   }
 
-  // The fake core connects it once the plugin runs, with what its manifest declares
-  connect(granted: readonly Capability[], views: Record<string, ViewSpec>): void {
+  // The fake core connects it once the plugin runs, with what its manifest declares and its luoshu's notes
+  connect(granted: readonly Capability[], views: Record<string, ViewSpec>, noteText: (path: string) => string | undefined = () => undefined): void {
     this.granted = granted
     this.views = views
+    this.noteText = noteText
     this.asked = false
     this.sent.clear()
     this.commands = new Set()
@@ -109,17 +115,50 @@ export class FakeDrawer {
     return [...this.instancesOf].map(([instance, view]) => ({ instance, view }))
   }
 
-  // A note open in the editor, which the plugin hears of when it reads the path, then the range its editor draws when
-  // the plugin asked for ranges: drawn, or the whole text as the editor draws a short note
-  openNote(path: string, text: string, drawn?: { from: number, to: number }): string {
+  // A note open in the editor, which the plugin hears of when it reads the note, then the range its editor draws when
+  // the plugin asked for ranges: drawn, or the whole text as the editor draws a short note. by is who opened it: the
+  // human, or another plugin with editor.open, in the background
+  openNote(path: string, text: string, drawn?: { from: number, to: number }, by: 'human' | 'plugin' = 'human'): string {
     const instance = `n${++this.n}`
     const doc = Text.of(text.split('\n'))
-    const note: Note = { path, text: doc, version: 0, drawn: { from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped } }
+    const note: Note = {
+      path, text: doc, version: 0, drawn: { from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped }, human: by === 'human',
+    }
     this.notes.set(instance, note)
-    if (!this.reads(path)) return instance
+    if (!this.reads(note)) return instance
     this.tell({ topic: 'editor.opened', instance })
     this.sendRange(instance, note)
     return instance
+  }
+
+  // Whether the human opened the note, so ui.read reaches it
+  human(instance: string): boolean {
+    return this.notes.get(instance)?.human === true
+  }
+
+  // The human clicked a node of the plugin's view, or pressed Enter on it. A node carrying a note opens that note as the
+  // human's when the plugin reads or lists it, as hetu's drawer does, so a plugin can't name a note it can't reach and
+  // read it through ui.read once clicked. Answers the note's instance, null when nothing opened
+  press(instance: string, node: string): string | null {
+    const found = nodeIn(this.trees.get(instance) ?? null, node)
+    if (found?.drag?.type !== 'note') return null
+    const path = found.drag.value
+    const reaches = holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })
+      || holds(this.granted, { capability: 'luoshu.list', scope: { paths: [path] } })
+    if (!reaches) return null
+    const open = [...this.notes].find(([, held]) => held.path === path)
+    if (open === undefined) {
+      const text = this.noteText(path)
+      return text === undefined ? null : this.openNote(path, text)
+    }
+    const [id, held] = open
+    if (held.human) return id
+    held.human = true
+    if (this.reads(held)) {
+      this.tell({ topic: 'editor.opened', instance: id })
+      this.sendRange(id, held)
+    }
+    return id
   }
 
   // The note's editor draws another range of its text
@@ -136,7 +175,7 @@ export class FakeDrawer {
     if (!this.commands.has(command)) return false
     const note = instance === undefined ? undefined : this.notes.get(instance)
     this.answering = null
-    if (instance !== undefined && note !== undefined && this.reads(note.path)) {
+    if (instance !== undefined && note !== undefined && this.reads(note)) {
       this.answering = { instance, version: note.version }
       this.tell({ topic: 'editor.command', command, instance, version: note.version, selection: selection.map(range => ({ ...range })) })
     } else {
@@ -158,7 +197,7 @@ export class FakeDrawer {
     const hit = pos === undefined ? null : linkAt(new Map([['plugin', sets]]), pos)
     if (hit === null) return false
     this.answering = null
-    if (hit === 'tied' || !this.has('ui.decoration') || !this.reads(note.path)) return false
+    if (hit === 'tied' || !this.has('ui.decoration') || !this.reads(note)) return false
     this.tell({ topic: 'editor.link', instance, version: note.version, id: hit.id })
     return true
   }
@@ -181,7 +220,7 @@ export class FakeDrawer {
       }))
     }
     note.version++
-    if (told && this.reads(note.path)) this.tell({ topic: 'editor.changed', instance, version: note.version, changes: set.toJSON() })
+    if (told && this.reads(note)) this.tell({ topic: 'editor.changed', instance, version: note.version, changes: set.toJSON() })
   }
 
   // The note closed in the editor, told to the plugin only when it sent marks for it
@@ -226,16 +265,16 @@ export class FakeDrawer {
 
   // The note's range, to a plugin that asked for ranges and reads the note, unless it was sent that range already
   private sendRange(instance: string, note: Note): void {
-    if (!this.asked || !this.reads(note.path) || note.drawn.stamp <= (this.sent.get(instance) ?? 0)) return
+    if (!this.asked || !this.reads(note) || note.drawn.stamp <= (this.sent.get(instance) ?? 0)) return
     this.sent.set(instance, note.drawn.stamp)
     const { from, to } = note.drawn
     this.tell({ topic: 'editor.viewport', instance, version: note.version, from, to })
   }
 
-  // Every note the test opens is the human's, so ui.read reaches it as hetu's drawer would
-  private reads(path: string): boolean {
-    return holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })
-      || holds(this.granted, { capability: 'ui.read', scope: { paths: [path] } })
+  // Whether the plugin reads the note: its luoshu.read on it, or its ui.read on a note the human opened
+  private reads(note: Note): boolean {
+    return holds(this.granted, { capability: 'luoshu.read', scope: { paths: [note.path] } })
+      || (note.human && holds(this.granted, { capability: 'ui.read', scope: { paths: [note.path] } }))
   }
 
   private async serve(message: unknown): Promise<void> {
@@ -270,7 +309,7 @@ export class FakeDrawer {
     const note = (instance: string) => {
       const found = this.notes.get(instance)
       if (found === undefined) throw new Refusal('not-found')
-      if (!this.reads(found.path)) throw new Refusal('not-granted')
+      if (!this.reads(found)) throw new Refusal('not-granted')
       return found
     }
     switch (call.verb) {
@@ -308,10 +347,13 @@ export class FakeDrawer {
         // A real read only, as hetu's drawer asks
         if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) throw new Refusal('not-granted')
         this.opened.push(path)
+        // In the background, as hetu's drawer opens a plugin's. A note the luoshu doesn't hold opens nothing
+        const text = this.noteText(path)
+        if (text !== undefined && ![...this.notes.values()].some(held => held.path === path)) this.openNote(path, text, undefined, 'plugin')
         return null
       }
       case 'editor.instances':
-        return { instances: [...this.notes].filter(([, held]) => this.reads(held.path)).map(([instance, held]) => ({ instance, path: held.path, version: held.version })) }
+        return { instances: [...this.notes].filter(([, held]) => this.reads(held)).map(([instance, held]) => ({ instance, path: held.path, version: held.version })) }
       case 'editor.read': {
         const held = note(call.args.instance)
         return { text: held.text.toString(), version: held.version, selection: [{ anchor: 0, head: 0 }] }
@@ -373,4 +415,16 @@ export class FakeDrawer {
     this.trees.set(surface, applied.tree)
     return null
   }
+}
+
+// The node of that id in a tree, null when none
+function nodeIn(tree: UiNode | null, id: string): UiNode | null {
+  if (tree === null) return null
+  if (tree.id === id) return tree
+  const kids = 'children' in tree ? tree.children ?? [] : tree.kind === 'list' ? tree.rows : []
+  for (const kid of kids) {
+    const found = nodeIn(kid, id)
+    if (found !== null) return found
+  }
+  return null
 }

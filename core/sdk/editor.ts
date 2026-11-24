@@ -27,8 +27,11 @@ export type EditorClient = {
   keystream(on: boolean): Promise<void>
   // Asks for the range each open note's editor draws as viewport events, of the notes the plugin reads, or stops them
   viewports(on: boolean): Promise<void>
-  // Opens a note in the editor. Needs ui.view and luoshu.read on the path and on the note it resolves to, a list or
-  // ui.read grant isn't enough
+  // Opens a note in the editor in the background: the note on screen stays, and the open never counts as the human's,
+  // so a plugin reading notes through ui.read alone never hears of it. Needs ui.view and luoshu.read on the path and on
+  // the note it resolves to, a list or ui.read grant isn't enough. For the human's own open, draw the node the human
+  // clicks with drag: { type: 'note', value: path }. A click on it, or Enter on it, opens the note as the human's and
+  // brings it to the front, when the plugin reads or lists the path
   open(path: string): Promise<void>
   on(topic: EditorTopic, handler: (event: BridgeEvent) => void): void
 }
