@@ -1,4 +1,4 @@
-import { type FrameAsks, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
+import { dragTokenOf, type FrameAsks, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { lay } from './layers.ts'
 import type { CoreLink } from './link.ts'
 import type { Rect } from './drag.ts'
@@ -13,7 +13,9 @@ import type { Rect } from './drag.ts'
 // it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
 // move ends, which leaves it a key or none of what the human types. hetu's theme is offered to every frame as the
 // page sets it, never checked or forced on one. A frame may ask hetu to open a note as the human's, which counts only
-// right after the human pressed in one of its plugin's frames, one open each press, and else opens nothing
+// right after the human pressed in one of its plugin's frames, one open each press, and else opens nothing. A note
+// dragged out of a frame carries a token main minted for its plugin and note, and dropped on the editor it opens as the
+// human's once main answers the token
 
 // How long after a press, or the core's own move, focus may still go into that frame
 export const FOCUS_GRACE_MS = 500
@@ -111,7 +113,8 @@ export class Frames {
   // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note.
   // again says the same frame still holds it from a theft already told
   onTheft: ((url: string, again: boolean) => void) | null = null
-  // Told a note a frame of owner's asked to open right after the human's press in one of them, to open as theirs
+  // Told a note a frame of owner's asked to open right after the human's press in one of them, or a note dragged out of
+  // one, to open as the human's
   onOpen: ((owner: string, path: string) => void) | null = null
   // The theme's variables as last offered to the frames
   private variables: Readonly<Record<string, string>> = {}
@@ -124,6 +127,13 @@ export class Frames {
     this.host = host
     this.relay = relay
     this.gone = gone
+    // Drops anywhere in the window holding the frames. A drag lands on the empty stage too, and its text never lands in
+    // a note
+    const page = host.ownerDocument?.defaultView
+    page?.addEventListener('dragover', event => {
+      if (event.target instanceof Element && event.target.closest('#empty') !== null) event.preventDefault()
+    }, true)
+    page?.addEventListener('drop', event => void this.dropped(event), true)
   }
 
   // The theme's variables as the page draws with them, to each frame with its port and to each holding one when they
@@ -336,6 +346,31 @@ export class Frames {
     const taken = held.asks(message)
     if (taken === null || this.mounted.get(instance) !== held) return
     const { ask } = taken
-    if (ask.kind === 'open' && taken.ok && this.credit.use(held.owner)) this.onOpen?.(held.owner, ask.path)
+    if (ask.kind === 'open') {
+      if (taken.ok && this.credit.use(held.owner)) this.onOpen?.(held.owner, ask.path)
+      return
+    }
+    void this.dragToken(instance, held, ask.ask, taken.ok ? ask.path : null)
+  }
+
+  // Main's token for dragging the note out of the frame, null when it refused or the frame asked past its rate
+  private async dragToken(instance: string, held: Mounted, ask: number, path: string | null): Promise<void> {
+    const got = path === null ? null : await this.link.call('editor.dragToken', { plugin: held.owner, path })
+    if (this.mounted.get(instance) !== held) return
+    held.port?.postMessage({ v: 1, kind: 'drag-token', ask, token: got?.ok === true ? (got.result as { token: string }).token : null })
+  }
+
+  // A drag carrying a token, dropped on a note's editor or the empty stage, opens its note as the human's once main
+  // answered the token with the plugin that asked for it
+  private async dropped(event: DragEvent): Promise<void> {
+    const token = dragTokenOf(event.dataTransfer?.getData('text/plain') ?? '')
+    if (token === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!(event.target instanceof Element) || event.target.closest('.editor, #empty') === null) return
+    const got = await this.link.call('editor.dropToken', { token })
+    if (!got.ok) return
+    const { plugin, path } = got.result as { plugin: string, path: string }
+    this.onOpen?.(plugin, path)
   }
 }

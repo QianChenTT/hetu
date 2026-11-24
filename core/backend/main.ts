@@ -21,6 +21,7 @@ import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { frameOwner } from '../api/ids.ts'
 import { ViewFiles } from './runtime/views.ts'
+import { DragTokens } from './runtime/drag-tokens.ts'
 import { ViewImages } from './runtime/images.ts'
 import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
@@ -133,6 +134,11 @@ async function start(): Promise<void> {
       running: plugin => views.incarnation(plugin),
       reads: (caller, at) => router?.readsNote(caller, at) ?? false,
       read: bytesReader(() => modules?.provider('luoshu') ?? null),
+    })
+    // Notes dragged out of plugins' frames, each token answered once on a drop in the editor
+    const dragTokens = new DragTokens({
+      running: plugin => views.incarnation(plugin),
+      reads: (caller, at) => router?.readsNote(caller, at) ?? false,
     })
     const sessions = {} as Record<Role, Session>
     for (const role of Object.keys(ROLES) as Role[]) {
@@ -264,6 +270,17 @@ async function start(): Promise<void> {
             if (url === null) throw { code: 'not-found' }
             return { url }
           }
+          if (call.action === 'editor.dragToken') {
+            const { plugin, path: at } = call.args as { plugin: string, path: string }
+            const token = dragTokens.mint(call.caller, plugin, at)
+            if (token === null) throw { code: 'not-found' }
+            return { token }
+          }
+          if (call.action === 'editor.dropToken') {
+            const dropped = dragTokens.redeem(call.caller, (call.args as { token: string }).token)
+            if (dropped === null) throw { code: 'not-found' }
+            return dropped
+          }
           if (call.action === 'editor.frameGone') {
             const { url, navigated } = call.args as { url: string, navigated: boolean }
             const gone = views.gone(url)
@@ -330,6 +347,7 @@ async function start(): Promise<void> {
         views.unloaded()
         viewKeys.clear()
         images.unloaded()
+        dragTokens.unloaded()
       }
       contents.on('did-navigate', unloaded)
       contents.on('render-process-gone', unloaded)

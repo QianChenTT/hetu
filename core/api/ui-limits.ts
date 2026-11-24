@@ -121,3 +121,14 @@ export class OpenCredit {
     return true
   }
 }
+
+// How long a token for dragging a note out of a frame waits for its drop
+export const DRAG_TOKEN_MS = 30 * 60 * 1000
+// What a frame puts as text/plain in a drag of a note, the token after it
+export const DRAG_PREFIX = 'hetu-drag:'
+
+// The token in a drag's text, null for any other text
+export function dragTokenOf(text: string): string | null {
+  const token = text.startsWith(DRAG_PREFIX) ? text.slice(DRAG_PREFIX.length) : ''
+  return /^[0-9a-f]{32}$/.test(token) ? token : null
+}

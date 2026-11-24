@@ -20,21 +20,33 @@ const PER_PLUGIN = 32
 const IN_ALL = 128
 const READS_AT_ONCE = 4
 
-export type ImagesOptions = {
+// What main asks about a plugin before a token of its views names one of its notes
+export type PluginReach = {
   // The incarnation the plugin runs as with a ui item, null when it doesn't
   running(plugin: string): number | null
   // Whether the plugin's luoshu.read reaches a path now, as the gate answers
   reads(caller: Caller, path: string): boolean
-  // The note's bytes under the luoshu's path rules, reads asked about each path the read resolves, null when refused
-  read(caller: Caller, path: string, reads: (path: string) => boolean): Promise<{ bytes: Uint8Array } | null>
   token?: () => string
   now?: () => number
+}
+
+export type ImagesOptions = PluginReach & {
+  // The note's bytes under the luoshu's path rules, reads asked about each path the read resolves, null when refused
+  read(caller: Caller, path: string, reads: (path: string) => boolean): Promise<{ bytes: Uint8Array } | null>
 }
 
 type Held = { plugin: string, incarnation: number, path: string, until: number }
 
 // The worker half is the one a view's tree comes from. The gate judges a plugin by its id
-const callerOf = (plugin: string, incarnation: number): Caller => ({ kind: 'plugin', id: plugin, half: 'worker', incarnation })
+export const callerOf = (plugin: string, incarnation: number): Caller => ({ kind: 'plugin', id: plugin, half: 'worker', incarnation })
+
+// The incarnation of a plugin running with a ui item whose luoshu.read reaches the path, asked by the editor window,
+// which alone draws plugins' views. null for anything else
+export function reachedBy(reach: PluginReach, by: Caller, plugin: string, path: string): number | null {
+  const incarnation = reach.running(plugin)
+  if (by.kind !== 'window' || by.role !== 'editor' || incarnation === null) return null
+  return reach.reads(callerOf(plugin, incarnation), path) ? incarnation : null
+}
 
 export class ViewImages {
   private readonly tokens = new Map<string, Held>()
@@ -53,8 +65,8 @@ export class ViewImages {
   // A URL the editor page loads the image from once, null for another window, a plugin not running, a path its
   // luoshu.read doesn't reach or past the tokens waiting. Only the editor window draws plugins' trees
   mint(by: Caller, plugin: string, path: string): string | null {
-    const incarnation = this.options.running(plugin)
-    if (by.kind !== 'window' || by.role !== 'editor' || incarnation === null || imageTypeOf(path) === null || !this.options.reads(callerOf(plugin, incarnation), path)) return null
+    const incarnation = imageTypeOf(path) === null ? null : reachedBy(this.options, by, plugin, path)
+    if (incarnation === null) return null
     const now = this.expired()
     const mine = [...this.tokens.values()].filter(held => held.plugin === plugin).length
     if (mine >= PER_PLUGIN || this.tokens.size >= IN_ALL) return null

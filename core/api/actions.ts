@@ -208,6 +208,11 @@ const coreTable = {
   // The theme the editor page set, at its start and on each change, which main serves at the root of each frame's
   // ticket as hetu-theme.css. Offered to frames, never checked in one
   'editor.theme': { from: 'windows', args: z.strictObject({ variables: themeVariables }) },
+  // A one-time token for dragging a note out of one of a plugin's frames, inside that plugin's luoshu.read scope. Only
+  // the editor window gets one
+  'editor.dragToken': { from: 'windows', args: z.strictObject({ plugin: pluginId, path }) },
+  // A drag token dropped on the editor, answered once with the plugin that asked for it and its note
+  'editor.dropToken': { from: 'windows', args: z.strictObject({ token: z.string().regex(/^[0-9a-f]{32}$/) }) },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
   // <plugin id>.refused coalesced by reason
   'core.refused': {
@@ -509,6 +514,8 @@ export type ActionResults = InstallResults & {
   'editor.viewKeys': null
   'editor.image': { url: string }
   'editor.theme': null
+  'editor.dragToken': { token: string }
+  'editor.dropToken': { plugin: string, path: string }
   // null when the notes hold nothing the last commit doesn't
   'history.commit': { commit: string | null }
   'history.log': { commits: HistoryCommit[] }
