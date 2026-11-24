@@ -226,7 +226,7 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
 }
 
 // tab is the one the human picked, else Get started while the welcome is due and Plugins after. at is the guide's step
-// the human went to
+// the human went to or the guide was first drawn at
 export function screen(list: SecurityList, flow: InstallFlow | null = null, tab: Tab | null = null, at: number | null = null): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
@@ -353,7 +353,7 @@ export class TrustedPage {
     this.redraw()
   }
 
-  // The guide's step the human went to with Next or Back, for this window's life
+  // The guide's step the human went to with Next, Back or a step's name, for this window's life
   guideTo(step: number): void {
     const last = this.last === null ? 1 : startupScreen(this.last, null)?.steps.length ?? 1
     this.step = Math.min(Math.max(step, 0), last - 1)
@@ -411,7 +411,11 @@ export class TrustedPage {
   private redraw(): void {
     // The first tab is picked once from the first list, so approving a layout mid-guide doesn't move the human away
     if (this.last !== null && this.tab === null) this.tab = welcomeDue(this.last) ? 'start' : 'plugins'
-    if (this.last !== null) this.draw(screen(this.last, this.installer.flow, this.tab, this.step), this.note)
+    if (this.last === null) return
+    const shown = screen(this.last, this.installer.flow, this.tab, this.step)
+    // The guide stays on the step it was first drawn at, so a step done, as by an install, never moves the human on by itself
+    if (shown.tab === 'start' && shown.startup !== null) this.step = shown.startup.at
+    this.draw(shown, this.note)
   }
 
   private heard(message: unknown): void {

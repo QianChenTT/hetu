@@ -180,14 +180,18 @@ label {
   font-size: 12px;
 }
 
-.guide-steps li {
+.guide-steps button {
+  margin: 0;
   padding: 2px 8px;
   border: 1px solid #b9c6d3;
   border-radius: 10px;
   background: #fff;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
-.guide-steps li[aria-current="step"] {
+.guide-steps button[aria-current="step"] {
   border-color: #1d2b3a;
   font-weight: 600;
 }

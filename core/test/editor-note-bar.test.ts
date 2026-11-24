@@ -26,6 +26,15 @@ describe('the note bar', () => {
     expect(noteBar({ kind: 'refused', ...at, code: 'failed' })).toEqual({ text: 'hetu refused: failed', actions: ['dismiss'] })
   })
 
+  it('says a note hetu moved or removed can no longer be saved from its tab, and whether its text is kept', () => {
+    expect(noteBar({ kind: 'gone', ...at, kept: true })).toEqual({
+      text: 'This note was moved or deleted, so this tab can\'t save it. Your text is kept as a draft', actions: ['dismiss'],
+    })
+    expect(noteBar({ kind: 'gone', ...at, kept: false })).toEqual({
+      text: 'This note was moved or deleted, so this tab can\'t save it', actions: ['dismiss'],
+    })
+  })
+
   it('says what a refusal means to the human', () => {
     expect(refusalText('invalid', 'too-large')).toBe('This note is past the size hetu takes, so it can\'t be saved or kept as a draft')
     expect(refusalText('unavailable')).toBe('No notes folder is picked, so nothing can be saved')
