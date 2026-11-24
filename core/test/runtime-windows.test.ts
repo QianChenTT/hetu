@@ -302,7 +302,7 @@ describe('a key main drops before it reaches a frame the page did not let focus 
   const page = { focused: 'hetu://editor/', frame: null }
   const inKanban = { focused: kanban, frame: kanban }
   // The page's word to take focus back from a frame it didn't let in
-  const pullBack = { channel: 'hetu:pull-back', sent: null }
+  const keyDropped = { channel: 'hetu:key-dropped', sent: null }
 
   it('lets a key go on to the page, to the frame let in and with no frame let in to the page', () => {
     expect(guardedKeyOf(press('a'), page, null, bound, false)).toEqual({ prevented: false, sent: null })
@@ -313,23 +313,23 @@ describe('a key main drops before it reaches a frame the page did not let focus 
   })
 
   it('drops a key down or up headed for a frame not let in, with none let in or another, and has the page take focus back', () => {
-    expect(guardedKeyOf(press('a'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf(press('a'), inKanban, board, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf(press('a', { type: 'keyUp' }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf(press('a', { isAutoRepeat: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
+    expect(guardedKeyOf(press('a'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf(press('a'), inKanban, board, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf(press('a', { type: 'keyUp' }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf(press('a', { isAutoRepeat: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
   })
 
   it('drops the key an IME composes with headed for a frame not let in and has the page take focus back, so the composition lands in the note', () => {
     const composing = press('Process')
-    expect(guardedKeyOf(composing, inKanban, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf({ ...composing, type: 'keyUp' }, inKanban, board, bound, false)).toEqual({ prevented: true, sent: pullBack })
+    expect(guardedKeyOf(composing, inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf({ ...composing, type: 'keyUp' }, inKanban, board, bound, false)).toEqual({ prevented: true, sent: keyDropped })
     expect(guardedKeyOf(composing, inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: null })
     expect(guardedKeyOf(composing, page, null, bound, false)).toEqual({ prevented: false, sent: null })
   })
 
   it('drops a key headed for a frame inside a frame not let in, whatever that inner frame is served from', () => {
-    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: kanban }, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf(press('a'), { focused: 'about:srcdoc', frame: kanban }, board, bound, false)).toEqual({ prevented: true, sent: pullBack })
+    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: kanban }, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf(press('a'), { focused: 'about:srcdoc', frame: kanban }, board, bound, false)).toEqual({ prevented: true, sent: keyDropped })
     expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: kanban }, kanban, bound, false)).toEqual({ prevented: false, sent: null })
   })
 
@@ -341,10 +341,10 @@ describe('a key main drops before it reaches a frame the page did not let focus 
 
   it('drops a key headed for another frame of the same plugin, under a ticket of its own, or a frame on no ticket', () => {
     const other = 'hetu://kanban.views/ffffffffffffffffffffffffffffffff/board.html'
-    expect(guardedKeyOf(press('a'), { focused: other, frame: other }, kanban, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: 'about:blank' }, kanban, bound, false)).toEqual({ prevented: true, sent: pullBack })
+    expect(guardedKeyOf(press('a'), { focused: other, frame: other }, kanban, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: 'about:blank' }, kanban, bound, false)).toEqual({ prevented: true, sent: keyDropped })
     const bare = 'hetu://kanban.views/board.html'
-    expect(guardedKeyOf(press('a'), { focused: bare, frame: bare }, bare, bound, false)).toEqual({ prevented: true, sent: pullBack })
+    expect(guardedKeyOf(press('a'), { focused: bare, frame: bare }, bare, bound, false)).toEqual({ prevented: true, sent: keyDropped })
   })
 
   it('still hands the page a core key headed for a frame not let in', () => {
@@ -353,8 +353,8 @@ describe('a key main drops before it reaches a frame the page did not let focus 
   })
 
   it('hands the page neither a bound key nor Enter as a press headed for a frame not let in', () => {
-    expect(guardedKeyOf(press('j'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
-    expect(guardedKeyOf(press('Enter'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: pullBack })
+    expect(guardedKeyOf(press('j'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
+    expect(guardedKeyOf(press('Enter'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: keyDropped })
   })
 
   it('hands the page a bound key and Enter as a press headed for the frame let in, as before', () => {

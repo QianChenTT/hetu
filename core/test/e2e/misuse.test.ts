@@ -591,7 +591,7 @@ describe('a view frame', () => {
     const scope = window as unknown as { pulled: number }
     scope.pulled = 0
     window.addEventListener('message', event => {
-      if (event.source === window && (event.data as { hetu?: unknown } | null)?.hetu === 'pull-back') scope.pulled++
+      if (event.source === window && (event.data as { hetu?: unknown } | null)?.hetu === 'key-dropped') scope.pulled++
     })
   })
 
