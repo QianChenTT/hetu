@@ -34,7 +34,8 @@ export class FocusGuard {
   private allowed: { instance: string, at: number } | null = null
   // The frame let in last, while focus stays in it
   private holder: string | null = null
-  // The frame holding focus with no press seen, since when, -Infinity once judged taken
+  // The frame holding focus with no press seen and since when frames held it so, until focus leaves every frame or one
+  // is let in. -Infinity once judged taken
   private onHold: { instance: string, at: number } | null = null
 
   constructor(clock: () => number = () => performance.now()) {
@@ -70,7 +71,9 @@ export class FocusGuard {
       this.onHold = null
       return 'in'
     }
-    if (this.onHold?.instance !== instance) this.onHold = { instance, at: this.clock() }
+    // A move from one frame on hold to another keeps the hold's start, so frames taking turns never hold off the verdict
+    if (this.onHold === null) this.onHold = { instance, at: this.clock() }
+    else this.onHold.instance = instance
     if (atOnce) this.onHold.at = -Infinity
     if (this.clock() - this.onHold.at < FOCUS_HOLD_MS) return 'wait'
     this.onHold.at = -Infinity
