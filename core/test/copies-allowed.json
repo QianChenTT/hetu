@@ -633,7 +633,7 @@
       ],
       "hash": "2bd770ef0f36c627",
       "at": [
-        "core/frontend/editor/page.ts:677-683",
+        "core/frontend/editor/page.ts:734-740",
         "core/frontend/workers/page.ts:19-25"
       ],
       "judged": "not yet"
@@ -643,9 +643,9 @@
         "core/frontend/editor/page.ts",
         "core/frontend/workers/preload.ts"
       ],
-      "hash": "5e1bc8266ba8a937",
+      "hash": "79f7f7ba160279fe",
       "at": [
-        "core/frontend/editor/page.ts:677-683",
+        "core/frontend/editor/page.ts:734-740",
         "core/frontend/workers/preload.ts:10-14"
       ],
       "judged": "not yet"
