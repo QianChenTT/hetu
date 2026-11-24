@@ -1,7 +1,7 @@
 import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList, type Staged, type StagedPlugin } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { capabilityText, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
+import { capabilityText, grantSentence, sourceLine, UNSIGNED, welcomeDue } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
@@ -111,6 +111,12 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       }
     }
     throw { code: 'unavailable' }
+  }
+
+  // Whether main opens the trusted window on its welcome guide at start: hetu runs and no approved plugin draws the
+  // editor window
+  welcomeDue(): boolean {
+    return welcomeDue(this.securityList())
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core

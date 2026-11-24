@@ -37,11 +37,16 @@ self.onmessage = event => {
 
 type Worker = { code: string, manifest?: object, entry?: Partial<Plugin> }
 
-async function data(options: { switches?: Partial<Switches>, workers?: Record<string, Worker>, before?: (dataDir: string) => Promise<void> } = {}): Promise<string> {
+// An approved plugin holding ui.layout that never draws, so the welcome guide isn't due and the trusted window opens
+// only when asked. welcome leaves it out
+const quietLayout: Worker = { code: lifecycle(), manifest: { capabilities: [{ type: 'ui.layout' }] }, entry: { granted: [{ type: 'ui.layout' }] } }
+
+async function data(options: { switches?: Partial<Switches>, workers?: Record<string, Worker>, before?: (dataDir: string) => Promise<void>, welcome?: boolean } = {}): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), ...options.switches })
-  for (const [id, worker] of Object.entries(options.workers ?? {})) {
+  const workers = { ...(options.welcome === true ? {} : { 'quiet-layout': quietLayout }), ...options.workers }
+  for (const [id, worker] of Object.entries(workers)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, worker.manifest ?? {}), { 'worker.js': worker.code }))
     await writeApproved(store, id, root, worker.entry ?? {})
@@ -460,28 +465,29 @@ describe('a plugin', () => {
   })
 })
 
-// hetu ships no plugin, so the trusted window opens on its four steps until a layout is approved
-describe('the startup screen', () => {
-  it('shows its four steps above the rest with the release link to edit, closes for now and shows again from the menu', async () => {
-    const app = await start(await data(), await install())
-    const editor = await editorPage(app)
-    await tick(PAST_DELAY)
-    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+// hetu ships no plugin, so the trusted window opens by itself over the editor on its welcome guide until a layout is
+// approved
+describe('the welcome guide', () => {
+  it('opens over the editor at start and goes a step at a time, leaves for Plugins and shows again from its tab', async () => {
+    const app = await start(await data({ welcome: true }), await install())
+    await editorPage(app)
     const page = await trustedPage(app)
-    const startup = page.getByRole('region', { name: 'Start with hetu in four steps' })
-    await until(async () => await startup.count() === 1)
-    expect(await startup.getByRole('heading', { level: 3 }).allInnerTexts()).toEqual([
-      'Pick the notes folder', 'Install the plugins you want', 'Approve them', 'What a grant is',
-    ])
-    expect(await startup.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
-    // Above the plugin list, not over it
-    expect(await page.locator('#root .content > section').first().getAttribute('class')).toBe('startup')
-    expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
+    const guide = page.getByRole('region', { name: 'Get started with hetu' })
+    await until(async () => await guide.count() === 1)
+    expect(await page.getByRole('tab', { selected: true }).innerText()).toBe('Get started')
+    expect(await guide.getByRole('heading', { level: 3 }).innerText()).toBe('Step 1 of 4: Pick the notes folder')
+    expect(await guide.getByRole('button', { name: 'Pick a folder' }).count()).toBe(1)
     await tick(PAST_DELAY)
-    await startup.getByRole('button', { name: 'Close for now' }).click()
-    await until(async () => await startup.count() === 0)
-    await page.getByRole('button', { name: 'Show the startup screen again' }).click()
-    await until(async () => await startup.count() === 1)
+    await guide.getByRole('button', { name: 'Next' }).click()
+    await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()) === 'Step 2 of 4: Install the plugins you want')
+    expect(await guide.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
+    await guide.getByRole('button', { name: 'Back' }).click()
+    await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()) === 'Step 1 of 4: Pick the notes folder')
+    await guide.getByRole('button', { name: 'Go to Plugins' }).click()
+    await until(async () => await guide.count() === 0)
+    expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
+    await page.getByRole('tab', { name: 'Get started', exact: true }).click()
+    await until(async () => await guide.count() === 1)
   })
 })
 

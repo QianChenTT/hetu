@@ -17,6 +17,28 @@ export const appCommand: [string, string[]] = drivenApp === undefined ? [electro
 // Playwright's own starts do there
 export const sandboxArgs = process.platform === 'linux' ? ['--no-sandbox'] : []
 
+// A set-up hetu: an approved plugin holding ui.layout that answers the lifecycle and never draws, so the welcome guide
+// isn't due and the trusted window opens only when asked
+const QUIET_LAYOUT = `
+self.onmessage = event => {
+  const port = event.ports[0]
+  self.onmessage = null
+  const send = message => port.postMessage(JSON.stringify(message))
+  port.onmessage = ({ data }) => {
+    const message = JSON.parse(data)
+    if (message.kind === 'init') send({ v: 1, kind: 'ready' })
+    else if (message.kind === 'ping') send({ v: 1, kind: 'pong' })
+    else if (message.kind === 'stop') send({ v: 1, kind: 'stopped' })
+  }
+}
+`
+export async function setUp(dataDir: string): Promise<void> {
+  const root = path.join(dataDir, 'plugins', 'quiet-layout')
+  const granted = [{ type: 'ui.layout' as const }]
+  await writeFolder(root, filesFor(workerManifest('quiet-layout', { capabilities: granted }), { 'worker.js': QUIET_LAYOUT }))
+  await writeApproved(new StateStore(dataDir), 'quiet-layout', root, { granted })
+}
+
 const running: ElectronApplication[] = []
 const made: string[] = []
 const servers: Server[] = []

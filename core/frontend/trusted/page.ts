@@ -136,35 +136,63 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   return section
 }
 
-// The four steps above the rest, each with what it has done and the control it offers, then Close for now
-function startupSection(page: TrustedPage, startup: Startup): HTMLElement {
+// The welcome guide: where it stands, then one step with what it has done and the control it offers, then Back, Next
+// and Go to Plugins. Approving stays a request here, so its Confirm is drawn above and waits out the delay
+function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLElement {
   const section = element('section')
   section.className = 'startup'
-  const heading = element('h2', 'Start with hetu in four steps')
+  const heading = element('h2', 'Get started with hetu')
   heading.id = 'startup-heading'
   section.setAttribute('aria-labelledby', heading.id)
-  const steps = element('ol')
-  for (const step of startup.steps) {
-    const item = element('li')
-    item.append(element('h3', step.title), ...step.lines.map(line => element('p', line)))
-    if (step.done !== null) {
-      const done = element('p', step.done)
-      done.className = 'done'
-      item.append(done)
-    }
-    if (step.offers === 'folder') item.append(button('Pick a folder', () => page.pickFolder()))
-    if (step.offers === 'install') item.append(installControls(page, 'startup', 'or from a GitHub link, a suggestion to edit or replace', startup.suggested))
-    steps.append(item)
+  const where = element('ol')
+  where.className = 'guide-steps'
+  where.setAttribute('aria-label', 'Steps')
+  for (const [at, step] of startup.steps.entries()) {
+    const item = element('li', step.done === null ? step.title : `${step.title} (done)`)
+    if (step.done !== null) item.className = 'done-step'
+    if (at === startup.at) item.setAttribute('aria-current', 'step')
+    where.append(item)
   }
-  section.append(heading, steps, button('Close for now', () => page.closeStartup()))
+  const step = startup.steps[startup.at]!
+  const body = element('div')
+  body.className = 'guide-step'
+  body.append(element('h3', `Step ${startup.at + 1} of ${startup.steps.length}: ${step.title}`), ...step.lines.map(line => element('p', line)))
+  if (step.done !== null) {
+    const done = element('p', step.done)
+    done.className = 'done'
+    body.append(done)
+  }
+  if (step.offers === 'folder') body.append(button('Pick a folder', () => page.pickFolder()))
+  if (step.offers === 'install') body.append(installControls(page, 'startup', 'or from a GitHub link, a suggestion to edit or replace', startup.suggested))
+  if (step.offers === 'approve') {
+    for (const plugin of shown.plugins.filter(row => row.actions.includes('approve'))) {
+      const row = element('div')
+      row.className = 'plugin'
+      const approve = button('Approve', () => act(page, plugin.id, 'approve'))
+      approve.dataset.key = `guide-approve:${plugin.id}`
+      row.append(element('p', plugin.line), approve)
+      body.append(row)
+    }
+  }
+  const moves = element('p')
+  moves.className = 'guide-moves'
+  // Keyed so focus stays on the move pressed when Back goes on the first step or Next turns into Done
+  const keyed = (made: HTMLButtonElement, key: string) => {
+    made.dataset.key = key
+    return made
+  }
+  if (startup.at > 0) moves.append(keyed(button('Back', () => page.guideTo(startup.at - 1)), 'guide-back'))
+  if (startup.at < startup.steps.length - 1) moves.append(keyed(button('Next', () => page.guideTo(startup.at + 1)), 'guide-next'))
+  else moves.append(keyed(button('Done', () => page.leaveGuide()), 'guide-next'))
+  moves.append(button('Go to Plugins', () => page.leaveGuide()))
+  section.append(heading, where, body, moves)
   return section
 }
 
 // What was typed to prove attention for each request, kept across draws so a tab picked or an event never empties it
 const typedConfirms = new Map<string, string>()
 
-// The tabs on the left with what stays in reach below them: the startup screen again, Restart and Quit. Up and Down
-// move between the tabs
+// The tabs on the left with what stays in reach below them, Restart and Quit. Up and Down move between the tabs
 function sideBar(page: TrustedPage, shown: Screen): HTMLElement {
   const nav = element('nav')
   nav.className = 'side'
@@ -200,7 +228,6 @@ function sideBar(page: TrustedPage, shown: Screen): HTMLElement {
   const app = element('div')
   app.className = 'app-actions'
   app.append(
-    button('Show the startup screen again', () => page.showStartup()),
     button('Restart hetu', () => page.relaunch()),
     button('Quit', () => page.quit()),
   )
@@ -210,6 +237,7 @@ function sideBar(page: TrustedPage, shown: Screen): HTMLElement {
 
 // What the picked tab holds
 function tabContent(page: TrustedPage, shown: Screen, tab: Tab): HTMLElement[] {
+  if (tab === 'start') return shown.startup === null ? [] : [guideSection(page, shown, shown.startup)]
   if (tab === 'plugins') {
     const list = element('section')
     list.className = 'plugins'
@@ -310,8 +338,6 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   arming.show('request', shown.request?.id ?? null)
   arming.show('staging', shown.installing?.step === 'found' ? shown.installing.staged : null)
   const parts: HTMLElement[] = []
-
-  if (shown.startup !== null) parts.push(startupSection(page, shown.startup))
 
   if (shown.stopped !== null) {
     const section = element('section')

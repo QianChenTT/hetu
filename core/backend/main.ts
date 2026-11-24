@@ -339,7 +339,11 @@ async function start(): Promise<void> {
     // A control failed at start: only the trusted window opens, or the native box with the security view off
     const stopped = wired.pluginsManager.stopped()
     if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
-    else editor = show(editorWindow())
+    else {
+      editor = show(editorWindow())
+      // Over the editor, on its welcome guide, until a layout plugin is approved
+      if (wired.pluginsManager.welcomeDue()) trusted.show()
+    }
   } catch (err) {
     tell(err)
     code = 1
