@@ -3,7 +3,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { type BridgeEvent, linkAt, type Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
-import { FrameInbox } from '../../api/ui-limits.ts'
+import { DRAG_TOKEN_MS, dragTokenOf, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { Editor } from '../editor.ts'
 import type { Theme } from '../frame.ts'
 import type { Transport } from '../transport.ts'
@@ -20,7 +20,9 @@ import { holds } from './gate.ts'
 // the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list and moves its link
 // marks as hetu's drawer does. A link click goes as hetu's drawer sends it, to the plugin while it reads the note and
 // holds ui.decoration. A view the manifest draws in a frame takes the worker's posts once the test mounts its frame,
-// which posts to the worker as the frame's script would and keeps what the worker posted
+// which posts to the worker as the frame's script would and keeps what the worker posted. Its open is the human's only
+// right after the test says the human pressed in the frame, one open each press, as hetu's drawer counts the presses
+// main pushes. A note dragged out of it opens as the human's on a drop of the token it was given, once
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -39,7 +41,18 @@ export type FakeFrame = {
   readonly received: readonly unknown[]
   theme(): Theme
   onTheme(handler: (theme: Theme) => void): void
+  // The human pressed in the frame, or pressed Enter or Space in it, so one open from the plugin's frames within
+  // OPEN_GRACE_MS is theirs
+  pressed(): void
+  // The frame's open as @hetu/sdk/frame's: the note's instance when it opened as the human's, null when nothing opened
+  open(path: string): string | null
+  // A token for dragging the note out of the frame as @hetu/sdk/frame's dragToken, null when the plugin's luoshu.read
+  // doesn't reach it
+  dragToken(path: string): string | null
 }
+
+// The one plugin the fake drawer serves, as the press credit names it
+const SELF = 'plugin'
 
 class Refusal {
   readonly code: string
@@ -71,6 +84,9 @@ export class FakeDrawer {
   // The theme the frames are offered, {} until the test changes it, and each mounted frame's way to hear a change
   private frameTheme: Theme = Object.freeze({})
   private readonly themeHeard = new Set<(theme: Theme) => void>()
+  // Whether the human just pressed in one of the plugin's frames, and the drag tokens its frames were given
+  private credit = new OpenCredit(() => Date.now())
+  private readonly dragTokens = new Map<string, { path: string, until: number }>()
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
   private n = 0
@@ -94,6 +110,8 @@ export class FakeDrawer {
     this.trees.clear()
     this.instancesOf.clear()
     this.frames.clear()
+    this.credit = new OpenCredit(() => Date.now())
+    this.dragTokens.clear()
     return this.editor
   }
 
@@ -131,6 +149,9 @@ export class FakeDrawer {
     this.themeHeard.add(theme => {
       if (this.frames.get(instance) === received) onTheme?.(theme)
     })
+    // Asked as the frame's SDK asks, and taken as hetu's drawer takes it
+    const asks = frameAsks(() => Date.now())
+    const asked = (ask: object) => asks({ v: 1, ...ask })?.ok === true && this.frames.get(instance) === received
     return {
       received,
       post: data => {
@@ -144,6 +165,14 @@ export class FakeDrawer {
       onTheme: handler => {
         onTheme = handler
       },
+      pressed: () => this.credit.pressed(SELF),
+      open: path => (asked({ kind: 'open', path }) && this.credit.use(SELF) ? this.humanOpen(path) : null),
+      dragToken: path => {
+        if (!asked({ kind: 'drag-token', ask: 0, path }) || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) return null
+        const token = globalThis.crypto.randomUUID().replaceAll('-', '')
+        this.dragTokens.set(token, { path, until: Date.now() + DRAG_TOKEN_MS })
+        return token
+      },
     }
   }
 
@@ -151,6 +180,18 @@ export class FakeDrawer {
   changeTheme(variables: Readonly<Record<string, string>>): void {
     this.frameTheme = Object.freeze({ ...variables })
     for (const heard of this.themeHeard) heard(this.frameTheme)
+  }
+
+  // The human dropped a drag carrying this text on the editor. A token one of the plugin's frames was given opens its
+  // note as the human's once, within DRAG_TOKEN_MS and while the plugin still reads the note. Answers the note's
+  // instance, null when nothing opened
+  drop(text: string): string | null {
+    const token = dragTokenOf(text)
+    const held = token === null ? undefined : this.dragTokens.get(token)
+    if (token === null || held === undefined) return null
+    this.dragTokens.delete(token)
+    if (Date.now() > held.until || !holds(this.granted, { capability: 'luoshu.read', scope: { paths: [held.path] } })) return null
+    return this.humanOpen(held.path)
   }
 
   // An event from the drawer to the plugin
@@ -193,8 +234,12 @@ export class FakeDrawer {
   // note it can't reach and read it through ui.read once clicked. Answers the note's instance, null when nothing opened
   press(instance: string, node: string): string | null {
     const found = nodeIn(this.trees.get(instance) ?? null, node)
-    if (found?.drag?.type !== 'note') return null
-    const path = found.drag.value
+    return found?.drag?.type === 'note' ? this.humanOpen(found.drag.value) : null
+  }
+
+  // A note the human opened from the plugin's view, as hetu's drawer opens it, the human's when the plugin reads or
+  // lists it
+  private humanOpen(path: string): string | null {
     const reaches = holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })
       || holds(this.granted, { capability: 'luoshu.list', scope: { paths: [path] } })
     const open = [...this.notes].find(([, held]) => held.path === path)
