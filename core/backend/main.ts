@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, shell, type Session, utilityProcess, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, powerMonitor, protocol, screen, session, shell, type Session, utilityProcess, type WebContents } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
@@ -25,7 +25,7 @@ import { DragTokens } from './runtime/drag-tokens.ts'
 import { ViewImages } from './runtime/images.ts'
 import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
-import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
+import { keepsOpen, pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
 import { appMenu, editorKeyOfInput, frameKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
@@ -76,6 +76,8 @@ async function start(): Promise<void> {
   // An update's installer, started once Quit has run, false when it started nothing so hetu starts again
   let startAfterQuit: (() => boolean) | null = null
   let quitting: Promise<void> | null = null
+  // Set once the system said its session ends: a shutdown, a restart or a logoff, which closes windows with no quit
+  let sessionEnding = false
   let code = 0
   // Restart hetu, and quitting after a failure, start a new run once this one has exited
   let again = false
@@ -115,6 +117,8 @@ async function start(): Promise<void> {
 
   try {
     await app.whenReady()
+    // Linux and macOS say a shutdown here. Windows says it to each window, which the trusted window hears
+    powerMonitor.on('shutdown', () => { sessionEnding = true })
     const menu = appMenu(process.platform)
     Menu.setApplicationMenu(menu === null ? null : Menu.buildFromTemplate(menu))
     app.on('web-contents-created', (_event, contents) => guardContents(contents))
@@ -189,9 +193,10 @@ async function start(): Promise<void> {
         const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), editorPreload))
         if (router !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', router)
         // The startup flow has no way out until a plugin is installed, so the window stays. Quit still ends hetu, which
-        // exits once its parts stopped whatever windows are left
+        // exits once its parts stopped whatever windows are left, and the session ending lets it close
+        window.on('session-end', () => { sessionEnding = true })
         window.on('close', event => {
-          if (pluginsManager?.startupDue() === true) event.preventDefault()
+          if (keepsOpen({ due: pluginsManager?.startupDue() === true, quitting: quitting !== null, sessionEnding })) event.preventDefault()
         })
         return window
       },
