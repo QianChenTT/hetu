@@ -18,12 +18,14 @@ async function temp(): Promise<string> {
 }
 
 // Electron's app and protocol as before ready sees them, writing down each call in order
-function fakes(options: { switches?: string[], lock?: boolean } = {}) {
+function fakes(options: { switches?: string[], values?: Record<string, string>, lock?: boolean } = {}) {
   const calls: string[] = []
   const seen: { userData?: string, userDataExisted?: boolean, schemes?: unknown } = {}
   const app: EarlyApp = {
     commandLine: {
       hasSwitch: name => (options.switches ?? []).includes(name),
+      // Electron's answer for a switch not on the command line is the empty string
+      getSwitchValue: name => options.values?.[name] ?? '',
       appendSwitch(name, value) {
         calls.push(`appendSwitch ${name} ${value}`)
       },
@@ -103,11 +105,14 @@ describe('before ready', () => {
     expect(calls).not.toContain('exit 1')
   })
 
-  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found and registers hetu', async () => {
+  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found, blocks a frame\'s focus with no activation and registers hetu', async () => {
     const dataDir = await temp()
     const { app, protocol, calls, seen } = fakes()
     beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron'] })
-    expect(calls).toEqual(['setPath userData', 'requestSingleInstanceLock', 'enableSandbox', 'appendSwitch host-resolver-rules MAP * ~NOTFOUND', 'registerSchemesAsPrivileged'])
+    expect(calls).toEqual([
+      'setPath userData', 'requestSingleInstanceLock', 'enableSandbox', 'appendSwitch host-resolver-rules MAP * ~NOTFOUND',
+      'appendSwitch enable-blink-features BlockingFocusWithoutUserActivation', 'registerSchemesAsPrivileged',
+    ])
     expect(seen.userData).toBe(path.join(dataDir, 'electron'))
     expect(seen.userDataExisted).toBe(true)
   })
@@ -121,6 +126,14 @@ describe('before ready', () => {
     expect(early?.dev).toBe(false)
     expect(seen.userData?.startsWith(base)).toBe(true)
     expect(seen.userData?.endsWith(path.join('hetu', 'electron'))).toBe(true)
+  })
+
+  // Chromium reads only the last --enable-blink-features, so the one appended carries those already there
+  it('keeps the Blink features a run from the source was started with on beside the focus block', async () => {
+    const dataDir = await temp()
+    const { app, protocol, calls } = fakes({ values: { 'enable-blink-features': 'SomeFeature,OtherFeature' } })
+    beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron', '--enable-blink-features=SomeFeature,OtherFeature'] })
+    expect(calls).toContain('appendSwitch enable-blink-features SomeFeature,OtherFeature,BlockingFocusWithoutUserActivation')
   })
 
   it('quits a second instance on the same data folder before it turns anything on', async () => {
