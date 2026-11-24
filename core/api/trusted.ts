@@ -95,7 +95,6 @@ const sentences: Sentences = {
     ? 'Send data to and get data from no site'
     : `Send data to and get data from ${hosts.includes('*') ? 'any site' : list(hosts)} over the network`),
   'ui.view': () => 'Show panes and items of its own in the editor window',
-  'ui.layout': () => 'Lay out the whole editor window once you pick it as the layout',
   'ui.decoration': () => 'Mark up how the text of an open note looks',
   'ui.command': () => 'Add commands and keyboard shortcuts',
   'ui.keystream': () => 'See each key you press in an open note',

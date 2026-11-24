@@ -150,9 +150,6 @@ export class UiPort {
         this.onBindings?.(owner, bound.map(([key]) => key))
         return null
       }
-      // The drawer draws its own layout, so no plugin's skeleton is taken
-      case 'layout.draw':
-        throw new UiRefusal('not-granted')
       case 'editor.open':
         await this.pluginOpen(owner, call.args.path)
         return null

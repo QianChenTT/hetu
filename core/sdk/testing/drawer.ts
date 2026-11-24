@@ -471,10 +471,7 @@ export class FakeDrawer {
       case 'view.draw':
         need('ui.view')
         own(call.args.instance)
-        return this.draw(call.args.instance, call.args.ops, false)
-      case 'layout.draw':
-        need('ui.layout')
-        return this.draw('layout', call.args.ops, true)
+        return this.draw(call.args.instance, call.args.ops)
       case 'editor.open': {
         need('ui.view')
         if (!this.pluginOpen(call.args.path)) throw new Refusal('not-granted')
@@ -537,10 +534,10 @@ export class FakeDrawer {
     }
   }
 
-  private draw(surface: string, ops: Parameters<typeof applyOps>[1], layout: boolean): null {
-    const applied = applyOps(this.trees.get(surface) ?? null, ops, { layout })
+  private draw(instance: string, ops: Parameters<typeof applyOps>[1]): null {
+    const applied = applyOps(this.trees.get(instance) ?? null, ops, { layout: false })
     if ('problem' in applied) throw new Refusal('invalid')
-    this.trees.set(surface, applied.tree)
+    this.trees.set(instance, applied.tree)
     return null
   }
 }
