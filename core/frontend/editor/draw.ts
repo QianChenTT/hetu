@@ -22,7 +22,7 @@ export type DrawHooks = {
   iconUrl(src: string): string
   // A URL main minted for one load of a note's image for the owner, null when it minted none
   imageUrl(path: string): Promise<string | null>
-  // A list scrolled, so its rows on screen changed
+  // A list scrolled or its box changed size, so its rows on screen changed
   scrolled(): void
 }
 
@@ -40,10 +40,17 @@ export function taggedOf(start: Element | null): Tagged | null {
 
 type States = { hover: boolean, focus: boolean, pressed: boolean }
 // styled is the element the plugin's style goes on: the element itself, or a popover's body. look is the style last put
-// there, so an unchanged one writes nothing
-type Held = { node: UiNode, element: HTMLElement, styled: HTMLElement, states: States, applied: string[], look: string, value?: unknown }
+// there, so an unchanged one writes nothing. placed is what the parent last set on the element to place it, a list
+// row's class and box or a split child's flex, which goes once another parent or none places the element
+type Held = {
+  node: UiNode, element: HTMLElement, styled: HTMLElement, states: States, applied: string[], look: string, value?: unknown
+  placed: Placed | null
+}
+type Placed = { row: boolean, style: Record<string, string> }
 
-const LIST_SLACK = 4
+// Rows drawn past each edge of a list: as many as the list shows and at least this many, so the rows a fast scroll
+// brings on screen are drawn before its scroll event comes
+const MIN_LIST_SLACK = 4
 
 export class TreeView {
   readonly owner: string
@@ -54,6 +61,11 @@ export class TreeView {
   private readonly hooks: DrawHooks
   private held = new Map<string, Held>()
   private tree: UiNode | null = null
+  // The ids a parent placed in the draw going on
+  private placedThisDraw = new Set<string>()
+  // Each list's height its rows were last counted for. A list whose box changes size draws its rows again
+  private readonly listHeights = new Map<HTMLElement, number>()
+  private sized: ResizeObserver | null = null
   // Filled each draw: the layout's placeholders, popovers, zones and drop targets by node id
   placeholders = new Map<string, { node: UiNode, element: HTMLElement }>()
   popovers = new Map<string, { node: UiNode, element: HTMLElement }>()
@@ -76,23 +88,112 @@ export class TreeView {
     return this.held.get(id)?.element ?? null
   }
 
-  // Draws the tree, answering how many writes to the page it took
+  // Draws the tree, answering how many writes to the page it took. Focus a node held before the draw stays on that
+  // node when the draw moved it, which takes focus away
   render(tree: UiNode | null): number {
+    const focused = this.focused()
     this.tree = tree
     this.writes = 0
     const seen = new Set<string>()
+    this.placedThisDraw = new Set()
     this.placeholders = new Map()
     this.popovers = new Map()
     this.zones = new Map()
     const top = tree === null ? [] : [this.build(tree, seen)]
-    this.writes += sync(this.root, top)
+    this.writes += this.sync(this.root, top)
     for (const [id, held] of this.held) {
-      if (seen.has(id)) continue
-      held.element.remove()
+      if (seen.has(id)) {
+        if (held.placed !== null && !this.placedThisDraw.has(id)) this.place(held, null)
+        continue
+      }
+      this.drop(held.element)
       this.held.delete(id)
       this.writes++
     }
+    this.refocus(focused)
     return this.writes
+  }
+
+  // The node of this tree holding focus, with the element in it that does
+  private focused(): { id: string, active: Element } | null {
+    const active = document.activeElement
+    const tag = taggedOf(active)
+    return active !== null && tag?.tree === this ? { id: tag.id, active } : null
+  }
+
+  // Focus back on the node that held it, when the draw took it away and the node is still drawn. Focus the human or the
+  // page moved elsewhere stays there
+  private refocus(was: { id: string, active: Element } | null): void {
+    if (was === null || document.activeElement === was.active) return
+    if (document.activeElement !== null && document.activeElement !== document.body) return
+    const held = this.held.get(was.id)
+    if (held === undefined || !held.element.isConnected) return
+    const target = held.element.contains(was.active) ? was.active as HTMLElement : held.element
+    target.focus({ preventScroll: true })
+  }
+
+  // What the parent sets on an element to place it, written only where it changed, or null for an element no parent
+  // placed this draw. A property the parent no longer sets goes and the plugin's own style is put back in its place
+  private place(held: Held, placed: Placed | null): void {
+    const element = held.element
+    const before = held.placed
+    if (placed !== null) this.placedThisDraw.add(held.node.id)
+    if ((before?.row ?? false) !== (placed?.row ?? false)) {
+      element.classList.toggle('hetu-row', placed?.row === true)
+      this.writes++
+    }
+    let cleared = false
+    for (const name of Object.keys(before?.style ?? {})) {
+      if (placed?.style[name] !== undefined) continue
+      element.style.removeProperty(name)
+      this.writes++
+      cleared = true
+    }
+    held.placed = placed
+    if (cleared) {
+      held.look = ''
+      this.writes += style(held)
+    }
+    for (const [name, value] of Object.entries(placed?.style ?? {})) this.put(element, name, value)
+  }
+
+  // An element taken out or moved while the pointer was on it never hears the pointer leave, so it drops the hover and
+  // pressed looks it had
+  private dropPointerStates(element: Element): void {
+    const tag = tags.get(element)
+    if (tag?.tree !== this) return
+    const held = this.held.get(tag.id)
+    if (held?.element !== element || (!held.states.hover && !held.states.pressed)) return
+    held.states.hover = false
+    held.states.pressed = false
+    this.writes += style(held)
+  }
+
+  // The parent's children made exactly these, in order. Those no longer among them go first, so one that stays moves
+  // only when it is out of place among the others. Answers the moves
+  private sync(parent: HTMLElement, children: readonly HTMLElement[]): number {
+    let moves = 0
+    const keep = new Set<Element>(children)
+    for (let at = parent.firstElementChild; at !== null;) {
+      const next = at.nextElementSibling
+      if (!keep.has(at)) {
+        at.remove()
+        this.dropPointerStates(at)
+        moves++
+      }
+      at = next
+    }
+    let at = parent.firstElementChild
+    for (const child of children) {
+      if (child === at) {
+        at = at.nextElementSibling
+        continue
+      }
+      if (child.parentElement !== null) this.dropPointerStates(child)
+      parent.insertBefore(child, at)
+      moves++
+    }
+    return moves
   }
 
   private writes = 0
@@ -114,10 +215,10 @@ export class TreeView {
     let held = this.held.get(node.id)
     let made = false
     if (held === undefined || held.node.kind !== node.kind) {
-      held?.element.remove()
+      if (held !== undefined) this.drop(held.element)
       const element = this.create(node)
       const styled = node.kind === 'popover' ? element.lastElementChild as HTMLElement : element
-      held = { node, element, styled, states: { hover: false, focus: false, pressed: false }, applied: [], look: '' }
+      held = { node, element, styled, states: { hover: false, focus: false, pressed: false }, applied: [], look: '', placed: null }
       this.held.set(node.id, held)
       this.wire(held)
       made = true
@@ -137,7 +238,7 @@ export class TreeView {
     switch (node.kind) {
       case 'box':
       case 'scroll':
-        this.writes += sync(element, this.kids(node.children, seen))
+        this.writes += this.sync(element, this.kids(node.children, seen))
         break
       case 'text':
         if (was?.kind !== 'text' || was.text !== node.text) {
@@ -210,7 +311,7 @@ export class TreeView {
         const body = element.lastElementChild as HTMLElement
         const strip = element.firstElementChild as HTMLElement
         if (strip.textContent !== this.name) strip.textContent = this.name
-        this.writes += sync(body, this.kids(node.children, seen))
+        this.writes += this.sync(body, this.kids(node.children, seen))
         this.popovers.set(node.id, { node, element })
         break
       }
@@ -255,31 +356,33 @@ export class TreeView {
     const element = held.element
     const inner = element.firstElementChild as HTMLElement
     this.put(inner, 'height', `${node.rows.length * node.rowHeight}px`)
-    const first = Math.max(0, Math.floor(element.scrollTop / node.rowHeight) - LIST_SLACK)
-    const count = Math.ceil((element.clientHeight || 600) / node.rowHeight) + LIST_SLACK * 2
+    this.listHeights.set(element, element.clientHeight)
+    const shows = Math.ceil((element.clientHeight || 600) / node.rowHeight)
+    const slack = Math.max(MIN_LIST_SLACK, shows)
+    const first = Math.max(0, Math.floor(element.scrollTop / node.rowHeight) - slack)
+    const count = shows + slack * 2
     const rows: HTMLElement[] = []
     for (let at = first; at < Math.min(node.rows.length, first + count); at++) {
       const row = this.build(node.rows[at] as UiNode, seen)
-      row.classList.add('hetu-row')
-      this.put(row, 'top', `${at * node.rowHeight}px`)
-      this.put(row, 'height', `${node.rowHeight}px`)
+      this.place(this.heldOf(row), { row: true, style: { top: `${at * node.rowHeight}px`, height: `${node.rowHeight}px` } })
       rows.push(row)
     }
-    this.writes += sync(inner, rows)
+    this.writes += this.sync(inner, rows)
   }
 
   private split(element: HTMLElement, node: Extract<UiNode, { kind: 'split' }>, seen: Set<string>): void {
     const children = this.kids(node.children, seen)
     this.put(element, 'display', 'flex')
     this.put(element, 'flex-direction', node.direction)
-    const placed: HTMLElement[] = []
+    const ordered: HTMLElement[] = []
     const filler = fillerOf(node.sizes, children.length)
     children.forEach((child, at) => {
       const size = node.sizes?.[at]
       const last = at === children.length - 1
-      this.put(child, 'flex', at === filler || size === undefined ? '1 1 0' : `0 0 ${size}px`)
-      this.put(child, node.direction === 'row' ? 'min-width' : 'min-height', `${node.min?.[at] ?? 0}px`)
-      placed.push(child)
+      const flex = at === filler || size === undefined ? '1 1 0' : `0 0 ${size}px`
+      const min = node.direction === 'row' ? 'min-width' : 'min-height'
+      this.place(this.heldOf(child), { row: false, style: { flex, [min]: `${node.min?.[at] ?? 0}px` } })
+      ordered.push(child)
       if (!last && node.resizable === true) {
         let divider = element.querySelector<HTMLElement>(`:scope > [data-divider="${at}"]`)
         if (divider === null) {
@@ -293,10 +396,35 @@ export class TreeView {
             this.hooks.divider(node.id, index, event, element)
           })
         }
-        placed.push(divider)
+        ordered.push(divider)
       }
     })
-    this.writes += sync(element, placed)
+    this.writes += this.sync(element, ordered)
+  }
+
+  // What the tree holds for an element it built this draw
+  private heldOf(element: HTMLElement): Held {
+    return this.held.get((tags.get(element) as Tagged).id) as Held
+  }
+
+  // An element the tree no longer draws, taken out of the page and no longer watched
+  private drop(element: HTMLElement): void {
+    element.remove()
+    this.listHeights.delete(element)
+    this.sized?.unobserve(element)
+  }
+
+  // A list is watched for a change of its size, which no draw follows when it comes from the window or a divider. A
+  // list out of the page, as in a tree the page dropped, asks for nothing
+  private watch(list: HTMLElement): void {
+    this.sized ??= new ResizeObserver(entries => {
+      const changed = entries.some(entry => {
+        const counted = this.listHeights.get(entry.target as HTMLElement)
+        return entry.target.isConnected && counted !== undefined && counted !== (entry.target as HTMLElement).clientHeight
+      })
+      if (changed) this.hooks.scrolled()
+    })
+    this.sized.observe(list)
   }
 
   private create(node: UiNode): HTMLElement {
@@ -336,6 +464,7 @@ export class TreeView {
         element = document.createElement('div')
         element.append(document.createElement('div'))
         element.addEventListener('scroll', () => this.hooks.scrolled(), { passive: true })
+        this.watch(element)
         break
       case 'popover': {
         element = document.createElement('div')
@@ -451,25 +580,4 @@ function style(held: Held): number {
   held.applied = Object.keys(merged)
   held.look = look
   return held.applied.length + 1
-}
-
-// The parent's children made exactly these, in order, moving each only when it is out of place. Answers the moves
-function sync(parent: HTMLElement, children: readonly HTMLElement[]): number {
-  let moves = 0
-  let at = parent.firstElementChild
-  for (const child of children) {
-    if (child !== at) {
-      parent.insertBefore(child, at)
-      moves++
-    } else {
-      at = at.nextElementSibling
-    }
-  }
-  while (at !== null) {
-    const next = at.nextElementSibling
-    at.remove()
-    moves++
-    at = next
-  }
-  return moves
 }
