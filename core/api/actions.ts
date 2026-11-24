@@ -13,7 +13,7 @@ import { actionPathProblem } from './paths.ts'
 import { hidesOnScreen, MAX_SCOPE_LENGTH } from './scope.ts'
 import { MAX_LIST, type ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
-import { imagePath, type ThemeSpec } from './ui.ts'
+import { imagePath, MAX_VIEW_BINDINGS, type ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
@@ -192,6 +192,11 @@ const coreTable = {
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
   // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
+  // The frame at that URL took focus with no press of the human's in it and was pulled back, which the core records
+  'editor.focusTaken': { from: 'windows', args: z.strictObject({ url: frameUrl }) },
+  // The keys a plugin's views bound, named the page's way, in place of the ones sent before. A key pressed in a frame
+  // never reaches the page, so main matches these itself while focus is in one of the plugin's frames
+  'editor.viewKeys': { from: 'windows', args: z.strictObject({ plugin: pluginId, keys: z.array(z.string().min(1).max(64)).max(MAX_VIEW_BINDINGS) }) },
   // A single-use URL main serves one image of the notes folder from for a plugin's image node, inside that plugin's
   // luoshu.read scope. Only the editor window's drawer gets one
   'editor.image': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: imagePath }) },
@@ -492,6 +497,8 @@ export type ActionResults = InstallResults & {
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null
+  'editor.focusTaken': null
+  'editor.viewKeys': null
   'editor.image': { url: string }
   // null when the notes hold nothing the last commit doesn't
   'history.commit': { commit: string | null }
