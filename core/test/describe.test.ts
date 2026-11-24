@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { change, changeKinds, classRaised, type ClassRaised } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
+import { grantSentence, quotedPath } from '../api/trusted.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
 
 const { mustType } = createSecurityView()
@@ -117,6 +118,21 @@ describe("the core's words for a change", () => {
   it('quotes a Windows folder with its backslashes as they are, and escapes one that holds a quote', () => {
     expect(describeChange(one({ kind: 'luoshu.pick', folder: 'C:\\Users\\han\\notes' })).text).toBe('Use "C:\\Users\\han\\notes" as the notes folder')
     expect(describeChange(one({ kind: 'luoshu.pick', folder: '/x" or "/y' })).text).toBe('Use "/x\\" or \\"/y" as the notes folder')
+  })
+
+  // Each would read differently from what it holds: one that reorders the words after it, one that draws nothing, a lone
+  // surrogate and a backslash at the end, which reads as escaping the closing quote. A notes folder holding a hidden
+// character is refused before it is shown, a zip's path from the file dialog isn't
+  it('names a grant of a type it has no sentence for by that type in quotes, never failing', () => {
+    expect(grantSentence({ type: 'ui.newThing' } as never)).toBe('Use "ui.newThing"')
+  })
+
+  it('writes a path holding a hidden character as its code, and a path ending in a backslash escaped', () => {
+    const shown = (path: string) => `Use ${quotedPath(path)} as the notes folder`
+    expect(shown(`/a${String.fromCodePoint(0x202e)}b`)).toBe('Use "/a\\u202eb" as the notes folder')
+    expect(shown(`/a${String.fromCodePoint(0x200b)}b`)).toBe('Use "/a\\u200bb" as the notes folder')
+    expect(shown(`/a${String.fromCharCode(0xd800)}b`)).toBe('Use "/a\\ud800b" as the notes folder')
+    expect(shown('C:\\notes\\')).toBe('Use "C:\\\\notes\\\\" as the notes folder')
   })
 
   it('names a limit for one plugin or for every plugin', () => {

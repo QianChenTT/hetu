@@ -40,7 +40,7 @@ describe('the banner', () => {
       'state files that failed their check at start: switches, plugins',
       'gate: off', 'grant-risk-classifier: absent', 'down: git, search', 'dev mode: notes', '2 plugin builds trusted with no signature',
       'verification skipped', 'flood-control off', 'heartbeat off', 'recording off', 'security-view off', 'notes access off', "the log can't write",
-      'No notes folder is picked yet',
+      'no notes folder is picked yet',
     ])
   })
 })
@@ -86,7 +86,7 @@ describe('the shell', () => {
     ])
     hears({ v: 1, kind: 'reply', id: sent[1].id, ok: true, result: { ...calm, luoshuPicked: false } })
     await settle()
-    expect(drawn).toEqual([{ lines: ['No notes folder is picked yet'], notices: [] }])
+    expect(drawn).toEqual([{ lines: ['no notes folder is picked yet'], notices: [] }])
     hears({ v: 1, kind: 'event', topic: 'core.status', seq: 7 })
     expect(sent.slice(2)).toEqual([{ v: 1, kind: 'ack', seq: 7 }, expect.objectContaining({ kind: 'call', action: 'core.status' })])
     hears({ v: 1, kind: 'event', topic: 'core.quitting', seq: 8 })

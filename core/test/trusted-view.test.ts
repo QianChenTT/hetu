@@ -97,7 +97,7 @@ describe('what the trusted window draws', () => {
     }))
     expect(drawn.plugins[0].items).toMatchObject([
       { line: 'Read all your notes · on', on: true },
-      { line: 'Read the notes at "notes/**" · off · other grants of the same kind still on may reach the same notes', on: false },
+      { line: 'Read the notes at "notes/**" · off · another grant of this kind still on may cover the same', on: false },
       { line: 'Keep data of its own · asks at first use', on: false },
     ])
   })
