@@ -136,8 +136,9 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   return section
 }
 
-// The welcome guide: where it stands, then one step with what it has done and the control it offers, then Back, Next
-// and Go to Plugins. Approving stays a request here, so its Confirm is drawn above and waits out the delay
+// The welcome guide: where it stands, each step's name a button going to it, then one step with what it has done and
+// the control it offers, then Back, Next and Go to Plugins. Approving stays a request here, so its Confirm is drawn
+// above and waits out the delay
 function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLElement {
   const section = element('section')
   section.className = 'startup'
@@ -148,9 +149,12 @@ function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLE
   where.className = 'guide-steps'
   where.setAttribute('aria-label', 'Steps')
   for (const [at, step] of startup.steps.entries()) {
-    const item = element('li', step.done === null ? step.title : `${step.title} (done)`)
+    const item = element('li')
+    const go = button(step.done === null ? step.title : `${step.title} (done)`, () => page.guideTo(at))
+    go.dataset.key = `guide-step:${at}`
     if (step.done !== null) item.className = 'done-step'
-    if (at === startup.at) item.setAttribute('aria-current', 'step')
+    if (at === startup.at) go.setAttribute('aria-current', 'step')
+    item.append(go)
     where.append(item)
   }
   const step = startup.steps[startup.at]!
