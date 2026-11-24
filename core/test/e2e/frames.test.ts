@@ -404,6 +404,8 @@ describe('a frame over its slot', () => {
     const first = (await frameBox(editor))!
     const stage = (await editor.locator('#stage').boundingBox())!
     const onLeft = first.x + first.width / 2 < stage.x + stage.width / 2
+    // The frame is laid over its slot, never moved in the page, so it is the same element throughout
+    await editor.locator('#editors iframe.hetu-frame').evaluate(frame => void ((frame as unknown as { kept: boolean }).kept = true))
 
     // The divider at the frame's inner edge, dragged 120 px into main
     const inner = onLeft ? first.x + first.width : first.x
@@ -424,5 +426,6 @@ describe('a frame over its slot', () => {
       return now !== null && (now.x + now.width / 2 < stage.x + stage.width / 2) !== onLeft
     })
     await until(() => over(editor))
+    expect(await editor.locator('#editors iframe.hetu-frame').evaluate(frame => (frame as unknown as { kept?: boolean }).kept === true)).toBe(true)
   })
 })

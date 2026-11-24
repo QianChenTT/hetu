@@ -400,3 +400,44 @@ describe('images in a view', () => {
     expect(JSON.stringify(await heard(board))).not.toContain('hetu://images')
   })
 })
+
+describe("the drawer's layout failing", () => {
+  // The failure is made in the page: Math.min throws when the layout's sideMin calls it, as each draw with a side does
+  it('leaves the plain layout with the notes still open and opening, logs it and draws again once the layout does', async () => {
+    const { app, editor } = await started({ notes: { 'a.md': 'alpha', 'b.md': 'beta' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
+    const logged: string[] = []
+    editor.on('console', message => {
+      if (message.type() === 'error') logged.push(message.text())
+    })
+    await open(editor, 'a.md')
+    await until(async () => (await shown(editor).innerText()) === 'alpha')
+    await until(async () => (await editor.locator('#base .hetu-editor-place').count()) === 1)
+    await editor.evaluate(() => {
+      const real = Math.min
+      const scope = window as unknown as { failLayout: boolean }
+      scope.failLayout = true
+      Math.min = (...values: number[]) => {
+        if (scope.failLayout && /\bsideMin\b/.test(new Error().stack ?? '')) throw new Error('made to fail')
+        return real(...values)
+      }
+    })
+    const resize = (by: number) => app.evaluate(({ BrowserWindow }, change) => {
+      const window = BrowserWindow.getAllWindows().find(each => each.webContents.getURL() === 'hetu://editor/')!
+      const [width, height] = window.getContentSize()
+      window.setContentSize(width! + change, height!)
+    }, by)
+    await resize(-120)
+    await until(async () => (await editor.locator('#base .hetu-plain').count()) === 1)
+    await until(() => logged.some(text => text.includes('the layout failed')))
+    expect(await shown(editor).innerText()).toBe('alpha')
+    await open(editor, 'b.md')
+    await until(async () => (await shown(editor).innerText()) === 'beta')
+    expect(await editor.locator('#base .hetu-plain').count()).toBe(1)
+    await editor.evaluate(() => {
+      (window as unknown as { failLayout: boolean }).failLayout = false
+    })
+    await resize(120)
+    await until(async () => (await editor.locator('#base .hetu-plain').count()) === 0)
+    await until(async () => (await shown(editor).innerText()) === 'beta')
+  })
+})

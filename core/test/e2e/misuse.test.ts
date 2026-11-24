@@ -164,6 +164,74 @@ describe('a plugin named hetu', () => {
   })
 })
 
+describe('input in a view', () => {
+  // The window's own storage files, by name, which the arrangement is kept among
+  async function windowStorage(dataDir: string): Promise<Record<string, string>> {
+    const kept: Record<string, string> = {}
+    const root = path.join(dataDir, 'storage')
+    for (const space of (await exists(root)) ? await readdir(root) : []) {
+      if (!space.startsWith('window.')) continue
+      for (const name of await readdir(path.join(root, space))) kept[`${space}/${name}`] = await readFile(path.join(root, space, name), 'utf8')
+    }
+    return kept
+  }
+
+  // Each view sits beside a control of the layout's: a side view under its tab strip, the panel under the note below its
+  // tabs and its fold button, a status row item beside +n. Clicks and typing in each, at the edge nearest the control
+  // too, reach the view's owner and leave the arrangement as it was, drawn and kept
+  it('stays with the view beside a tab, the panel\'s fold button and +n, the arrangement left as it was', async () => {
+    const items = Object.fromEntries(['alpha', 'beta', 'gamma'].map(name => [name, { title: name, kind: 'item', size: { min: 900 } }]))
+    const { app, editor, dataDir } = await inColumns({
+      plugins: {
+        board: { granted: viewer, manifest: { views: view('cards') } },
+        links: { granted: viewer, manifest: { views: view('links') } },
+        meter: { granted: viewer, manifest: { views: items } },
+      },
+    })
+    const toggle = editor.locator('#base .hetu-button', { hasText: /^[▾▴]$/ })
+    const more = editor.locator('#base .hetu-button', { hasText: /^\+[0-9]+$/ })
+    await until(async () => (await toggle.count()) === 1 && (await more.count()) === 1)
+    // A fold and an unfold, so an arrangement is kept to compare with
+    await toggle.click()
+    await until(async () => (await toggle.innerText()) === '▴')
+    await toggle.click()
+    await until(async () => (await toggle.innerText()) === '▾')
+    await tick(1500)
+    const kept = await windowStorage(dataDir)
+    expect(Object.keys(kept).length).toBeGreaterThan(0)
+    const drawn = await editor.locator('#base').innerHTML()
+
+    const surface = (name: string) => editor.locator('#editors .hetu-surface:not([hidden])', { hasText: `Fixture view ${name}` })
+    const edges = [
+      // Just under the side's tab strip
+      { owner: 'board', name: 'cards', typed: true, at: (box: { x: number, y: number, width: number, height: number }) => ({ x: box.x + box.width / 2, y: box.y + 1 }) },
+      // Just under the panel's fold button, at its right
+      { owner: 'links', name: 'links', typed: true, at: (box: { x: number, y: number, width: number, height: number }) => ({ x: box.x + box.width - 2, y: box.y + 1 }) },
+      // At the edge nearest +n of the one item shown, the first by name. An item's row is too low to show its button and input
+      { owner: 'meter', name: 'alpha', typed: false, at: (box: { x: number, y: number, width: number, height: number }) => ({ x: box.x + box.width - 1, y: box.y + box.height / 2 }) },
+    ]
+    for (const edge of edges) {
+      const worker = await pluginWorker(app, edge.owner)
+      const view = surface(edge.name)
+      await until(async () => (await view.count()) === 1)
+      const box = (await view.boundingBox())!
+      const at = edge.at(box)
+      await editor.mouse.click(at.x, at.y)
+      if (!edge.typed) continue
+      await view.locator('.hetu-button', { hasText: `Press ${edge.name}` }).click()
+      await view.locator('.hetu-input').click()
+      await editor.keyboard.type('pin 4242')
+      await until(async () => (await heard(worker)).some(event => event.topic === 'view.event' && event.value === 'pin 4242'))
+      expect((await heard(worker)).some(event => event.topic === 'view.event' && event.type === 'click')).toBe(true)
+    }
+    await tick(1500)
+    expect(await editor.locator('#overlay .hetu-popover').count()).toBe(0)
+    expect(await toggle.innerText()).toBe('▾')
+    expect(await editor.locator('#base').innerHTML()).toBe(drawn)
+    expect(await windowStorage(dataDir)).toEqual(kept)
+  })
+})
+
 describe('the editor\'s text', () => {
   it('keeps the human\'s typing where it was when a plugin opens another note', async () => {
     const { app, editor } = await started({
