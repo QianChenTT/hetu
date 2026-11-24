@@ -175,7 +175,17 @@ describe('the include script\'s lock to one install folder', () => {
     const between = macros(await read('multiUser.nsh')).filter(macro => macro.name === 'setInstallModePerUser' || macro.name === 'setInstallModePerAllUsers')
     for (const macro of between) expect(macro.body, macro.name).not.toMatch(/SetOutPath/)
     const body = bodyOf(macros(await readFile(script, 'utf8')), 'customUnInit')
-    expect(body).toMatch(/^\s*StrCpy\s+\$R9\s+\$OUTDIR\s*\n\s*!insertmacro hetuLockToCurrentUser\s*\n\s*!insertmacro hetuForceInstallDir\s*\n\s*\$\{If\}\s+\$R9\s+!=\s+\$INSTDIR\s*\n\s*!insertmacro hetuRefuseFolder/)
+    expect(body).toMatch(/^\s*Var \/GLOBAL hetuStartedFor\s*\n\s*StrCpy\s+\$hetuStartedFor\s+\$OUTDIR\s*\n\s*!insertmacro hetuLockToCurrentUser\s*\n\s*!insertmacro hetuForceInstallDir\s*\n\s*\$\{If\}\s+\$hetuStartedFor\s+!=\s+\$INSTDIR\s*\n\s*!insertmacro hetuRefuseFolder/)
+  })
+
+  // Each flag macro, ${isForAllUsers} and ${isUpdated} among them, is written by nsisScriptGenerator.js and stores
+  // StdUtils.TestParameter's answer in a register, so a folder kept in that register would read true or false
+  it('keeps the folder the uninstaller was started for where no flag macro writes', async () => {
+    const generator = await readFile(path.join(templates, '..', '..', 'out', 'targets', 'nsis', 'nsisScriptGenerator.js'), 'utf8')
+    const written = [...generator.matchAll(/StdUtils\.TestParameter\}\s+(\$\w+)/g)].map(match => match[1])
+    expect(written).toEqual(['$R9'])
+    const body = code(bodyOf(macros(await readFile(script, 'utf8')), 'customUnInit'))
+    expect(body).not.toMatch(/\$R?\d\b/)
   })
 
   // The uninstall mode page's pre function sets it again after un.onInit
@@ -187,5 +197,36 @@ describe('the include script\'s lock to one install folder', () => {
     expect(hook).toBeLessThan(at(uninstaller, /!insertmacro customRemoveFiles/))
     const body = bodyOf(macros(await readFile(script, 'utf8')), 'customUnInstall')
     expect(code(body).trim().split('\n')[0]!.trim()).toBe('!insertmacro hetuForceInstallDir')
+  })
+})
+
+// handleUninstallResult in installUtil.nsh hands a failed uninstall of the older version to customUnInstallCheck when
+// the include defines it. Its own message box has no /SD, so a silent update waits on it with no one to click
+describe('the include script\'s answer to a failed uninstall of the older version', () => {
+  const handler = async () => {
+    const text = await readFile(path.join(templates, 'include', 'installUtil.nsh'), 'utf8')
+    return /Function handleUninstallResult([\s\S]*?)FunctionEnd/.exec(text)![1]!
+  }
+
+  it('replaces the template\'s, which waits on a message box in a silent run', async () => {
+    const body = await handler()
+    expect(body).toMatch(/!insertmacro customUnInstallCheck\s+Return/)
+    expect(body).toMatch(/!insertmacro customUnInstallCheckCurrentUser\s+Return/)
+    const boxes = body.split('\n').filter(line => /MessageBox/.test(line))
+    expect(boxes.length).toBeGreaterThan(0)
+    expect(boxes.every(line => !/\/SD/.test(line))).toBe(true)
+    const all = macros(await readFile(script, 'utf8'))
+    for (const hook of ['customUnInstallCheck', 'customUnInstallCheckCurrentUser']) expect(bodyOf(all, hook).trim()).toBe('!insertmacro hetuOlderUninstallChecked')
+  })
+
+  it('goes on when the uninstaller couldn\'t start and ends the setup with exit code 2 when it failed', async () => {
+    const body = bodyOf(macros(await readFile(script, 'utf8')), 'hetuOlderUninstallChecked')
+    expect(body).toMatch(/\$\{If\}\s+\$\{Errors\}\s+DetailPrint[^\n]*\n\s*\$\{ElseIf\}\s+\$R0\s+!=\s+0\s+MessageBox[^\n]*\/SD IDOK\s*\n[\s\S]*SetErrorLevel 2\s+Quit\s+\$\{EndIf\}/)
+  })
+
+  it('answers every message box of its own in a silent run', async () => {
+    const boxes = code(await readFile(script, 'utf8')).split('\n').filter(line => /^\s*MessageBox\b/.test(line))
+    expect(boxes.length).toBeGreaterThan(0)
+    for (const line of boxes) expect(line, line.trim()).toMatch(/\/SD ID\w+\s*$/)
   })
 })
