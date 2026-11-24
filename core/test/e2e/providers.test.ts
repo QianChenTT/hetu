@@ -7,7 +7,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage, setUp } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage, openByHand, setUp, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -39,6 +39,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
   await store.writeLuoshu({ folder })
+  await writeOpener(dataDir)
   if (setup.plugins !== undefined) {
     const source = await temp()
     await writeFolder(source, { 'src/worker.ts': fixture })
@@ -60,14 +61,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
 const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-content')
 
 // The human opens a note through quick open
-async function open(editor: Page, name: string): Promise<void> {
-  await editor.keyboard.press('ControlOrMeta+p')
-  await until(async () => editor.locator('#palette').isVisible())
-  await editor.keyboard.type(name)
-  await until(async () => (await editor.locator('#palette-list li').first().innerText()) === name)
-  await editor.keyboard.press('Enter')
-  await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
-}
+const open = openByHand
 
 async function pluginWorker(app: ElectronApplication, id: string): Promise<Worker> {
   const page = await workersPage(app, id)

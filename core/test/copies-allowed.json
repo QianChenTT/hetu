@@ -571,7 +571,7 @@
         "core/frontend/editor/bridge.ts",
         "core/sdk/worker.ts"
       ],
-      "hash": "0d4694217fb12d3c",
+      "hash": "2d228039c428f9f7",
       "at": [
         "core/frontend/editor/bridge.ts:40-45",
         "core/sdk/worker.ts:10-15"

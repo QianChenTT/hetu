@@ -7,7 +7,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
+import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 // Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
 // before the human's Confirm or past the folder the human narrowed them to, each held
@@ -55,6 +55,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
+  await writeOpener(dataDir)
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': fixture })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
@@ -81,14 +82,7 @@ type Heard = { topic: string, instance?: string, node?: string, type?: string, v
 const heard = (worker: Worker) => worker.evaluate('globalThis.heard') as Promise<Heard[]>
 const run = <T>(worker: Worker, code: string) => worker.evaluate(`(async () => { const ctx = globalThis.ctx; const heard = globalThis.heard; ${code} })()`) as Promise<T>
 
-async function open(editor: Page, name: string): Promise<void> {
-  await editor.keyboard.press('ControlOrMeta+p')
-  await until(async () => editor.locator('#palette').isVisible())
-  await editor.keyboard.type(name)
-  await until(async () => (await editor.locator('#palette-list li').first().innerText()) === name)
-  await editor.keyboard.press('Enter')
-  await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
-}
+const open = openByHand
 
 async function pickLayout(editor: Page, id: string | null): Promise<void> {
   await editor.locator('#views').click()
@@ -149,7 +143,6 @@ describe('a popover', () => {
   it('keeps its owner strip on top of it and its size within the drawer\'s cap, whatever style the plugin gives it', async () => {
     const { app, editor } = await inColumns({ notes: { 'a.md': 'the real words' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('cards') } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
-    await open(editor, 'a.md')
     const board = await pluginWorker(app, 'board')
     const answer = await run<string>(board, `
       const instance = heard.find(e => e.topic === 'view.opened').instance
@@ -192,7 +185,8 @@ describe('a plugin named hetu', () => {
       ] })
     `)
     await until(async () => (await editor.locator('#overlay .hetu-strip').count()) === 1)
-    expect(await editor.locator('#editors .hetu-title').allInnerTexts()).toEqual(['board · Security check'])
+    // The note list the tests open notes through is a view of its own, titled under its id
+    expect((await editor.locator('#editors .hetu-title').allInnerTexts()).filter(text => !text.startsWith('note-list ·'))).toEqual(['board · Security check'])
     expect(await editor.locator('#overlay .hetu-strip').allInnerTexts()).toEqual(['board'])
   })
 })
@@ -207,7 +201,7 @@ describe('a layout that never draws', () => {
     await tick(800)
     expect(await editor.locator('#base .hetu-plain').count()).toBe(1)
     // No layout draws, so the drawer's own plain column holds the view under its title
-    expect(await editor.locator('#editors .hetu-title').allInnerTexts()).toEqual(['board · Cards'])
+    expect((await editor.locator('#editors .hetu-title').allInnerTexts()).filter(text => !text.startsWith('note-list ·'))).toEqual(['board · Cards'])
     await editor.locator('#views').click()
     expect(await editor.locator('#menu select').first().evaluate(select => (select as HTMLSelectElement).selectedOptions[0]?.textContent)).toBe('Plain')
   })
@@ -219,15 +213,15 @@ describe('input in a view', () => {
       notes: { 'a.md': 'alpha', 'b.md': 'bravo' },
       plugins: { board: { granted: viewer, manifest: { views: view('cards') } } },
     })
+    await open(editor, 'a.md')
     await run(layout, `
       const state = heard.filter(e => e.topic === 'layout.state').at(-1).state
       await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
         { kind: 'box', id: 'wrap', click: true, drag: { type: 'note', value: 'b.md' }, style: { width: '300px' }, children: [
-          { kind: 'slot', id: 's', instance: state.views[0].instance, style: { height: '100%' } } ] },
+          { kind: 'slot', id: 's', instance: state.views.find(v => v.owner === 'board').instance, style: { height: '100%' } } ] },
         { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } } ] })
     `)
     await until(async () => (await viewButton(editor).count()) === 1)
-    await open(editor, 'a.md')
     const board = await pluginWorker(app, 'board')
     await viewButton(editor).click()
     await editor.locator('#editors .hetu-surface .hetu-text', { hasText: 'Fixture view' }).click()
@@ -242,7 +236,7 @@ describe('input in a view', () => {
     await run(layout, `
       const state = heard.filter(e => e.topic === 'layout.state').at(-1).state
       await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { position: 'relative', display: 'flex', height: '100%' }, children: [
-        { kind: 'slot', id: 's', instance: state.views[0].instance, style: { width: '300px' } },
+        { kind: 'slot', id: 's', instance: state.views.find(v => v.owner === 'board').instance, style: { width: '300px' } },
         { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
         { kind: 'input', id: 'trap', value: '', style: { position: 'absolute', left: '0', top: '0', width: '300px', height: '100%', opacity: '0', 'z-index': '9' } } ] })
     `)
@@ -259,11 +253,11 @@ describe('input in a view', () => {
 describe('the editor\'s text', () => {
   it('stays above a title the layout lays over its lines', async () => {
     const { editor, layout } = await withLayout({ notes: { 'a.md': 'first line\nsecond line\nthird line' } })
+    await open(editor, 'a.md')
     await run(layout, `
       await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { position: 'relative', height: '100%' }, children: [
         { kind: 'editor', id: 'e', instance: 'current', style: { position: 'absolute', inset: '0' } } ] })
     `)
-    await open(editor, 'a.md')
     await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state' && (event.state?.editors.length ?? 0) === 1))
     const line = (await editor.locator('.editor:not([hidden]) .cm-line', { hasText: 'second line' }).boundingBox())!
     const stage = (await editor.locator('#stage').boundingBox())!

@@ -40,16 +40,16 @@ describe('the core keys', () => {
   const at = (key: string, code: string, mods: { ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean } = {}) =>
     ({ ...press(key, mods), code })
 
-  it('takes Mod with /, P, S and Q on a US layout', () => {
+  it('takes Mod with /, S and Q on a US layout, and leaves Mod with P to a plugin', () => {
     expect(coreKeyOf(at('/', 'Slash', { ctrlKey: true }), false)).toBe('raw')
-    expect(coreKeyOf(at('p', 'KeyP', { ctrlKey: true }), false)).toBe('open')
+    expect(coreKeyOf(at('p', 'KeyP', { ctrlKey: true }), false)).toBeNull()
     expect(coreKeyOf(at('s', 'KeyS', { ctrlKey: true }), false)).toBe('save')
     expect(coreKeyOf(at('q', 'KeyQ', { metaKey: true }), true)).toBe('quit')
   })
 
   it('takes them by the physical key on a layout whose letters are not Latin', () => {
     expect(coreKeyOf(at('ы', 'KeyS', { ctrlKey: true }), false)).toBe('save')
-    expect(coreKeyOf(at('з', 'KeyP', { ctrlKey: true }), false)).toBe('open')
+    expect(coreKeyOf(at('й', 'KeyQ', { ctrlKey: true }), false)).toBe('quit')
   })
 
   it('takes the raw view where / needs Shift, as Ctrl+Shift+7 on a German layout', () => {

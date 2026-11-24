@@ -41,8 +41,8 @@ export type PortLike = {
   onmessage: ((event: { data: unknown }) => void) | null
 }
 
-// The keys the drawer takes for itself before CodeMirror or any binding: the raw view, quick open, save and Quit
-export const CORE_KEYS: readonly string[] = Object.freeze(['Mod-/', 'Mod-p', 'Mod-s', 'Mod-q'])
+// The keys the drawer takes for itself before CodeMirror or any binding: the raw view, save and Quit
+export const CORE_KEYS: readonly string[] = Object.freeze(['Mod-/', 'Mod-s', 'Mod-q'])
 // No binding takes these: the core keys, the raw view's key where / needs Shift, and the editor's own copy, cut, paste,
 // undo, redo and select all
 export const RESERVED_KEYS: readonly string[] = Object.freeze([
@@ -174,16 +174,14 @@ export class Drawer {
     for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
   }
 
-  // The human opened the instance, from hetu's own palette or, with via, from a node of that plugin naming the note.
-  // A note a plugin opened isn't the human's, and neither is one opened from a node of a plugin that can't read or list
-  // the note itself, or a plugin could draw a button naming any note and read it through ui.read once clicked. Plugins
-  // that read it only through ui.read hear of it now
-  async humanOpened(instance: Instance, via?: string): Promise<void> {
-    if (this.human.has(instance.id)) return
-    if (via !== undefined) {
-      const named = await this.reachOf(via, instance.path)
-      if (!named.read && !named.list) return
-    }
+  // The human opened the instance from a node of via naming the note. Every human open comes through a plugin's node,
+  // so it counts only when via reads or lists the note itself, or a plugin could draw a button naming any note and read
+  // it through ui.read once clicked. A note a plugin opened isn't the human's. Plugins that read it only through ui.read
+  // hear of it now
+  async humanOpened(instance: Instance, via: string): Promise<void> {
+    if (this.human.has(instance.id) || typeof via !== 'string') return
+    const named = await this.reachOf(via, instance.path)
+    if (!named.read && !named.list) return
     if (this.find(instance.id) !== instance || this.human.has(instance.id)) return
     this.human.add(instance.id)
     for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })

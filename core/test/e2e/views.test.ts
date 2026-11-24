@@ -6,7 +6,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, temp, until, workersPage } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, temp, until, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -48,6 +48,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [] })
   await store.writeLuoshu({ folder })
+  await writeOpener(dataDir)
   if (setup.plugins !== undefined) {
     const source = await temp()
     await writeFolder(source, { 'src/worker.ts': fixture })
@@ -86,14 +87,7 @@ type Scope = { ctx: { ui: Record<string, Record<string, (...args: unknown[]) => 
 const drive = <T>(worker: Worker, work: (scope: Scope) => Promise<T> | T) => worker.evaluate(`(${work.toString()})(globalThis)`) as Promise<T>
 const heard = (worker: Worker) => drive(worker, scope => scope.heard)
 
-async function open(editor: Page, name: string): Promise<void> {
-  await editor.keyboard.press('ControlOrMeta+p')
-  await until(async () => editor.locator('#palette').isVisible())
-  await editor.keyboard.type(name)
-  await until(async () => (await editor.locator('#palette-list li').first().innerText()) === name)
-  await editor.keyboard.press('Enter')
-  await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
-}
+const open = openByHand
 
 async function pickLayout(editor: Page, id: string | null): Promise<void> {
   await editor.locator('#views').click()
@@ -195,7 +189,7 @@ describe('input by owner', () => {
       await scope.ctx.ui.layout.draw({
         kind: 'box', id: 'root', style: { display: 'flex', height: '100%' },
         children: [
-          { kind: 'slot', id: 's', instance: state.views[0]!.instance, style: { width: '300px' } },
+          { kind: 'slot', id: 's', instance: state.views.find(view => (view as { owner?: string }).owner === 'board')!.instance, style: { width: '300px' } },
           { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
         ],
       })
@@ -362,9 +356,10 @@ describe('a layout redrawing to mislead (A-30)', () => {
 
   it('shows the real text with Ctrl+/ under a layout that places no editor', async () => {
     const { editor, layout } = await withLayout({ notes: { 'a.md': '**hidden** markers' } })
+    // Opened from the note list while the layout has drawn nothing, so its view still shows
+    await open(editor, 'a.md')
     await drive(layout, scope => scope.ctx.ui.layout.draw({ kind: 'box', id: 'root', children: [{ kind: 'text', id: 't', text: 'No editor here' }] }))
     await until(async () => (await editor.locator('#base .hetu-text', { hasText: 'No editor here' }).count()) === 1)
-    await open(editor, 'a.md')
     expect(await editor.locator('.editor:not([hidden])').count()).toBe(0)
     await editor.keyboard.press('ControlOrMeta+/')
     await until(async () => editor.locator('#raw').isVisible())
@@ -455,6 +450,23 @@ describe('views with no layout', () => {
   })
 })
 
+describe('Ctrl+P', () => {
+  // Quick open is a plugin's: the core takes the key no more and a plugin's global binding hears it, from the bar too
+  it('reaches a plugin that binds it, with focus on the bar\'s own buttons', async () => {
+    const { app, editor } = await started({ plugins: { quick: { granted: [{ type: 'ui.view' }, { type: 'ui.command' }], manifest: { views: view('list') } } } })
+    const worker = await pluginWorker(app, 'quick')
+    await drive(worker, async scope => {
+      const on = (scope.ctx.editor.on as unknown as (topic: string, listener: (event: { topic: string }) => void) => void).bind(scope.ctx.editor)
+      on('command', event => scope.heard.push(event))
+      await scope.ctx.editor.bind([{ key: 'Mod-p', command: 'show' }])
+    })
+    await editor.locator('#views').focus()
+    await editor.keyboard.press('ControlOrMeta+p')
+    await until(async () => (await heard(worker)).some(event => event.topic === 'editor.command'))
+    expect(await editor.locator('#palette').count()).toBe(0)
+  })
+})
+
 describe('notes opened by plugins', () => {
   it('opens a note inside the plugin\'s read scope and refuses one outside', async () => {
     const { app, editor } = await started({
@@ -489,7 +501,7 @@ describe('images in a view', () => {
     await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
     await drive(layout, async scope => {
       const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
-      await scope.ctx.ui.layout.draw({ kind: 'slot', id: 's', instance: state.views[0]!.instance, style: { width: '300px', height: '300px' } })
+      await scope.ctx.ui.layout.draw({ kind: 'slot', id: 's', instance: state.views.find(view => (view as { owner?: string }).owner === 'board')!.instance, style: { width: '300px', height: '300px' } })
     })
     await mkdir(path.join(folder, 'pics'))
     await writeFile(path.join(folder, 'pics', 'dot.png'), PNG)
@@ -529,9 +541,9 @@ describe('a layout that fails', () => {
       const worker = await pluginWorker(made.app, 'cover')
       return { ...made, layout: worker }
     })()
+    await open(editor, 'a.md')
     await drive(layout, scope => scope.ctx.ui.layout.draw({ kind: 'box', id: 'root', children: [{ kind: 'text', id: 't', text: 'Cover layout' }] }))
     await until(async () => (await editor.locator('#base .hetu-text', { hasText: 'Cover layout' }).count()) === 1)
-    await open(editor, 'a.md')
     await layout.evaluate('globalThis.close()').catch(() => {})
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'cover' }))
     await until(async () => (await editor.locator('#base .hetu-text', { hasText: 'Cover layout' }).count()) === 0)

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 
@@ -16,6 +17,62 @@ export const appCommand: [string, string[]] = drivenApp === undefined ? [electro
 // Ubuntu 24.04 keeps unprivileged user namespaces from Chromium's sandbox, so a start on Linux goes without it, as
 // Playwright's own starts do there
 export const sandboxArgs = process.platform === 'linux' ? ['--no-sandbox'] : []
+
+// A plugin listing every note as a row carrying it, in a view, so a test opens a note as the human does: a click on its
+// row. Views draw with no layout too
+const OPENER_ID = 'note-list'
+const openerCode = (sdk: string) => `
+import { definePlugin } from '${sdk}'
+export default definePlugin({
+  start(ctx) {
+    const instances = new Set<string>()
+    const draw = async () => {
+      const paths: string[] = []
+      let after: string | undefined
+      for (;;) {
+        const page = await ctx.luoshu.list(after === undefined ? {} : { after })
+        paths.push(...page.paths)
+        if (page.next === null) break
+        after = page.next
+      }
+      const tree = { kind: 'box', id: 'root', children: paths.map((path, at) => ({ kind: 'button', id: 'n' + at, text: path, drag: { type: 'note', value: path } })) }
+      for (const instance of instances) await ctx.ui.views.draw(instance, tree).catch(() => {})
+    }
+    ctx.ui.on('view.opened', event => {
+      instances.add(event.instance)
+      void draw().catch(() => {})
+    })
+    void ctx.events.on(['luoshu.changed', 'luoshu.outside'], () => void draw().catch(() => {})).catch(() => {})
+  },
+})
+`
+let openerBuilt: string | null = null
+
+// The opener approved in a data folder, before hetu starts on it
+export async function writeOpener(dataDir: string): Promise<void> {
+  if (openerBuilt === null) {
+    const source = await temp()
+    const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
+    await writeFolder(source, { 'src/worker.ts': openerCode(sdk) })
+    const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
+    openerBuilt = built!.text
+  }
+  const granted = [
+    { type: 'ui.view' as const }, { type: 'luoshu.list' as const, paths: ['**'] },
+    { type: 'events.subscribe' as const, topics: ['luoshu.changed', 'luoshu.outside'] },
+  ]
+  const root = path.join(dataDir, 'plugins', OPENER_ID)
+  await writeFolder(root, filesFor(workerManifest(OPENER_ID, { capabilities: granted, views: { notes: { title: 'Notes', kind: 'view' } } }), { 'worker.js': openerBuilt }))
+  await writeApproved(new StateStore(dataDir), OPENER_ID, root, { granted })
+}
+
+// Opens a note through the opener's row, a click as the human makes, then waits for it in the bar
+export async function openByHand(editor: Page, name: string): Promise<void> {
+  const row = editor.locator('#editors').getByRole('button', { name, exact: true })
+  await until(async () => (await row.count()) === 1 && await row.isVisible())
+  await row.click()
+  await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
+}
 
 // A set-up hetu: an approved plugin holding ui.layout that answers the lifecycle and never draws, so the welcome guide
 // isn't due and the trusted window opens only when asked

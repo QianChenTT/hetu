@@ -6,7 +6,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -29,6 +29,7 @@ async function started(notes: Record<string, string>, plugins: Record<string, Fi
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
+  await writeOpener(dataDir)
   if (Object.keys(plugins).length > 0) {
     const source = await temp()
     await writeFolder(source, { 'src/worker.ts': fixture })
@@ -56,14 +57,7 @@ async function started(notes: Record<string, string>, plugins: Record<string, Fi
   return { app, editor, refused }
 }
 
-async function open(editor: Page, name: string): Promise<void> {
-  await editor.keyboard.press('ControlOrMeta+p')
-  await until(async () => editor.locator('#palette').isVisible())
-  await editor.keyboard.type(name)
-  await until(async () => (await editor.locator('#palette-list li').first().innerText()) === name)
-  await editor.keyboard.press('Enter')
-  await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
-}
+const open = openByHand
 
 type Seen = {
   slot: { height: number, scrollTop: number }
