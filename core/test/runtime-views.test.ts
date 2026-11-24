@@ -23,7 +23,7 @@ function made(): ViewFiles {
 
 const text = (served: ReturnType<ViewFiles['serve']>) => (served === null ? null : Buffer.from(served.bytes).toString())
 
-describe('the views host', () => {
+describe('the frames\' hosts', () => {
   it('mints a single-use URL for a running plugin\'s frame and serves its entry page once', () => {
     const views = made()
     const url = views.mint('kanban', 'board')
@@ -158,7 +158,7 @@ describe('the views host', () => {
     expect(views.serve('hetu://my_board.views/icon/dist/icon.svg')).toBe(null)
   })
 
-  it('refuses a URL off the views host or with a user, a port or a query', () => {
+  it('refuses a URL off a plugin\'s frames host or with a user, a port or a query', () => {
     const views = made()
     const url = views.mint('kanban', 'board')!
     for (const other of [url.replace('kanban.views', 'editor'), url.replace('hetu://', 'hetu://u@'), url.replace('views/', 'views:1/'), `${url}?x=1`, `${url}#x`]) {

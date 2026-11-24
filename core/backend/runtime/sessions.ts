@@ -5,11 +5,11 @@ import type { Session } from 'electron'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { SCHEME } from './before-ready.ts'
 import type { ServedHost } from './lib.ts'
-import { viewsOwner } from '../../api/ids.ts'
+import { frameOwner } from '../../api/ids.ts'
 
 // Each role's fixed hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts.
-// The editor role also owns a views host for each plugin id, which allowed checks by viewsOwner, so this list alone is
-// not every host a role reaches
+// The editor role also owns a host for each plugin id's frames, which allowed checks by frameOwner, so this list
+// alone is not every host a role reaches
 export const ROLES = Object.freeze({
   editor: Object.freeze(['editor', 'images', 'content']),
   trusted: Object.freeze(['trusted']),
@@ -20,7 +20,7 @@ export type Role = keyof typeof ROLES
 // Without the persist: prefix a partition lives in memory, so nothing a page stores reaches the disk
 export const partition = (role: Role): string => `hetu-${role}`
 
-// The pages folder each host serves from. A views host is served from what main holds of its running plugin, images
+// The pages folder each host serves from. A plugin's frames are served from what main holds of it while it runs, images
 // from the notes folder through the luoshu, content has none until its pages exist
 const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'editor', trusted: 'trusted', workers: 'workers' })
 
@@ -42,7 +42,7 @@ const CSP = [
   "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ')
 
-// The editor page frames plugins' views and shows their icons, both from each plugin's own views host, and the images
+// The editor page frames plugins' views and shows their icons, both from each plugin's own host, and the images
 // their nodes name from the images host. A frame's own policy names neither host. Its page gets a nonce for the style element
 // CodeMirror makes, a fresh one each load, named only in that page's policy and on its script
 const editorCsp = (nonce: string | null) => [
@@ -65,24 +65,24 @@ const WORKERS_CSP = [
 ].join('; ')
 
 // Whether a request may leave a role's session: only to hetu on the role's own hosts, with no user or port. Whether a
-// views host's plugin runs is for its handler to answer
+// plugin's frames run is for their handler to answer
 export function allowed(role: Role, url: string): boolean {
   const at = parsedUrl(url)
   if (at === null || at.protocol !== `${SCHEME}:` || !hostOnly(at)) return false
-  return (ROLES[role] as readonly string[]).includes(at.hostname) || (role === 'editor' && viewsOwner(at.hostname) !== null)
+  return (ROLES[role] as readonly string[]).includes(at.hostname) || (role === 'editor' && frameOwner(at.hostname) !== null)
 }
 
 const answer = (status: number) => new Response(null, { status })
 
 // A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the plugins' views
 // hosts and the images host from what main answers
-export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ServedHost, images?: ServedHost): Promise<Response> {
+export async function serve(role: Role, request: { url: string, method: string }, root: string, frames?: ServedHost, images?: ServedHost): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405)
   const at = parsedUrl(request.url)
   if (at === null || !allowed(role, request.url)) return answer(404)
-  const ofViews = viewsOwner(at.hostname) !== null
-  if (ofViews || at.hostname === 'images') {
-    const found = (await (ofViews ? views : images)?.serve(request.url)) ?? null
+  const ofFrames = frameOwner(at.hostname) !== null
+  if (ofFrames || at.hostname === 'images') {
+    const found = (await (ofFrames ? frames : images)?.serve(request.url)) ?? null
     if (found === null) return answer(404)
     const headers = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
     // The bytes main holds go out as they are, with no copy of a note's image beside the one read
@@ -131,7 +131,7 @@ const PROXY_TO_NOWHERE = Object.freeze({ mode: 'fixed_servers', proxyRules: 'soc
 // Denies every permission and device, every download and every request but the role's own hosts, and puts the session
 // behind the proxy to nowhere. Done once the proxy is set, and fails when it can't be. The default session gets role
 // null, so nothing loads in it
-export async function lockDown(ses: Session, role: Role | null, root: string, views?: ServedHost, images?: ServedHost): Promise<void> {
+export async function lockDown(ses: Session, role: Role | null, root: string, frames?: ServedHost, images?: ServedHost): Promise<void> {
   const proxied = ses.setProxy({ ...PROXY_TO_NOWHERE })
   ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   ses.setPermissionCheckHandler(() => false)
@@ -140,6 +140,6 @@ export async function lockDown(ses: Session, role: Role | null, root: string, vi
   ses.setSpellCheckerEnabled(false)
   ses.on('will-download', event => event.preventDefault())
   ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: role === null || !allowed(role, details.url) }))
-  if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root, ...(role === 'editor' ? [views, images] : [])))
+  if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root, ...(role === 'editor' ? [frames, images] : [])))
   await proxied
 }

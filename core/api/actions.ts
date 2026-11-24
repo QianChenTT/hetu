@@ -6,7 +6,7 @@ import {
 import { label, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
-import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, viewsOwner } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, frameOwner } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { actionPathProblem } from './paths.ts'
@@ -111,11 +111,11 @@ function lookup<T extends object>(entries: Record<string, T>): Readonly<Record<s
 const target = z.strictObject({ plugin: pluginId })
 // A frame entry's name, which is never the name of another half
 const frameName = localName.refine(name => name !== 'worker' && name !== 'host' && name !== 'page', 'the name of another half')
-// A frame's single-use URL as main minted it: its plugin's views host, a token of 32 hex digits, then a path in the
+// A frame's single-use URL as main minted it: the host of its plugin's frames, a token of 32 hex digits, then a path in the
 // plugin
 export const FRAME_TOKEN = /^[0-9a-f]{32}$/
 const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/([a-z0-9-]+\.views)\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
-  .refine(url => viewsOwner(url.slice('hetu://'.length, url.indexOf('/', 'hetu://'.length))) !== null, 'no plugin\'s views host')
+  .refine(url => frameOwner(url.slice('hetu://'.length, url.indexOf('/', 'hetu://'.length))) !== null, 'no plugin\'s frames')
 
 // The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub
 // link whose release main lists the zip assets of. The core copies the source into a staging folder of its own and

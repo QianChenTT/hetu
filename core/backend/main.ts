@@ -117,7 +117,7 @@ async function start(): Promise<void> {
     Menu.setApplicationMenu(menu === null ? null : Menu.buildFromTemplate(menu))
     app.on('web-contents-created', (_event, contents) => guardContents(contents))
     await lockDown(session.defaultSession, null, pages)
-    // Each running plugin's frames and icons, served on the plugin's own views host in the editor session from the bytes
+    // Each running plugin's frames and icons, served on the plugin's own host in the editor session from the bytes
     // it started with
     const views = new ViewFiles()
     // The router and the plugins manager exist once the core is wired, before any worker starts

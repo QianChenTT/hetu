@@ -56,7 +56,7 @@ window.addEventListener('message', function (event) {
     if (data === 'spin') setTimeout(function () { for (;;) {} }, 100)
     if (data === 'report') port.postMessage(JSON.stringify({ refused: refused }))
   }
-  // Loads from elsewhere on the plugin's own views host, which the frame's CSP should refuse
+  // Loads from elsewhere on the plugin's own host, which the frame's CSP should refuse
   var script = document.createElement('script')
   script.src = 'hetu://kanban.views/ffffffffffffffffffffffffffffffff/board.js'
   document.head.appendChild(script)
@@ -302,7 +302,7 @@ const framed = (app: ElectronApplication) => app.evaluate(({ webContents }) => {
 const status = (app: ElectronApplication, url: string) =>
   app.evaluate(async ({ session }, [name, at]) => (await session.fromPartition(name as string).fetch(at as string)).status, [partition('editor'), url])
 
-describe('a views host for each plugin', () => {
+describe('a host for each plugin\'s frames', () => {
   it('gives each plugin\'s frames a process of their own whose scripts run, one for all of a plugin\'s frames, shows a tree view\'s icon from its plugin\'s host and stops serving a stopped plugin\'s tokens and icons', async () => {
     // An id with an underscore and one of 64 characters, whose host is past a DNS label's 63
     const long = `${'ab_'.repeat(21)}c`

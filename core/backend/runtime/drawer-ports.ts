@@ -60,7 +60,7 @@ type ViewsSide = {
 }
 
 // The runtime's worker starts and ends with the drawer ports told: a start marked drawer and every end, which the plugins manager
-// sends for each incarnation that ends, a crash included. The views hosts get a drawer worker's files and frames, which
+// sends for each incarnation that ends, a crash included. The frames' hosts get a drawer worker's files and frames, which
 // the plugin's own host serves its frames and icons from until that incarnation ends
 export function withDrawers(workers: WorkerSide, drawers: Pick<DrawerPorts<unknown>, 'started' | 'ended'>, views?: ViewsSide): WorkerSide {
   return {

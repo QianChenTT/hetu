@@ -1,14 +1,15 @@
 import { randomBytes } from 'node:crypto'
-import { viewsHost, viewsOwner } from '../../api/ids.ts'
+import { frameOwner, viewsHost } from '../../api/ids.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import { IMAGE_CSP, type Served } from './lib.ts'
 
-// The views hosts: each running plugin's frames and icons on a host of its own, hetu://<id>.views with each _ in the
-// id written -- (viewsHost in api/ids.ts), so Chromium gives each plugin's frames a renderer of their own. Served from
-// the bytes the plugins manager checked when it started the plugin's worker, never read from disk again. A frame loads once from a single-use hetu://<id>.views/<token>/<entry>:
-// the entry page is served once, the plugin's other files under the token for as long as the frame lives, and no other
-// page, so a frame that navigates finds nothing. A token is served only on its own plugin's host.
-// Icons come from hetu://<id>.views/icon/<file>, svg or png only, so a plugin's host shows no other plugin's icons.
+// Each running plugin's frames and icons, on a host of the plugin's own, hetu://<id>.views with each _ in the id
+// written -- (viewsHost in api/ids.ts), so Chromium gives each plugin's frames a renderer of their own. Served from the
+// bytes the plugins manager checked when it started the plugin's worker, never read from disk again. A frame loads once
+// from a single-use hetu://<id>.views/<token>/<entry>: the entry page is served once, the plugin's other files under
+// the token for as long as the frame lives, and no other page, so a frame that navigates finds nothing. A token is
+// served only on its own plugin's host. Icons come from hetu://<id>.views/icon/<file>, svg or png only, so a plugin's
+// host shows no other plugin's icons.
 // Every token of an incarnation ends with it, and every token ends when the editor page unloads
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -122,7 +123,7 @@ export class ViewFiles {
   }
 }
 
-// The plugin a views host serves, the first segment and the rest of a hetu://<id>.views URL with no user, port, query
+// The plugin whose frames a host serves, the first segment and the rest of a hetu://<id>.views URL with no user, port, query
 // or fragment
 function parts(url: string): { plugin: string, first: string, rest: string[] } | null {
   let at: URL
@@ -131,7 +132,7 @@ function parts(url: string): { plugin: string, first: string, rest: string[] } |
   } catch {
     return null
   }
-  const plugin = at.protocol === 'hetu:' ? viewsOwner(at.hostname) : null
+  const plugin = at.protocol === 'hetu:' ? frameOwner(at.hostname) : null
   if (plugin === null || at.username !== '' || at.password !== '' || at.port !== '') return null
   if (at.search !== '' || at.hash !== '' || url.includes('?') || url.includes('#')) return null
   const [first, ...rest] = at.pathname.slice(1).split('/')

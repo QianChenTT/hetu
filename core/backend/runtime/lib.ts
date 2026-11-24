@@ -1,4 +1,4 @@
-// What the views hosts and the images host share, which sessions.ts serves all of them from
+// What the frames' hosts and the images host share, which sessions.ts serves all of them from
 
 // What a host answers for one request: the bytes, their type and the CSP they load under
 export type Served = { bytes: Uint8Array, type: string, csp: string }

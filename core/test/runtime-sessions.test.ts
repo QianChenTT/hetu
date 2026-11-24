@@ -50,7 +50,7 @@ describe('the sessions', () => {
     expect(allowed('editor', 'hetu://workers/')).toBe(false)
   })
 
-  it('lets the editor page reach a host of its own for each plugin id\'s views, and no other views host', () => {
+  it('lets the editor page reach a host of its own for each plugin id\'s frames, and no other frames host', () => {
     const longest = `p${'a'.repeat(62)}z`
     for (const url of [
       'hetu://kanban.views/', 'hetu://my--plugin.views/t/a.html', 'hetu://a-b.views/icon/x.svg', `hetu://${longest}.views/`,
@@ -106,7 +106,7 @@ describe('the sessions', () => {
     expect(editor.headers.get('content-security-policy')).not.toContain('worker-src')
   })
 
-  it('lets the editor page frame and show images from the plugins\' views hosts and show the images host, and no other page', async () => {
+  it('lets the editor page frame and show images from the plugins\' frames hosts and show the images host, and no other page', async () => {
     const editor = (await serve('editor', get('hetu://editor/'), root)).headers.get('content-security-policy') ?? ''
     expect(editor).toContain('frame-src hetu://*.views;')
     expect(editor).toContain("img-src 'self' hetu://*.views hetu://images;")
@@ -116,7 +116,7 @@ describe('the sessions', () => {
     expect(trusted).not.toContain('hetu://images')
   })
 
-  it('serves a plugin\'s views host from what main holds for it, with the frame\'s own CSP', async () => {
+  it('serves a plugin\'s frames from what main holds for it, with the frame\'s own CSP', async () => {
     const views = {
       serve: (url: string) => (url === 'hetu://kanban.views/t/a.html' ? { bytes: new Uint8Array(Buffer.from('<p>a</p>')), type: 'text/html; charset=utf-8', csp: "default-src 'none'; frame-ancestors hetu://editor" } : null),
     }
@@ -127,7 +127,7 @@ describe('the sessions', () => {
     expect(page.headers.get('x-content-type-options')).toBe('nosniff')
     expect((await serve('editor', get('hetu://kanban.views/t/b.html'), root, views)).status).toBe(404)
     expect((await serve('editor', get('hetu://kanban.views/t/a.html', 'HEAD'), root, views)).status).toBe(200)
-    // The bare views host and a deeper one are no plugin's, whatever main would answer for them
+    // The bare views host and a deeper one hold no plugin's frames, whatever main would answer for them
     const any = { serve: () => ({ bytes: new Uint8Array(1), type: 'text/html; charset=utf-8', csp: "default-src 'none'" }) }
     for (const url of ['hetu://views/t/a.html', 'hetu://x.kanban.views/t/a.html']) expect((await serve('editor', get(url), root, any)).status, url).toBe(404)
   })
@@ -171,7 +171,7 @@ describe('the sessions', () => {
     expect((await serve('editor', get('hetu://editor/'), root)).status).toBe(500)
   })
 
-  it('serves a page from a plugin\'s views host as main holds it, the nonce\'s mark left as text and no nonce in its policy', async () => {
+  it('serves a frame\'s page as main holds it, the nonce\'s mark left as text and no nonce in its policy', async () => {
     const html = `<style nonce="${NONCE_MARK}">p {}</style>`
     const views = { serve: () => ({ bytes: new Uint8Array(Buffer.from(html)), type: 'text/html; charset=utf-8', csp: "default-src 'none'; style-src hetu://kanban.views/t/" }) }
     const page = await serve('editor', get('hetu://kanban.views/t/a.html'), root, views)
