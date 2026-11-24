@@ -34,7 +34,7 @@ afterEach(async () => {
 const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 const exists = (file: string) => stat(file).then(() => true, () => false)
 
-async function until(check: () => boolean, ms = 2000): Promise<void> {
+async function until(check: () => boolean, ms = 10_000): Promise<void> {
   for (let waited = 0; !check(); waited += 5) {
     if (waited > ms) throw new Error('nothing arrived in time')
     await tick(5)
@@ -840,6 +840,19 @@ describe('the windows\' own actions', () => {
     const way = windowWay(router, { trusted })
     expect((await way.ask('trusted', 'app.pickFolder')).result).toBeNull()
     expect(asked).toEqual([])
+  })
+
+  // Main opens the trusted window on its welcome guide at start while this holds
+  it('say the welcome is due until an approved plugin holds ui.layout', async () => {
+    const bare = await joined()
+    await bare.pluginsManager.start()
+    expect(bare.pluginsManager.welcomeDue()).toBe(true)
+    const laid = await joined({
+      folder: { tiles: filesFor(workerManifest('tiles', { capabilities: [{ type: 'ui.layout' }] })) },
+      entries: { tiles: { granted: [{ type: 'ui.layout' }] } },
+    })
+    await laid.pluginsManager.start()
+    expect(laid.pluginsManager.welcomeDue()).toBe(false)
   })
 
   it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {

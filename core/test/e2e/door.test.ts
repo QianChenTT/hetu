@@ -9,7 +9,7 @@ import { DOOR_FILE } from '../../backend/plugins-manager/verify.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage, setUp } from './helpers.ts'
 
 // The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the plugin folder.
 // The shipped token seam refuses every token, so a request that passes the token check runs in the join test
@@ -81,6 +81,7 @@ async function data(mcpAs: Mcp): Promise<string> {
     await store.writePlugin('mcp', await entryFor(mcpRoot, { granted: [role] }))
   }
   await store.writeSwitches({ ...defaultSwitches(), allowUnsigned })
+  await setUp(dataDir)
   return dataDir
 }
 

@@ -1,4 +1,4 @@
-import type { InstallProblem, StagedSource } from './actions.ts'
+import type { InstallProblem, ListedPlugin, SecurityList, StagedSource } from './actions.ts'
 import type { Capability } from './capabilities.ts'
 
 // What the trusted window's page shares with the core, kept apart from zod so the page bundles none of it
@@ -9,6 +9,26 @@ import type { Capability } from './capabilities.ts'
 export const INPUT_DELAY_MS = 1000
 
 const quoted = (value: string) => JSON.stringify(value)
+
+// A plugin-folder plugin the human approved: found and new is one waiting for its approval
+const approved = (plugin: ListedPlugin) => plugin.from === 'folder' && !(plugin.state === 'found' && plugin.reason === 'new')
+
+// Its items are what was granted, switched off or not
+const holdsLayout = (plugin: ListedPlugin) => plugin.items.some(item => item.capability.type === 'ui.layout')
+
+// An approved plugin that hetu didn't refuse and that didn't fail. Switched off still counts
+export const approvedNotRefused = (plugin: ListedPlugin) => approved(plugin) && plugin.state !== 'refused' && plugin.state !== 'failed'
+
+export function layoutApproved(list: SecurityList): boolean {
+  return list.plugins.some(plugin => approvedNotRefused(plugin) && holdsLayout(plugin))
+}
+
+// The welcome guide is due while hetu runs and the human never approved a plugin holding ui.layout: main opens the
+// trusted window on it at start and the window opens on its tab. An approved layout that fails or is refused still
+// counts, so a set-up hetu whose layout broke isn't greeted with the first steps again
+export function welcomeDue(list: SecurityList): boolean {
+  return list.stopped === null && !list.plugins.some(plugin => approved(plugin) && holdsLayout(plugin))
+}
 
 // One capability as its type and each scope quoted, a target, a topic and a variable name too, so nothing a plugin or
 // its client chose reads as a sentence of the screen

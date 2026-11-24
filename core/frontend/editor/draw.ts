@@ -13,6 +13,9 @@ export type DrawHooks = {
   event(node: string, type: NodeEventType, value?: string | boolean): void
   // A node carrying a payload was pressed: the drawer runs the drag
   dragStart(node: string, payload: Payload, event: PointerEvent): void
+  // A node carrying a payload was clicked from the keyboard, Enter or Space on it with focus, which counts as a click.
+  // payload is the one it carried when the key went down
+  payloadActivated(node: string, payload: Payload): void
   // A split's divider was pressed
   divider(node: string, index: number, event: PointerEvent, split: HTMLElement): void
   // Where an icon of the owner's own files loads from
@@ -377,9 +380,20 @@ export class TreeView {
     element.addEventListener('pointerup', () => state('pressed', false))
     element.addEventListener('focusin', () => state('focus', true))
     element.addEventListener('focusout', () => state('focus', false))
+    // The payload as Enter or Space went down on this node itself, taken once by the click that key makes, as a press
+    // takes it at pointerdown. A held key's repeats arm nothing, so a payload drawn anew under a held key never opens
+    let armed: Payload | null = null
+    element.addEventListener('keydown', event => {
+      const key = event.key === 'Enter' || event.key === ' '
+      armed = event.isTrusted && key && !event.repeat && event.target === element ? held.node.drag ?? null : null
+    })
     element.addEventListener('click', event => {
       if (!event.isTrusted) return
       const { node } = held
+      // A pointer's click came through the drag already. A keyboard's carries no pointer, detail 0
+      const payload = armed
+      armed = null
+      if (event.detail === 0 && event.target === element && payload !== null) this.hooks.payloadActivated(id, payload)
       if (node.kind === 'button' || node.click === true) {
         event.stopPropagation()
         this.hooks.event(id, 'click')

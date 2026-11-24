@@ -348,6 +348,8 @@ async function start(): Promise<void> {
     else {
       editor = show(editorWindow())
       updater.ready()
+      // Over the editor, on its welcome guide, until a layout plugin is approved
+      if (wired.pluginsManager.welcomeDue()) trusted.show()
     }
   } catch (err) {
     tell(err)
