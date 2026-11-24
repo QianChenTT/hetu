@@ -1,7 +1,9 @@
 import type { KeyObject } from 'node:crypto'
+import path from 'node:path'
 import type { Fetch } from '../lib/github.ts'
 import { checkLatest, releasePage, updateKey, versionParts, type Checked } from './check.ts'
-import type { LastCheck, Updater, UpdaterRecording, UpdateState } from './header.ts'
+import type { InstallResult, LastCheck, Spawn, Updater, UpdaterRecording, UpdateFile, UpdateState } from './header.ts'
+import { downloadInstaller, spawnDetached, startInstaller } from './install.ts'
 import { CheckTimer, type Later } from './timer.ts'
 
 export type UpdaterOptions = {
@@ -12,6 +14,12 @@ export type UpdaterOptions = {
   // Only Windows installs, every other platform links to the release page
   platform: string
   recording: UpdaterRecording
+  // hetu's data folder, whose updates folder takes the installers
+  dataDir: string
+  // Quits the way Quit does, then runs start just before the exit, false when a quit is already under way, which then
+  // runs no start. start answers false when it started nothing, so hetu starts again
+  quit: (start: () => boolean) => boolean
+  spawn?: Spawn
   // The switch as it stands at the start, on unless the human turned it off
   on?: boolean
   // A line for a check that failed quietly
@@ -47,6 +55,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
   const now = options.now ?? Date.now
   let state: UpdateState = { canCheck, on: options.on ?? true, checked: null, last: { kind: 'none' } }
   let inFlight: Promise<UpdateState> | null = null
+  // The signed file and the installer's link of the update found, for Install
+  let offered: { update: UpdateFile, installer: string } | null = null
   let closed = false
   const stop = new AbortController()
 
@@ -83,6 +93,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
       // A throw from a check is a fault of hetu's, kept as quiet as the network's. Its text stays out of the log
       checked = { outcome: 'failed', problem: 'fault' }
     }
+    offered = checked.outcome === 'found' && checked.installer !== null ? { update: checked.update, installer: checked.installer } : null
     try {
       if (checked.outcome === 'failed') log(`update: no answer to act on (${checked.problem})`)
       if (checked.outcome === 'refused') options.recording.coreRecord('update.refused', { reason: checked.reason, version: checked.version })
@@ -93,7 +104,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
   }
 
   const check = (): Promise<UpdateState> => {
-    if (!canCheck || closed) return Promise.resolve(state)
+    if (!canCheck || closed || state.last.kind === 'installing') return Promise.resolve(state)
     inFlight ??= runCheck().finally(() => {
       inFlight = null
     })
@@ -108,9 +119,42 @@ export function createUpdater(options: UpdaterOptions): Updater {
     ...(options.everyMs !== undefined ? { everyMs: options.everyMs } : {}),
   })
 
+  // The installer offered, downloaded and checked, then hetu quits and starts it, hashed once more just before
+  const install = async (): Promise<InstallResult> => {
+    const last = state.last
+    const offer = offered
+    if (!canCheck || closed || inFlight !== null || last.kind !== 'found' || !last.installable || offer === null) {
+      return { outcome: 'unavailable' }
+    }
+    set({ last: { kind: 'installing', version: offer.update.version } })
+    const got = await downloadInstaller(offer.update, offer.installer, path.join(options.dataDir, 'updates'), {
+      signal: stop.signal, ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
+    }).catch((): { problem: 'fault' } => ({ problem: 'fault' }))
+    if ('problem' in got) {
+      log(`update: the installer did not download (${got.problem})`)
+      set({ last })
+      return { outcome: 'failed', problem: got.problem }
+    }
+    if ('refused' in got) {
+      offered = null
+      options.recording.coreRecord('update.refused', { reason: got.refused, version: offer.update.version })
+      set({ last: { kind: 'refused', reason: got.refused, version: offer.update.version } })
+      return { outcome: 'refused', reason: got.refused }
+    }
+    // A quit begun meanwhile, for whatever reason, starts no installer
+    const quitting = options.quit(() => {
+      const started = startInstaller(got.file, offer.update, options.spawn ?? spawnDetached)
+      if (started === 'changed') log('update: the installer changed on disk after its download and was not started')
+      if (started === 'failed') log('update: the installer did not start')
+      return started === 'started'
+    })
+    return quitting ? { outcome: 'quitting' } : { outcome: 'unavailable' }
+  }
+
   return {
     state: () => state,
     check,
+    install,
     switchChecks(on) {
       if (on !== state.on) set({ on })
       timer.switched(on)
