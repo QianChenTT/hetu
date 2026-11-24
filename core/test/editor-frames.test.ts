@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME_MESSAGES_PER_SECOND, FrameInbox, MAX_FRAME_MESSAGE } from '../api/ui-limits.ts'
-import { FOCUS_GRACE_MS, FocusGuard, FrameLoads } from '../frontend/editor/frames.ts'
+import { FOCUS_GRACE_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
+import type { CoreLink } from '../frontend/editor/link.ts'
 
 describe('a frame\'s loads', () => {
   it('hands the port on the first load only and reads any later load as navigated', () => {
@@ -115,5 +116,36 @@ describe('focus going into a frame', () => {
     guard.allow('v1')
     now += FOCUS_GRACE_MS
     expect(guard.entered('v1')).toBe(true)
+  })
+})
+
+describe('the theme the frames are offered', () => {
+  // A link that answers each editor.theme with the next answer given, ok when none is left
+  function linked(answers: boolean[]) {
+    const sent: unknown[] = []
+    const link = {
+      call: async (action: string, args?: unknown) => {
+        if (action === 'editor.theme') sent.push(args)
+        return answers.shift() ?? true ? { ok: true, result: null } : { ok: false, refusal: { code: 'invalid' } }
+      },
+    } as unknown as CoreLink
+    return { link, sent }
+  }
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  it('sends main a theme again after a refusal and not after an answer', async () => {
+    const { link, sent } = linked([false])
+    const frames = new Frames(link, {} as HTMLElement, () => {}, () => false)
+    const theme = { '--hetu-color-bg': '#ffffff' }
+    frames.theme(theme)
+    await settle()
+    frames.theme(theme)
+    await settle()
+    frames.theme(theme)
+    await settle()
+    expect(sent).toEqual([{ variables: theme }, { variables: theme }])
+    frames.theme({ '--hetu-color-bg': '#202020' })
+    await settle()
+    expect(sent).toHaveLength(3)
   })
 })

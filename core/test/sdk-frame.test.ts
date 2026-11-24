@@ -97,4 +97,42 @@ describe('a frame\'s side of its view', () => {
     expect(view.theme()).toEqual({})
     close()
   })
+
+  it('answers a second connect with the same view, listening once', async () => {
+    const { made, parent, send } = scope()
+    let listening = 0
+    const counted: FrameScope = { ...made, addEventListener: (type, next) => { listening++; made.addEventListener(type, next) } }
+    const first = connect(counted)
+    const second = connect(counted)
+    expect(second).toBe(first)
+    expect(listening).toBe(1)
+    const { port1, port2 } = new MessageChannel()
+    send({ source: parent, data: { v: 1, kind: 'view' }, ports: [port2] })
+    expect(await second).toBe(await first)
+    port1.close()
+    port2.close()
+  })
+
+  it('keeps the newest 100 messages from before the first handler, dropping the oldest', async () => {
+    const { view, drawer, close } = await connected()
+    for (let at = 0; at < 150; at++) drawer.postMessage(JSON.stringify(at))
+    await settle()
+    const got: unknown[] = []
+    view.onMessage(data => got.push(data))
+    expect(got).toEqual(Array.from({ length: 100 }, (_, at) => at + 50))
+    close()
+  })
+
+  it('hands every kept message to a first handler that throws on one, then throws', async () => {
+    const { view, drawer, close } = await connected()
+    for (const at of [1, 2, 3]) drawer.postMessage(JSON.stringify(at))
+    await settle()
+    const got: unknown[] = []
+    expect(() => view.onMessage(data => {
+      got.push(data)
+      if (data === 1) throw new Error('first')
+    })).toThrow('first')
+    expect(got).toEqual([1, 2, 3])
+    close()
+  })
 })

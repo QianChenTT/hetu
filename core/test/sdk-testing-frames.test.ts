@@ -103,4 +103,25 @@ describe('frame views in the fake drawer', () => {
     await settled()
     expect(heard).toEqual([])
   })
+
+  it('hands a frame the theme the test set, with its mount and on each change after', async () => {
+    const { drawer, board } = await started()
+    const frame = drawer.mountFrame(board)
+    expect(frame.theme()).toEqual({})
+    const told: unknown[] = []
+    frame.onTheme(theme => told.push(theme))
+    drawer.changeTheme({ '--hetu-color-bg': '#202020' })
+    expect(frame.theme()).toEqual({ '--hetu-color-bg': '#202020' })
+    expect(told).toEqual([{ '--hetu-color-bg': '#202020' }])
+    expect(drawer.mountFrame(board).theme()).toEqual({ '--hetu-color-bg': '#202020' })
+  })
+
+  it('takes nothing from a frame once its plugin no longer holds ui.view, as hetu\'s drawer drops it', async () => {
+    const { drawer, heard, settled, board } = await started()
+    const frame = drawer.mountFrame(board)
+    drawer.connect([], manifest.views as never)
+    expect(frame.post({ after: true })).toBe(false)
+    await settled()
+    expect(heard).toEqual([])
+  })
 })

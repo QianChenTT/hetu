@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
+import { tokenNames } from '../../api/ui.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { partition, ROLES, type Role } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
@@ -484,13 +485,13 @@ void connect().then(view => {
 `
 const linked = '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="hetu-theme.css"><script src="board.js"></script></head><body></body></html>'
 
-// The theme the page set on the frames' layer
-const pageTheme = (editor: Page) => editor.locator('#editors').evaluate(element => {
-  const style = (element as HTMLElement).style
-  return Object.fromEntries(Array.from(style).filter(name => name.startsWith('--hetu-')).map(name => [name, style.getPropertyValue(name)]))
-})
+// Every token's value the page draws the frames' layer with, from a theme or shell.css, and the editor's link color
+const pageTheme = (editor: Page) => editor.locator('#editors').evaluate((element, names) => {
+  const drawn = getComputedStyle(element)
+  return Object.fromEntries(names.map(name => [name, drawn.getPropertyValue(name).trim()]).filter(([, value]) => value !== ''))
+}, [...tokenNames, 'color-editor-link'].map(name => `--hetu-${name}`))
 
-// The variables of the hetu-theme.css main serves beside the first frame's page, asked from main as the frame's loads are
+// The variables of the hetu-theme.css main serves at the root of the first frame's ticket, asked from main as its loads are
 async function sheetTheme(app: ElectronApplication): Promise<Record<string, string>> {
   const url = (await framed(app)).find(frame => frame.url.startsWith('hetu://kanban.views/'))!.url.replace(/board\.html$/, 'hetu-theme.css')
   const text = await app.evaluate(async ({ session }, [name, at]) => (await session.fromPartition(name as string).fetch(at as string)).text(), [partition('editor'), url])
@@ -498,7 +499,7 @@ async function sheetTheme(app: ElectronApplication): Promise<Record<string, stri
 }
 
 describe('the theme in a frame', () => {
-  it('hands a frame the page\'s theme with its port, in hetu-theme.css beside its page and on each change, to a frame open since before and one opened since', async () => {
+  it('hands a frame the page\'s theme, hetu\'s own with none picked, with its port, in hetu-theme.css at its ticket\'s root and on each change, to a frame open since before and one opened since', async () => {
     const source = await temp()
     await writeFolder(source, { 'src/board.ts': themed })
     const [built] = await buildPlugin(source, { entries: { 'board.js': 'src/board.ts' }, write: false })
@@ -506,8 +507,13 @@ describe('the theme in a frame', () => {
     const theme = { tokens: { 'color-bg': '#202020', 'color-accent': '#ff8800', 'color-editor-fg': '#fefefe', 'color-editor-bg': '#ffffff' } }
     const { app, editor, worker } = await started({ html: linked, files: { 'board.js': built!.text } }, {}, { theme })
     await until(async () => (await messages(worker)).length === 1)
-    expect(await messages(worker)).toEqual([{ connected: {}, sheet: '' }])
-    expect(await sheetTheme(app)).toEqual(await pageTheme(editor))
+    // hetu's own look with no theme picked: shell.css's values and hetu's link color
+    const defaults = { ...await pageTheme(editor), '--hetu-color-editor-link': '#1a5fb4' }
+    expect(Object.keys(defaults)).toHaveLength(tokenNames.length + 1)
+    expect(defaults).toMatchObject({ '--hetu-color-bg': '#ffffff', '--hetu-font-ui': 'system-ui, sans-serif', '--hetu-space': '8px' })
+    expect(await messages(worker)).toEqual([{ connected: defaults, sheet: '#ffffff' }])
+    await until(async () => (await sheetTheme(app))['--hetu-color-bg'] === '#ffffff')
+    expect(await sheetTheme(app)).toEqual(defaults)
     await editor.locator('#views').click()
     await until(async () => editor.locator('#menu').isVisible())
     await editor.locator('#menu select').nth(1).selectOption('kanban')
@@ -516,7 +522,8 @@ describe('the theme in a frame', () => {
     const variables = await pageTheme(editor)
     expect(variables).toMatchObject({ '--hetu-color-bg': '#202020', '--hetu-color-editor-fg': '#1f1f1f' })
     expect((await messages(worker))[1]).toEqual({ changed: variables })
-    await until(async () => JSON.stringify(await sheetTheme(app)) === JSON.stringify(variables))
+    await until(async () => (await sheetTheme(app))['--hetu-color-bg'] === '#202020')
+    expect(await sheetTheme(app)).toEqual(variables)
 
     await worker.evaluate(async () => {
       const scope = globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }

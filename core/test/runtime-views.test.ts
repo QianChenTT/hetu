@@ -117,7 +117,7 @@ describe('the frames\' hosts', () => {
     expect(views.mint('kanban', 'board')).not.toBe(null)
   })
 
-  it('serves hetu-theme.css beside a frame\'s page from the theme it holds, under the frame\'s CSP, in place of a plugin\'s file of that name', () => {
+  it('serves hetu-theme.css at the root of a frame\'s ticket from the theme it holds, under the frame\'s CSP, in place of a plugin\'s file of that name', () => {
     const views = new ViewFiles({ token: () => '1'.padStart(32, '0') })
     views.started('kanban', 1, [...files, file('hetu-theme.css', 'p { color: red }')], { board: 'dist/board.html' })
     const base = views.mint('kanban', 'board')!.replace(/dist\/board\.html$/, '')
