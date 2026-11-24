@@ -10,9 +10,12 @@ import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { partition, ROLES, type Role } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, counting, editorPage, launch, logged, temp, tick, until, workersPage, openByHand, writeOpener } from './helpers.ts'
+import { cleanup, counting, editorPage, launch, logged, pageAt, temp, tick, until, visibleWindows, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
+
+// The trusted window takes no click within its input delay
+const PAST_DELAY = 1300
 
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
@@ -49,12 +52,12 @@ window.addEventListener('message', function (event) {
     if (data === 'spin') setTimeout(function () { for (;;) {} }, 100)
     if (data === 'report') port.postMessage(JSON.stringify({ refused: refused }))
   }
-  // Loads from elsewhere on the views host, which the frame's CSP should refuse
+  // Loads from elsewhere on the plugin's own views host, which the frame's CSP should refuse
   var script = document.createElement('script')
-  script.src = 'hetu://views/ffffffffffffffffffffffffffffffff/board.js'
+  script.src = 'hetu://kanban.views/ffffffffffffffffffffffffffffffff/board.js'
   document.head.appendChild(script)
   var image = document.createElement('img')
-  image.src = 'hetu://views/icon/kanban/icon.svg'
+  image.src = 'hetu://kanban.views/icon/icon.svg'
   document.body.appendChild(image)
   // And from the images host, which only the editor page's own image nodes load from
   var note = document.createElement('img')
@@ -146,7 +149,10 @@ export default definePlugin({
 })
 `
 
-async function started(frame: Frame, notes: Record<string, string> = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
+// What else a run holds: kanban's views, each drawn by the same frame, and other plugins with one such view each
+type More = { views?: string[], others?: string[] }
+
+async function started(frame: Frame, notes: Record<string, string> = {}, more: More = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
   const folder = await temp()
   for (const [name, text] of Object.entries(notes)) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
@@ -158,14 +164,17 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
   await writeFolder(source, { 'src/worker.ts': worker, 'src/columns.ts': columns })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const granted: Capability[] = [{ type: 'ui.view' }]
-  const manifest = workerManifest('kanban', {
-    capabilities: granted,
-    entries: { worker: 'worker.js', frames: { board: 'board.html' } },
-    views: { board: { title: 'Board', kind: 'view', frame: 'board' } },
-  })
-  const root = path.join(dataDir, 'plugins', 'kanban')
-  await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'board.html': frame.html, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', ...frame.files }))
-  await writeApproved(store, 'kanban', root, { granted })
+  const plugins: [string, string[]][] = [['kanban', more.views ?? ['board']], ...(more.others ?? []).map((id): [string, string[]] => [id, ['board']])]
+  for (const [id, views] of plugins) {
+    const manifest = workerManifest(id, {
+      capabilities: granted,
+      entries: { worker: 'worker.js', frames: { board: 'board.html' } },
+      views: Object.fromEntries(views.map(view => [view, { title: view, kind: 'view', frame: 'board' }])),
+    })
+    const root = path.join(dataDir, 'plugins', id)
+    await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'board.html': frame.html, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', ...frame.files }))
+    await writeApproved(store, id, root, { granted })
+  }
   const layout = path.join(dataDir, 'plugins', 'columns')
   const [drawn] = await buildPlugin(source, { entries: { 'worker.js': 'src/columns.ts' }, workers: ['worker.js'], write: false })
   const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
@@ -173,8 +182,7 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
   await writeApproved(store, 'columns', layout, { granted: layoutGrants })
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'kanban' }))
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'columns' }))
+  for (const id of ['kanban', 'columns', ...(more.others ?? [])]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   await editor.locator('#views').click()
   await until(async () => editor.locator('#menu').isVisible())
   await editor.locator('#menu select').first().selectOption('columns')
@@ -275,8 +283,53 @@ describe('view frames', () => {
     const typedMs = Date.now() - before
     await found('frame freeze', { processes, typedMs })
     const editorProcess = processes.find(frame => frame.url === 'hetu://editor/')?.osProcessId
-    const frameProcess = processes.find(frame => frame.url.startsWith('hetu://views/'))?.osProcessId
+    const frameProcess = processes.find(frame => frame.url.startsWith('hetu://kanban.views/'))?.osProcessId
     expect(frameProcess).not.toBe(editorProcess)
+  })
+})
+
+// Each frame in the editor page with the process it runs in, its token in its URL
+const framed = (app: ElectronApplication) => app.evaluate(({ webContents }) => {
+  const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')
+  return (contents?.mainFrame.framesInSubtree ?? []).map(frame => ({ url: frame.url, osProcessId: frame.osProcessId }))
+})
+// What the editor session's protocol handler answers for a URL, asked from main as the page's own loads are
+const status = (app: ElectronApplication, url: string) =>
+  app.evaluate(async ({ session }, [name, at]) => (await session.fromPartition(name as string).fetch(at as string)).status, [partition('editor'), url])
+
+describe('a views host for each plugin', () => {
+  it('gives each plugin\'s frames a process of their own, one for all of a plugin\'s frames, and stops serving a stopped plugin\'s tokens and icons', async () => {
+    const { app, editor, dataDir } = await started({ html: page('board.js'), files: { 'board.js': board } }, {}, { views: ['board', 'list'], others: ['my_board'] })
+    const loaded = async () => (await framed(app)).filter(frame => /^hetu:\/\/[a-z_]+\.views\/[0-9a-f]{32}\/board\.html$/.test(frame.url))
+    await until(async () => (await loaded()).length === 3)
+    const frames = await loaded()
+    const editorProcess = (await framed(app)).find(frame => frame.url === 'hetu://editor/')?.osProcessId
+    const kanban = frames.filter(frame => frame.url.startsWith('hetu://kanban.views/'))
+    const mine = frames.filter(frame => frame.url.startsWith('hetu://my_board.views/'))
+    await found('process per plugin', { editorProcess, frames: frames.map(frame => ({ ...frame, url: frame.url.replace(/[0-9a-f]{32}/, '<token>') })) })
+    expect(kanban).toHaveLength(2)
+    expect(mine).toHaveLength(1)
+    expect(kanban[0]!.osProcessId).toBe(kanban[1]!.osProcessId)
+    expect(new Set([editorProcess, kanban[0]!.osProcessId, mine[0]!.osProcessId]).size).toBe(3)
+
+    // A token loads its plugin's files on its own host only, and each plugin's icons load on its own host
+    const script = (url: string) => url.replace(/board\.html$/, 'board.js')
+    expect(await status(app, script(kanban[0]!.url))).toBe(200)
+    expect(await status(app, script(kanban[0]!.url).replace('kanban.views', 'my_board.views'))).toBe(404)
+    expect(await status(app, 'hetu://kanban.views/icon/icon.svg')).toBe(200)
+    expect(await status(app, 'hetu://my_board.views/icon/icon.svg')).toBe(200)
+
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const trusted = await pageAt(app, 'hetu://trusted/')
+    await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
+    await tick(PAST_DELAY)
+    await trusted.locator('.plugin', { hasText: 'kanban ·' }).getByRole('button', { name: 'Stop' }).click()
+    await until(() => logged(dataDir, 'plugin.stopped', { plugin: 'kanban' }))
+    await until(async () => (await status(app, 'hetu://kanban.views/icon/icon.svg')) === 404)
+    for (const frame of kanban) expect(await status(app, script(frame.url))).toBe(404)
+    expect(await status(app, script(mine[0]!.url))).toBe(200)
+    expect(await status(app, 'hetu://my_board.views/icon/icon.svg')).toBe(200)
   })
 })
 
