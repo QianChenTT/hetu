@@ -3,10 +3,12 @@ import { pluginId } from '../../api/ids.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import { IMAGE_CSP, type Served } from './lib.ts'
 
-// The views host: each running plugin's frames and icons, served from the bytes the plugins manager checked when it started the
-// plugin's worker, never read from disk again. A frame loads once from a single-use hetu://views/<token>/<entry>: the
-// entry page is served once, the plugin's other files under the token for as long as the frame lives, and no other
-// page, so a frame that navigates finds nothing. Icons come from hetu://views/icon/<plugin>/<file>, svg or png only.
+// The views hosts: each running plugin's frames and icons on a host of its own, hetu://<id>.views, so Chromium gives
+// each plugin's frames a renderer of their own. Served from the bytes the plugins manager checked when it started the
+// plugin's worker, never read from disk again. A frame loads once from a single-use hetu://<id>.views/<token>/<entry>:
+// the entry page is served once, the plugin's other files under the token for as long as the frame lives, and no other
+// page, so a frame that navigates finds nothing. A token is served only on its own plugin's host.
+// Icons come from hetu://<host>.views/icon/<plugin>/<file>, svg or png only.
 // Every token of an incarnation ends with it, and every token ends when the editor page unloads
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -34,10 +36,10 @@ export function viewsOwner(hostname: string): string | null {
   return pluginId.safeParse(id).success ? id : null
 }
 
-// The proposal's frame policy: everything only from the token's own path, no network, frames, forms or base, and
-// embedded only by the editor page
-export function frameCsp(token: string): string {
-  const own = `hetu://views/${token}/`
+// The proposal's frame policy: everything only from the token's own path on the plugin's host, no network, frames,
+// forms or base, and embedded only by the editor page
+export function frameCsp(plugin: string, token: string): string {
+  const own = `hetu://${plugin}${VIEWS}/${token}/`
   return [
     "default-src 'none'", `script-src ${own}`, `style-src ${own}`, `img-src ${own}`, `font-src ${own}`, "connect-src 'none'",
     "frame-src 'none'", "worker-src 'none'", "form-action 'none'", "base-uri 'none'", 'frame-ancestors hetu://editor',
@@ -80,7 +82,7 @@ export class ViewFiles {
     while (this.tokens.has(token)) token = this.token()
     if (!TOKEN.test(token)) return null
     this.tokens.set(token, { plugin, incarnation: held.incarnation, entry, served: false })
-    return `hetu://views/${token}/${entry}`
+    return `hetu://${plugin}${VIEWS}/${token}/${entry}`
   }
 
   // The frame at url is gone: its token ends. Answers whose it was, null for a token already gone
@@ -88,7 +90,7 @@ export class ViewFiles {
     const at = parts(url)
     if (at === null || !TOKEN.test(at.first)) return null
     const held = this.tokens.get(at.first)
-    if (held === undefined) return null
+    if (held === undefined || held.plugin !== at.plugin) return null
     this.tokens.delete(at.first)
     return { plugin: held.plugin }
   }
@@ -105,7 +107,7 @@ export class ViewFiles {
     const held = TOKEN.test(at.first) ? this.tokens.get(at.first) : undefined
     const path = at.rest.join('/')
     const match = PATH.exec(path)
-    if (held === undefined || match === null) return null
+    if (held === undefined || held.plugin !== at.plugin || match === null) return null
     const running = this.running.get(held.plugin)
     if (running === undefined || running.incarnation !== held.incarnation) return null
     if (match[1] === 'html') {
@@ -114,7 +116,7 @@ export class ViewFiles {
     }
     const bytes = running.files.get(path)
     if (bytes === undefined) return null
-    return { bytes, type: TYPES[match[1] as string] as string, csp: frameCsp(at.first) }
+    return { bytes, type: TYPES[match[1] as string] as string, csp: frameCsp(held.plugin, at.first) }
   }
 
   private icon(rest: string[]): Served | null {
@@ -132,16 +134,18 @@ export class ViewFiles {
   }
 }
 
-// The first segment and the rest of a hetu://views URL with no user, port, query or fragment
-function parts(url: string): { first: string, rest: string[] } | null {
+// The plugin a views host serves, the first segment and the rest of a hetu://<id>.views URL with no user, port, query
+// or fragment
+function parts(url: string): { plugin: string, first: string, rest: string[] } | null {
   let at: URL
   try {
     at = new URL(url)
   } catch {
     return null
   }
-  if (at.protocol !== 'hetu:' || at.hostname !== 'views' || at.username !== '' || at.password !== '' || at.port !== '') return null
+  const plugin = at.protocol === 'hetu:' ? viewsOwner(at.hostname) : null
+  if (plugin === null || at.username !== '' || at.password !== '' || at.port !== '') return null
   if (at.search !== '' || at.hash !== '' || url.includes('?') || url.includes('#')) return null
   const [first, ...rest] = at.pathname.slice(1).split('/')
-  return first === undefined || first === '' ? null : { first, rest }
+  return first === undefined || first === '' ? null : { plugin, first, rest }
 }
