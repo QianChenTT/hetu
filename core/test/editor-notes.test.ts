@@ -525,3 +525,69 @@ describe('a save from outside', () => {
   })
 })
 
+
+// hetu moves a note as two changes, the end it left first, and removes one as a change on its path. Each answers
+// not-found to a read after
+describe('a note moved or removed by hetu', () => {
+  it('marks a clean note gone and saves nothing for it', async () => {
+    const { notes, files, core, told } = started()
+    const instance = await notes.open('a.md')
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told).toEqual([{ kind: 'gone', instance, path: 'a.md', kept: false }])
+    expect(notes.opened.get(instance)?.gone).toBe(true)
+    expect(await notes.save(instance)).toBe('gone')
+    expect(core.calls('luoshu.write')).toEqual([])
+  })
+
+  it('keeps the text of a dirty note as a draft at once and keeps it through a save', async () => {
+    const { notes, files, core, told, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine, unsaved')
+    notes.changed(instance)
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(space.get(keyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'mine, unsaved', at: 1000, edits: [] })
+    expect(told).toEqual([{ kind: 'gone', instance, path: 'a.md', kept: true }])
+    views.type(instance, 'mine, typed after')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('gone')
+    expect(core.calls('luoshu.write')).toEqual([])
+    expect(space.get(keyOf('a.md'))).toMatchObject({ text: 'mine, typed after' })
+    expect(views.texts.get(instance)).toBe('mine, typed after')
+  })
+
+  it('never writes the old path again, not when a note with the same bytes comes back to it', async () => {
+    const { notes, files, core, views } = started()
+    const instance = await notes.open('a.md')
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md')
+    await flush()
+    files.set('a.md', { text: 'note a', version: 'v-note a' })
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    views.type(instance, 'typed in the gone tab')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('gone')
+    await notes.reload(instance)
+    expect(views.replaced).toEqual([])
+    expect(core.calls('luoshu.write')).toEqual([])
+    // Opening the path again reads the note there into a tab of its own
+    const again = await notes.open('a.md')
+    expect(again).not.toBe(instance)
+    expect(views.texts.get(again)).toBe('note a')
+  })
+
+  it('takes a refusal other than not-found as no word on where the note is', async () => {
+    const { notes, core, told } = started()
+    const instance = await notes.open('a.md')
+    core.answers['luoshu.read'] = () => ({ ok: false, refusal: { code: 'failed' } })
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told).toEqual([])
+    expect(notes.opened.get(instance)?.gone).toBe(false)
+  })
+})
