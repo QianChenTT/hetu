@@ -385,6 +385,14 @@ describe('editor.open', () => {
     expect(core.calls('luoshu.read')).toEqual([])
   })
 
+  // A note dragged out of a frame is judged where the luoshu resolved it, as editor.open judges a plugin's open
+  it('answers whether the plugin reads the path a note resolved to', async () => {
+    const { drawer } = started({ kanban: { verbs: ['ui.view'], read: ['public/link/x.md'] } })
+    const reads = drawer.ui.resolvedReads('kanban')
+    expect(await reads('public/link/x.md')).toBe(true)
+    expect(await reads('private/x.md')).toBe(false)
+  })
+
   // From a frame, held to the item and the live port its worker's editor.open is held to
   it('opens from a frame only while the plugin holds ui.view and its worker is connected', async () => {
     const { drawer, opened } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'] }, files: { verbs: [], read: ['a.md'] } })

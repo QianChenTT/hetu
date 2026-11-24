@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { CDPSession, ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -40,6 +40,7 @@ var rows = [].slice.call(document.querySelectorAll('button'))
 var pad = document.getElementById('pad')
 var port = null
 var tokens = {}
+var minted = rows.map(function (row) { return row.textContent })
 var many = false
 function say(data) { if (port) port.postMessage(JSON.stringify(data)) }
 function open(path) { port.postMessage({ v: 1, kind: 'open', path: path }); say({ asked: path }) }
@@ -57,8 +58,8 @@ window.addEventListener('message', function (event) {
   port.onmessage = function (message) {
     if (typeof message.data !== 'string') {
       if (message.data.kind !== 'drag-token') return
-      tokens[rows[message.data.ask].textContent] = message.data.token
-      say({ token: rows[message.data.ask].textContent, is: message.data.token })
+      tokens[minted[message.data.ask]] = message.data.token
+      say({ token: minted[message.data.ask], is: message.data.token })
       return
     }
     var data = JSON.parse(message.data)
@@ -66,6 +67,7 @@ window.addEventListener('message', function (event) {
     if (data.onMove) document.addEventListener('pointermove', function moved() { document.removeEventListener('pointermove', moved); open(data.onMove) })
     if (data.onWheel) document.addEventListener('wheel', function wheeled() { document.removeEventListener('wheel', wheeled); open(data.onWheel) })
     if (data.many) many = true
+    if (data.mint) port.postMessage({ v: 1, kind: 'drag-token', ask: minted.push(data.mint) - 1, path: data.mint })
   }
   rows.forEach(function (row, at) { port.postMessage({ v: 1, kind: 'drag-token', ask: at, path: row.textContent }) })
   say({ hello: true })
@@ -89,13 +91,18 @@ async function pluginWorker(app: ElectronApplication, id: string): Promise<Worke
 }
 
 const viewer = (reads: string[]): Capability[] => [{ type: 'ui.view' }, { type: 'luoshu.read', paths: reads }]
-const notes = { 'a.md': 'alpha', 'b.md': 'beta', 'c.md': 'gamma', 'd.md': 'delta', 'e.md': 'epsilon', 'secret.md': 'hidden' }
+const notes = { 'a.md': 'alpha', 'b.md': 'beta', 'c.md': 'gamma', 'd.md': 'delta', 'e.md': 'epsilon', 'secret.md': 'hidden', 'public/p.md': 'open text', 'private/x.md': 'SECRET' }
 
 // kanban and board each draw the rows in a frame and read every note but secret.md. marks reads notes through ui.read
 // alone, so it hears only of the human's opens. tiles lays the frames out in columns beside the note's editor
 async function started() {
   const folder = await temp()
-  for (const [name, text] of Object.entries(notes)) await writeFile(path.join(folder, name), text)
+  for (const [name, text] of Object.entries(notes)) {
+    await mkdir(path.dirname(path.join(folder, name)), { recursive: true })
+    await writeFile(path.join(folder, name), text)
+  }
+  // public/link is a junction to private, which kanban can't read, inside the notes folder
+  await symlink(path.join(folder, 'private'), path.join(folder, 'public', 'link'), 'junction')
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
@@ -105,7 +112,7 @@ async function started() {
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const framed = { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views: { board: { title: 'Board', kind: 'view', frame: 'board' } } }
   const plugins: Record<string, { granted: Capability[], manifest?: object, files?: Record<string, string> }> = {
-    kanban: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md', 'e.md']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
+    kanban: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'public/**']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
     board: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
     marks: { granted: [{ type: 'ui.read', paths: ['**'] }] },
     tiles: { granted: [{ type: 'ui.layout' }] },
@@ -276,8 +283,8 @@ async function droppedText(cdp: CDPSession, to: { x: number, y: number }, text: 
 }
 
 describe('a note dragged out of a frame', () => {
-  it('opens as the human\'s once on the editor by its token, never as text, and nothing for a replay or an unknown token, with no token for a note outside the read', async () => {
-    const { editor, marks, said } = await started()
+  it('opens as the human\'s once on the editor by its token, never as text, and nothing for a replay, an unknown token or a link out of the read, with no token for a note outside it', async () => {
+    const { editor, kanban, marks, said } = await started()
     const tokens = Object.fromEntries((await said()).filter(data => data.token !== undefined).map(data => [data.token, data.is]))
     expect(tokens['secret.md']).toBeNull()
     expect(tokens['b.md']).toMatch(/^[0-9a-f]{32}$/)
@@ -298,5 +305,17 @@ describe('a note dragged out of a frame', () => {
     expect(await notesOpen(editor)).toBe(2)
     expect(await editor.locator('.cm-content', { hasText: 'hetu-drag' }).count()).toBe(0)
     expect(await humanOpened(marks)).toEqual(['a.md', 'b.md'])
+    // A token for a note inside kanban's read opens, one for a link inside it to a note outside opens nothing
+    await tell(kanban, { mint: 'public/link/x.md' })
+    await tell(kanban, { mint: 'public/p.md' })
+    await until(async () => (await said()).filter(data => data.token !== undefined).length === 6)
+    const more = Object.fromEntries((await said()).filter(data => data.token !== undefined).map(data => [data.token, data.is]))
+    expect(more['public/link/x.md']).toMatch(/^[0-9a-f]{32}$/)
+    await droppedText(cdp, onNote, `hetu-drag:${more['public/link/x.md']}`)
+    await droppedText(cdp, onNote, `hetu-drag:${more['public/p.md']}`)
+    await until(async () => (await title(editor)).startsWith('public/p.md'))
+    await tick(700)
+    expect(await notesOpen(editor)).toBe(3)
+    expect(await editor.locator('.cm-content', { hasText: 'SECRET' }).count()).toBe(0)
   })
 })
