@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Caller } from '../../api/envelope.ts'
 import { DRAG_TOKEN_MS, DRAG_TOKENS_PER_PLUGIN } from '../../api/ui-limits.ts'
-import { callerOf, type PluginReach, reachedBy } from './images.ts'
+import { callerOf, type Held, type PluginReach, reachedBy } from './images.ts'
 
 // Tokens for notes dragged out of plugins' frames. The editor page asks one for a note a frame draws and main mints it
 // for that plugin and note when the plugin runs with a ui item and its luoshu.read reaches the note. The frame puts it
@@ -12,8 +12,6 @@ import { callerOf, type PluginReach, reachedBy } from './images.ts'
 // oldest going first
 
 export { DRAG_TOKENS_PER_PLUGIN }
-
-type Held = { plugin: string, incarnation: number, path: string, until: number }
 
 export class DragTokens {
   // In the order minted, which is the order they expire in

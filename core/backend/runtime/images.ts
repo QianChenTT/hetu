@@ -35,7 +35,8 @@ export type ImagesOptions = PluginReach & {
   read(caller: Caller, path: string, reads: (path: string) => boolean): Promise<{ bytes: Uint8Array } | null>
 }
 
-type Held = { plugin: string, incarnation: number, path: string, until: number }
+// A token's plugin, the incarnation it runs as, the note and when the token ends
+export type Held = { plugin: string, incarnation: number, path: string, until: number }
 
 // The worker half is the one a view's tree comes from. The gate judges a plugin by its id
 export const callerOf = (plugin: string, incarnation: number): Caller => ({ kind: 'plugin', id: plugin, half: 'worker', incarnation })
