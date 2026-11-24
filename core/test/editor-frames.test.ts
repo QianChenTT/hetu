@@ -86,6 +86,61 @@ describe('focus going into a frame', () => {
     expect(guard.judge('v2')).toBe('wait')
   })
 
+  it('keeps the hold\'s start as focus moves from one frame on hold to another, so frames taking turns are taken once it ends', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = 45
+    expect(guard.judge('v2')).toBe('wait')
+    now = FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('taken')
+    now = FOCUS_HOLD_MS + 45
+    expect(guard.judge('v1')).toBe('taken')
+  })
+
+  it('holds afresh once focus left every frame or a frame was let in', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = 45
+    guard.left()
+    expect(guard.judge('v2')).toBe('wait')
+    now = FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('wait')
+    guard.allow('v1')
+    expect(guard.judge('v1')).toBe('in')
+    now = 2 * FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('wait')
+    now = 3 * FOCUS_HOLD_MS - 1
+    expect(guard.judge('v2')).toBe('wait')
+    now = 3 * FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('taken')
+  })
+
+  it('keeps a press in another frame for that frame while a frame on hold is judged before focus reaches it', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = 10
+    guard.allow('v3')
+    expect(guard.judge('v1')).toBe('wait')
+    expect(guard.entered('v1')).toBe(false)
+    now = 20
+    expect(guard.judge('v3')).toBe('in')
+  })
+
+  it('judges a frame taking focus again each time it was pulled back, holding it each time', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    for (let round = 0; round < 3; round++) {
+      expect(guard.judge('v1')).toBe('wait')
+      now += FOCUS_HOLD_MS
+      expect(guard.judge('v1')).toBe('taken')
+      guard.left()
+      now += 10
+    }
+  })
+
   it('takes a move at once with no hold when main dropped a key headed for it, which comes after any press main pushed', () => {
     const guard = new FocusGuard(() => 0)
     expect(guard.judge('v1', true)).toBe('taken')
