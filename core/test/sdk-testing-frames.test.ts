@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_DEPTH } from '../api/plain.ts'
 import { API_VERSION } from '../api/manifest.ts'
-import { FRAME_MESSAGES_PER_SECOND, MAX_FRAME_MESSAGE } from '../api/ui-limits.ts'
+import { DRAG_PREFIX, DRAG_TOKEN_MS, FRAME_MESSAGES_PER_SECOND, MAX_FRAME_MESSAGE, OPEN_GRACE_MS } from '../api/ui-limits.ts'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, FakeDrawer } from '../sdk/testing/index.ts'
 
@@ -123,5 +123,69 @@ describe('frame views in the fake drawer', () => {
     expect(frame.post({ after: true })).toBe(false)
     await settled()
     expect(heard).toEqual([])
+  })
+})
+
+describe('opens and drags from a frame in the fake drawer', () => {
+  // kanban reads notes/** and its board frame is mounted. The luoshu holds a note outside that too
+  async function opening() {
+    const drawer = new FakeDrawer()
+    const capabilities = [{ type: 'ui.view' }, { type: 'luoshu.read', paths: ['notes/**'] }]
+    const made = fakeCore({ manifest: { ...manifest, capabilities }, drawer, notes: { 'notes/a.md': 'aye', 'notes/b.md': 'bee', 'secret/c.md': 'see' } })
+    cores.push(made)
+    const plugin = definePlugin({ start() {} })
+    await made.start(plugin)
+    const board = drawer.instances().find(each => each.view === 'board')!.instance
+    return { drawer, made, plugin, frame: drawer.mountFrame(board) }
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens a note as the human\'s only once after the test says the human pressed the frame', async () => {
+    const { drawer, frame } = await opening()
+    expect(frame.open('notes/a.md')).toBeNull()
+    frame.pressed()
+    const opened = frame.open('notes/a.md')
+    expect(opened).not.toBeNull()
+    expect(drawer.isHuman(opened!)).toBe(true)
+    expect(drawer.text(opened!)).toBe('aye')
+    expect(frame.open('notes/b.md')).toBeNull()
+  })
+
+  it(`opens nothing past ${OPEN_GRACE_MS} ms after the press`, async () => {
+    const { frame } = await opening()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    frame.pressed()
+    vi.setSystemTime(Date.now() + OPEN_GRACE_MS + 1)
+    expect(frame.open('notes/a.md')).toBeNull()
+  })
+
+  it('opens a dragged note as the human\'s once on a drop of its token, and nothing for a replay, an unknown token or other text', async () => {
+    const { drawer, frame } = await opening()
+    const token = frame.dragToken('notes/b.md')
+    expect(token).toMatch(/^[0-9a-f]{32}$/)
+    const opened = drawer.drop(`${DRAG_PREFIX}${token}`)
+    expect(opened).not.toBeNull()
+    expect(drawer.isHuman(opened!)).toBe(true)
+    expect(drawer.text(opened!)).toBe('bee')
+    expect(drawer.drop(`${DRAG_PREFIX}${token}`)).toBeNull()
+    expect(drawer.drop(`${DRAG_PREFIX}${'f'.repeat(32)}`)).toBeNull()
+    expect(drawer.drop('notes/b.md')).toBeNull()
+  })
+
+  it('mints no token for a note outside the plugin\'s read, and refuses one past its time or from an earlier run', async () => {
+    const { drawer, made, plugin, frame } = await opening()
+    expect(frame.dragToken('secret/c.md')).toBeNull()
+    const late = frame.dragToken('notes/a.md')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + DRAG_TOKEN_MS + 1)
+    expect(drawer.drop(`${DRAG_PREFIX}${late}`)).toBeNull()
+    vi.useRealTimers()
+    const earlier = frame.dragToken('notes/a.md')
+    await made.stop()
+    await made.start(plugin)
+    expect(drawer.drop(`${DRAG_PREFIX}${earlier}`)).toBeNull()
   })
 })
