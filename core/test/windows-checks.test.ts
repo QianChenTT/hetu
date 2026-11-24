@@ -16,10 +16,11 @@ describe('the execution levels a manifest asks for', () => {
 })
 
 describe.runIf(process.platform === 'win32')('the Windows reads', () => {
+  // PowerShell's start, Add-Type compiling the token reader with csc and the WMI process list run past 20 s on a cold CI runner
   it('reads this process\'s integrity level, High only when this shell is elevated', () => {
     const own = integrityOf(process.execPath).find(found => found.pid === process.pid)
     expect(own?.level).toBe(elevated() ? INTEGRITY.high : INTEGRITY.medium)
-  })
+  }, 60_000)
 
   it('finds no process for an executable that isn\'t running', () => {
     expect(integrityOf('C:\\nowhere\\not-running.exe')).toEqual([])
