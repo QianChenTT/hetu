@@ -23,15 +23,15 @@ export function quotedPath(path: string): string {
 }
 
 // The plugins in the plugin folder, approved, waiting, refused or failed alike
-export function inPluginFolder(list: SecurityList): number {
+export function pluginsInFolder(list: SecurityList): number {
   return list.plugins.filter(plugin => plugin.from === 'folder').length
 }
 
 // The startup flow is due while hetu runs and the plugin folder holds no plugin: every install goes through it and
 // nothing cancels it, so main opens the trusted window on it at start and keeps the window open, and the window opens
 // on its tab. It ends once the human installed a plugin, and comes back at the next start if the folder is empty again
-export function welcomeDue(list: SecurityList): boolean {
-  return list.stopped === null && inPluginFolder(list) === 0
+export function startupDue(list: SecurityList): boolean {
+  return list.stopped === null && pluginsInFolder(list) === 0
 }
 
 // One capability as its type and each scope quoted, a target, a topic and a variable name too, so nothing a plugin or

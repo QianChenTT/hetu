@@ -191,7 +191,7 @@ async function start(): Promise<void> {
         // The startup flow has no way out until a plugin is installed, so the window stays. Quit still ends hetu, which
         // exits once its parts stopped whatever windows are left
         window.on('close', event => {
-          if (pluginsManager?.welcomeDue() === true) event.preventDefault()
+          if (pluginsManager?.startupDue() === true) event.preventDefault()
         })
         return window
       },
@@ -419,7 +419,7 @@ async function start(): Promise<void> {
       editor = show(editorWindow())
       updater.ready()
       // Over the editor, on the startup flow every install goes through
-      if (wired.pluginsManager.welcomeDue()) trusted.show()
+      if (wired.pluginsManager.startupDue()) trusted.show()
     }
   } catch (err) {
     tell(err)

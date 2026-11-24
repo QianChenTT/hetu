@@ -3,7 +3,7 @@
 // button's controls, one line saying where the plugin installed is approved, then what a grant is. Approving itself is
 // no step of the flow. While it is due it has no way out. Once a plugin is installed it ends and stays on its tab
 import type { SecurityList } from '../../api/actions.ts'
-import { inPluginFolder, welcomeDue } from '../../api/trusted.ts'
+import { pluginsInFolder, startupDue } from '../../api/trusted.ts'
 
 // The release the install step fills in, only as a suggestion the human edits or replaces
 export const SUGGESTED_LINK = 'https://github.com/QianChenTT/hetu-plugins'
@@ -24,11 +24,11 @@ export function startupScreen(list: SecurityList, at: number | null): Startup | 
   if (list.stopped !== null) return null
   const steps = stepsOf(list)
   const first = steps.findIndex(step => step.done === null)
-  return { steps, at: at ?? (first === -1 ? 0 : first), suggested: SUGGESTED_LINK, due: welcomeDue(list) }
+  return { steps, at: at ?? (first === -1 ? 0 : first), suggested: SUGGESTED_LINK, due: startupDue(list) }
 }
 
 function stepsOf(list: SecurityList): StartupStep[] {
-  const inFolder = inPluginFolder(list)
+  const inFolder = pluginsInFolder(list)
   return [
       {
         title: 'Pick the notes folder',
