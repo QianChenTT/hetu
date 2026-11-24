@@ -326,11 +326,12 @@ describe('a busy view', () => {
 })
 
 // A frame's rows: arrow keys move between them and Enter or a click opens one, as a file list would. It tells its
-// worker each key it hears and each row opened. Told to, it takes focus on its own, once after a while or each time it
-// loses it
+// worker each key it hears, each row opened and anything composed or put in its text field. Told to, it takes focus on
+// its own, once after a while to a row or its text field or each time it loses it
 const frameScript = `
 var rows = [].slice.call(document.querySelectorAll('button'))
 var current = 0
+var field = document.getElementById('field')
 var port = null
 function say(data) { if (port) port.postMessage(JSON.stringify(data)) }
 rows.forEach(function (row, at) {
@@ -345,12 +346,16 @@ document.addEventListener('keydown', function (event) {
   say({ key: event.key })
 })
 window.addEventListener('focus', function () { say({ focused: true }) })
+;['compositionstart', 'compositionupdate', 'compositionend', 'beforeinput', 'input'].forEach(function (type) {
+  document.addEventListener(type, function (event) { say({ composed: type, text: event.data || null }) }, true)
+})
 window.addEventListener('message', function (event) {
   if (event.source !== parent || !event.ports[0]) return
   port = event.ports[0]
   port.onmessage = function (message) {
     var data = JSON.parse(message.data)
     if (data && typeof data.steal === 'number') setTimeout(function () { rows[0].focus(); say({ stole: true }) }, data.steal)
+    if (data && typeof data.field === 'number') setTimeout(function () { field.focus(); say({ stole: true }) }, data.field)
     if (data && data.sticky === true) window.addEventListener('blur', function () { setTimeout(function () { rows[0].focus(); say({ stole: true }) }, 0) })
     if (data && typeof data.hash === 'string') { location.hash = data.hash; say({ moved: location.href }) }
     if (data && typeof data.push === 'string') {
@@ -361,9 +366,9 @@ window.addEventListener('message', function (event) {
 })
 `
 const row = (name: string) => `<button style="display:block;width:200px;height:30px;margin:0">${name}</button>`
-const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<script src="board.js"></script></body></html>`
+const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<input id="field" style="display:block;width:200px;height:30px;margin:0"><script src="board.js"></script></body></html>`
 
-type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused?: true, moved?: string, refused?: string }
+type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused?: true, moved?: string, refused?: string, composed?: string, text?: string | null }
 type Press = { down: boolean, x: number, y: number }
 
 describe('a view frame', () => {
@@ -548,6 +553,67 @@ describe('a view frame', () => {
     expect(await logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' })).toBe(false)
   })
 
+  // An IME composing passes main's before-input-event only with the key it composes with, Process on Windows, never
+  // with the composition or its commit. Once focus is in the frame of host, main's own handler is handed that key and
+  // the debugger sends the composition and its commit to the frame holding focus once focus left the frame, or after
+  // 5 s. Answers whether main dropped the key and whether focus left the frame
+  const composeThroughMain = (app: ElectronApplication, host: string) => app.evaluate(async ({ webContents }, frameHost) => {
+    const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
+    if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
+    const inFrame = () => {
+      let frame = contents.focusedFrame
+      while (frame?.parent?.parent) frame = frame.parent
+      return frame?.parent !== null && frame?.parent !== undefined && new URL(frame.url).host === frameHost
+    }
+    const waited = async (done: () => boolean) => {
+      const end = Date.now() + 5000
+      while (!done() && Date.now() < end) await new Promise(resolve => setImmediate(resolve))
+      return done()
+    }
+    if (!await waited(inFrame)) return { dropped: false, left: false }
+    let dropped = false
+    for (const type of ['keyDown', 'keyUp'] as const) {
+      let prevented = false
+      const input = { type, key: 'Process', code: '', control: false, meta: false, alt: false, shift: false, isAutoRepeat: false }
+      contents.emit('before-input-event', { preventDefault: () => { prevented = true } }, input)
+      if (type === 'keyDown') dropped = prevented
+      if (!prevented) void contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: type === 'keyDown' ? 'rawKeyDown' : 'keyUp', key: 'Process', code: '', windowsVirtualKeyCode: 229 })
+    }
+    const left = await waited(() => !inFrame())
+    await contents.debugger.sendCommand('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 })
+    await contents.debugger.sendCommand('Input.imeSetComposition', { text: '你', selectionStart: 1, selectionEnd: 1 })
+    await contents.debugger.sendCommand('Input.insertText', { text: '你好' })
+    return { dropped, left }
+  }, host)
+  // Counts main's each word to the page to take focus back from a frame
+  const countPullBacks = (editor: Page) => editor.evaluate(() => {
+    const scope = window as unknown as { pulled: number }
+    scope.pulled = 0
+    window.addEventListener('message', event => {
+      if (event.source === window && (event.data as { hetu?: unknown } | null)?.hetu === 'pull-back') scope.pulled++
+    })
+  })
+
+  // The page hears nothing when focus moves from one frame to another, so only main stands between the frame and an
+  // IME's text until the page looks again
+  it('gets none of an IME composition started by a key main drops when it takes focus from another frame the human pressed in, which commits in the note', async () => {
+    const { app, editor, workers, said } = await framed(['kanban', 'board'])
+    await open(editor, 'a.md')
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said(0)).some(data => data.opened === 'row-1'))
+    await tick(300)
+    await countPullBacks(editor)
+    await tell(workers[1]!, { field: 0 })
+    expect(await composeThroughMain(app, 'board.views')).toEqual({ dropped: true, left: true })
+    await until(async () => (await shown(editor).innerText()) === '你好')
+    await tick(300)
+    expect((await said(1)).some(data => data.stole === true)).toBe(true)
+    expect((await said(1)).filter(data => data.composed !== undefined || data.key !== undefined)).toEqual([])
+    expect(await editor.evaluate('window.pulled')).toBeGreaterThan(0)
+    expect(await focusIsInNote(editor)).toBe(true)
+  })
+
   // Keys Playwright sends never pass the window's before-input-event, so main's own handler is handed the key as the
   // window's input would hand it. Answers whether main kept the key from the page and its frames
   const keyInMain = (app: ElectronApplication, key: string) => app.evaluate(({ webContents }, [pressed, mac]) => {
@@ -607,6 +673,24 @@ describe('a view frame', () => {
     await editor.mouse.click(at.x, at.y)
     await until(async () => (await said()).some(data => data.opened === 'row-1'))
     await tick(300)
+    expect(await keyInMain(app, 'k')).toBe(true)
+    await until(async () => (await heard(workers[0]!)).some(event => event.topic === 'view.command'))
+    expect((await heard(workers[0]!)).filter(event => event.topic === 'view.command')).toEqual([expect.objectContaining({ topic: 'view.command', command: 'down' })])
+  })
+
+  it('hands its plugin a key the plugin bound for its views after it moved within its own page by hash', async () => {
+    const { app, editor, workers, said } = await framed()
+    await run(workers[0]!, `
+      ctx.ui.on('view.command', event => heard.push(event))
+      await ctx.ui.views.bind([{ key: 'Mod-k', command: 'down' }])
+    `)
+    await open(editor, 'a.md')
+    const at = await inRow(editor, 'kanban')
+    await editor.mouse.click(at.x, at.y)
+    await until(async () => (await said()).some(data => data.opened === 'row-1'))
+    await tick(300)
+    await tell(workers[0]!, { hash: 'route-2' })
+    await until(async () => (await said()).some(data => data.moved?.endsWith('#route-2') === true))
     expect(await keyInMain(app, 'k')).toBe(true)
     await until(async () => (await heard(workers[0]!)).some(event => event.topic === 'view.command'))
     expect((await heard(workers[0]!)).filter(event => event.topic === 'view.command')).toEqual([expect.objectContaining({ topic: 'view.command', command: 'down' })])
