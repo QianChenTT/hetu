@@ -52,13 +52,17 @@ describe('the sessions', () => {
 
   it('lets the editor page reach a host of its own for each plugin id\'s views, and no other views host', () => {
     const longest = `p${'a'.repeat(62)}z`
-    for (const url of ['hetu://kanban.views/', 'hetu://my_plugin.views/t/a.html', 'hetu://a-b.views/icon/x.svg', `hetu://${longest}.views/`]) {
+    for (const url of [
+      'hetu://kanban.views/', 'hetu://my--plugin.views/t/a.html', 'hetu://a-b.views/icon/x.svg', `hetu://${longest}.views/`,
+      `hetu://${'ab--'.repeat(21)}c.views/`, 'hetu://xn--board.views/',
+    ]) {
       expect(allowed('editor', url), url).toBe(true)
     }
     for (const url of [
       'hetu://views/x.html', 'hetu://.views/', 'hetu://x.kanban.views/', 'hetu://kanban.views.views/', `hetu://${longest}a.views/`,
       'hetu://-kanban.views/', 'hetu://kanban_.views/', 'hetu://con.views/', 'hetu://kanban.view/', 'hetu://kanbanviews/',
-      'hetu://user@kanban.views/', 'hetu://kanban.views:1/', 'https://kanban.views/',
+      'hetu://user@kanban.views/', 'hetu://kanban.views:1/', 'https://kanban.views/', 'hetu://my_plugin.views/',
+      'hetu://my---plugin.views/', 'hetu://my--.views/', 'hetu://--my.views/', 'hetu://my--_plugin.views/', `hetu://${'ab--'.repeat(21)}cd.views/`,
     ]) {
       expect(allowed('editor', url), url).toBe(false)
     }

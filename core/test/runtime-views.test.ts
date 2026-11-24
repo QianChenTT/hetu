@@ -81,14 +81,23 @@ describe('the views host', () => {
     expect(views.gone(url)).toEqual({ plugin: 'kanban' })
   })
 
-  it('mints and serves on the host of a plugin id with an underscore or of 64 characters', () => {
+  it('mints and serves on the host of a plugin id with an underscore, written --, or of 64 characters', () => {
     const views = made()
-    for (const id of ['my_board', `p${'a'.repeat(62)}z`]) {
-      views.started(id, 1, files, { board: 'dist/board.html' })
-      const url = views.mint(id, 'board')!
-      expect(url.startsWith(`hetu://${id}.views/`), url).toBe(true)
+    for (const [id, label] of [['my_board', 'my--board'], [`p${'a'.repeat(62)}z`, `p${'a'.repeat(62)}z`], [`${'ab_'.repeat(21)}c`, `${'ab--'.repeat(21)}c`]]) {
+      views.started(id!, 1, files, { board: 'dist/board.html' })
+      const url = views.mint(id!, 'board')!
+      expect(url.startsWith(`hetu://${label}.views/`), url).toBe(true)
+      const token = url.split('/')[3]
+      // A CSP host-source takes only letters, digits and dashes, so the frame's own policy names the same host
+      expect(frameCsp(id!, token!)).toContain(`script-src hetu://${label}.views/${token}/;`)
+      if (label !== id) expect(views.serve(url.replace(label!, id!))).toBe(null)
       expect(text(views.serve(url))).toBe('<script src="board.js"></script>')
     }
+    // The id as it is, underscore and all, names no host
+    const url = views.mint('my_board', 'board')!
+    expect(views.serve(url.replace('my--board', 'my_board'))).toBe(null)
+    expect(views.gone(url.replace('my--board', 'my_board'))).toBe(null)
+    expect(views.gone(url)).toEqual({ plugin: 'my_board' })
   })
 
   it('mints nothing for a frame the plugin lacks or a plugin not running', () => {
@@ -145,7 +154,8 @@ describe('the views host', () => {
   it('serves the icons of a plugin whose id has an underscore', () => {
     const views = made()
     views.started('my_board', 1, files, {})
-    expect(views.serve('hetu://my_board.views/icon/dist/icon.svg')?.type).toBe('image/svg+xml')
+    expect(views.serve('hetu://my--board.views/icon/dist/icon.svg')?.type).toBe('image/svg+xml')
+    expect(views.serve('hetu://my_board.views/icon/dist/icon.svg')).toBe(null)
   })
 
   it('refuses a URL off the views host or with a user, a port or a query', () => {
