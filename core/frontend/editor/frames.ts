@@ -1,4 +1,4 @@
-import { frameTicketOf } from '../../api/ids.ts'
+import { ticketUrlOf } from '../../api/ids.ts'
 import { dragTokenOf, type FrameAsks, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { lay } from './layers.ts'
 import type { CoreLink } from './link.ts'
@@ -24,7 +24,7 @@ export const FOCUS_GRACE_MS = 500
 // While a frame holds focus the page hears nothing when another frame takes it, so it looks again this often
 export const FOCUS_WATCH_MS = 50
 // How long a frame that took focus with no press seen is held before it counts as taken, as long as main's push of a
-// press may come after the move it caused
+// press may come after the move it caused. Unrelated to FOCUS_WATCH_MS, the two only happen to be the same
 export const FOCUS_HOLD_MS = 50
 
 // Who put focus in a frame: the human by a press that landed in it or the core by its own move, each counted for one
@@ -35,7 +35,7 @@ export class FocusGuard {
   // The frame let in last, while focus stays in it
   private holder: string | null = null
   // The frame holding focus with no press seen, since when, -Infinity once judged taken
-  private suspect: { instance: string, at: number } | null = null
+  private onHold: { instance: string, at: number } | null = null
 
   constructor(clock: () => number = () => performance.now()) {
     this.clock = clock
@@ -62,18 +62,18 @@ export class FocusGuard {
   }
 
   // Focus is in this frame now, with no press of its own seen yet: in when let in, wait while main's push of the press
-  // that put it there could still be on its way, and taken once that time is over, at once for a frame already judged
-  // taken and with final, as for a key main dropped, which comes after every press main pushed before it. Main drops
-  // the keys headed for the frame meanwhile, so the wait leaks none
-  judged(instance: string, final = false): 'in' | 'wait' | 'taken' {
+  // that put it there could still be on its way and taken once that time is over. Taken at once for a frame already
+  // judged taken and with atOnce, as for a key main dropped, which comes after every press main pushed before it. Main
+  // drops the keys headed for the frame meanwhile, so the wait leaks none
+  judge(instance: string, atOnce = false): 'in' | 'wait' | 'taken' {
     if (this.entered(instance)) {
-      this.suspect = null
+      this.onHold = null
       return 'in'
     }
-    if (this.suspect?.instance !== instance) this.suspect = { instance, at: this.clock() }
-    if (final) this.suspect.at = -Infinity
-    if (this.clock() - this.suspect.at < FOCUS_HOLD_MS) return 'wait'
-    this.suspect.at = -Infinity
+    if (this.onHold?.instance !== instance) this.onHold = { instance, at: this.clock() }
+    if (atOnce) this.onHold.at = -Infinity
+    if (this.clock() - this.onHold.at < FOCUS_HOLD_MS) return 'wait'
+    this.onHold.at = -Infinity
     return 'taken'
   }
 
@@ -91,7 +91,7 @@ export class FocusGuard {
   left(): void {
     this.holder = null
     this.allowed = null
-    this.suspect = null
+    this.onHold = null
   }
 }
 
@@ -138,7 +138,7 @@ export class Frames {
   private checking = false
   private watch: ReturnType<typeof setInterval> | null = null
   // The look at the end of a frame's hold
-  private holdEnd: ReturnType<typeof setTimeout> | null = null
+  private holdTimer: ReturnType<typeof setTimeout> | null = null
   // The frame caught taking focus and not yet out of it, told once
   private caught: string | null = null
   // Told the URL main served the frame from that focus was let into, null once focus is in no frame let in, so main
@@ -241,8 +241,8 @@ export class Frames {
     }, 0)
   }
 
-  // final judges a frame holding focus with no press seen at once, with no hold
-  private check(final = false): void {
+  // atOnce judges a frame holding focus with no press seen at once, with no hold
+  private check(atOnce = false): void {
     const found = this.at(document.activeElement)
     if (found === null) {
       this.guard.left()
@@ -252,7 +252,7 @@ export class Frames {
       return
     }
     const [instance, held] = found
-    const verdict = this.guard.judged(instance, final)
+    const verdict = this.guard.judge(instance, atOnce)
     this.reportLetIn()
     if (verdict === 'in') {
       this.caught = null
@@ -260,7 +260,7 @@ export class Frames {
       return
     }
     if (verdict === 'wait') {
-      this.lookAgain()
+      this.lookAtHoldEnd()
       return
     }
     const again = this.caught === instance
@@ -275,15 +275,15 @@ export class Frames {
 
   // Main dropped a key headed for the frame holding focus, which the page didn't let in. Focus is taken back at once,
   // not once the page sees the move, so a composition that key started follows focus to the note
-  pullBack(): void {
+  keyDropped(): void {
     if (this.at(document.activeElement) !== null) this.check(true)
   }
 
   // Looks once more when a frame's hold ends
-  private lookAgain(): void {
-    if (this.holdEnd !== null) return
-    this.holdEnd = setTimeout(() => {
-      this.holdEnd = null
+  private lookAtHoldEnd(): void {
+    if (this.holdTimer !== null) return
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null
       this.check()
     }, FOCUS_HOLD_MS + 1)
   }
@@ -316,9 +316,9 @@ export class Frames {
   // The instance whose frame main served under the ticket of this URL, which a frame moving within its own page by
   // hash or history keeps, as main matches it
   instanceAt(url: string): string | null {
-    const ticket = frameTicketOf(url)
+    const ticket = ticketUrlOf(url)
     if (ticket === null) return null
-    for (const [instance, held] of this.mounted) if (frameTicketOf(held.url) === ticket) return instance
+    for (const [instance, held] of this.mounted) if (ticketUrlOf(held.url) === ticket) return instance
     return null
   }
 

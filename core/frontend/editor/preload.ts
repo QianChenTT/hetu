@@ -31,8 +31,8 @@ ipcRenderer.on('hetu:press', (_event, press: unknown) => {
   window.postMessage({ hetu: 'press', press }, location.origin)
 })
 // Main's word that it dropped a key headed for a frame the page didn't let focus into, so the page takes focus back
-ipcRenderer.on('hetu:pull-back', () => {
-  window.postMessage({ hetu: 'pull-back' }, location.origin)
+ipcRenderer.on('hetu:key-dropped', () => {
+  window.postMessage({ hetu: 'key-dropped' }, location.origin)
 })
 // The page's word to main of the frame it let focus into, null for none, so main drops keys headed for any other frame.
 // Only the page's own message, never a frame's

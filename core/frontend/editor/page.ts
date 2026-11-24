@@ -690,8 +690,8 @@ function start(bridge: Bridge): void {
       return
     }
     // A key main dropped on its way to a frame focus wasn't let into, so focus leaves that frame now
-    if (data?.hetu === 'pull-back') {
-      theFrames.pullBack()
+    if (data?.hetu === 'key-dropped') {
+      theFrames.keyDropped()
       return
     }
     // A press main saw, a frame's own included, which the page alone never hears
