@@ -121,7 +121,7 @@ async function started(frame: Frame, notes: Record<string, string> = {}, more: M
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
   await writeOpener(dataDir)
-  // TODO: drop once the startup flow has an end a set-up hetu reaches
+  // A plugin installed, so the startup flow has ended and the trusted window stays shut
   await setUp(dataDir)
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': worker })

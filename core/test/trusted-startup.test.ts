@@ -49,12 +49,17 @@ describe('the startup screen', () => {
     expect(one?.steps.map(step => step.done)).toEqual([null, '1 plugin in the plugin folder', null, null])
   })
 
-  // Every install goes through the flow and nothing cancels it, so with no end yet it is due at every start while
-  // hetu runs, whatever was installed or approved
-  it('is due at every start while hetu runs, with plugins installed, approved or a layout plugin of an older hetu', () => {
+  // Every install goes through the flow and nothing cancels it. It ends once the plugin folder holds a plugin, the
+  // human having learned to install one, approved or not. A core part is no plugin installed
+  it('is due while the plugin folder holds no plugin and ends once it holds one, approved, waiting, refused or failed', () => {
     expect(welcomeDue(calm())).toBe(true)
-    expect(welcomeDue(calm({ luoshu: '/notes', plugins: [plugin({ id: 'search' }), found('tags')] }))).toBe(true)
-    expect(welcomeDue(calm({ plugins: [plugin({ id: 'layout', state: 'refused', reason: 'api' })] }))).toBe(true)
+    expect(welcomeDue(calm({ luoshu: '/notes', plugins: [plugin({ id: 'gate', from: 'core', place: 'core', class: null })] }))).toBe(true)
+    expect(welcomeDue(calm({ plugins: [plugin({ id: 'search' })] }))).toBe(false)
+    expect(welcomeDue(calm({ plugins: [found('tags')] }))).toBe(false)
+    expect(welcomeDue(calm({ plugins: [plugin({ id: 'layout', state: 'refused', reason: 'invalid' })] }))).toBe(false)
+    expect(welcomeDue(calm({ plugins: [plugin({ id: 'tags', state: 'failed', reason: 'start-failed' })] }))).toBe(false)
+    expect(screen(calm()).startup?.due).toBe(true)
+    expect(screen(calm({ plugins: [found('tags')] })).startup?.due).toBe(false)
   })
 
   it('is not due and draws nothing while hetu is stopped', () => {
@@ -69,11 +74,19 @@ describe('the startup screen', () => {
     expect(screen(calm({ luoshu: '/notes' }), null, null, 0).startup?.at).toBe(0)
   })
 
-  it('opens on the Get started tab at every start, a tab the human picks drawn instead', () => {
+  it('opens on the Get started tab while it is due, else on Plugins, a tab the human picks drawn instead', () => {
     expect(screen(calm()).tab).toBe('start')
-    expect(screen(calm({ luoshu: '/notes', plugins: [plugin({ id: 'search' })] })).tab).toBe('start')
+    expect(screen(calm({ luoshu: '/notes', plugins: [plugin({ id: 'search' })] })).tab).toBe('plugins')
     expect(screen(calm(), null, 'limits').tab).toBe('limits')
     expect(screen(calm()).tabs[0]).toMatchObject({ id: 'start', label: 'Get started' })
+  })
+
+  // After it ends the guide is still there on its tab, every step drawn as before
+  it('draws the guide on its tab once it ended', () => {
+    const ended = screen(calm({ luoshu: '/notes', plugins: [plugin({ id: 'search' })] }), null, 'start')
+    expect(ended.tab).toBe('start')
+    expect(ended.startup?.due).toBe(false)
+    expect(ended.startup?.steps.map(step => step.title)).toEqual(['Pick the notes folder', 'Install your first plugin', 'Approve it', 'What a grant is'])
   })
 })
 
@@ -112,29 +125,41 @@ describe('the startup screen on the page', () => {
     expect(drawn.at(-1)?.startup?.at).toBe(2)
   })
 
-  // An install refused, failed or never made leaves the steps not done, and Next still goes on to the last step
-  it('reaches its last step with Next whatever the install did', () => {
-    const lists = [
-      calm(), calm({ plugins: [plugin({ id: 'tags', state: 'refused', reason: 'api' })] }),
-      calm({ plugins: [plugin({ id: 'tags', state: 'failed', reason: 'start-failed' })] }),
-    ]
-    for (const list of lists) {
-      const { page, drawn } = started(list)
-      for (let at = 1; at <= 3; at++) {
-        page.guideTo(at)
-        expect(drawn.at(-1)?.startup?.at).toBe(at)
-      }
-      expect(drawn.at(-1)?.startup?.steps.length).toBe(4)
+  // An install refused or failed puts nothing in the plugin folder, so the flow stays due and Next still goes on to the
+  // last step
+  it('stays due after an install refused or failed and reaches its last step with Next', () => {
+    const { page, drawn, sent, hears } = started(calm())
+    page.installer.pick('zip')
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: false, refusal: { code: 'invalid' } })
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm() })
+    expect(drawn.at(-1)?.startup?.due).toBe(true)
+    for (let at = 1; at <= 3; at++) {
+      page.guideTo(at)
+      expect(drawn.at(-1)?.startup?.at).toBe(at)
+      expect(drawn.at(-1)?.tab).toBe('start')
     }
+    expect(drawn.at(-1)?.startup?.steps.length).toBe(4)
   })
 
-  it('leaves for the Plugins tab, and the Get started tab shows it again', () => {
-    const { page, drawn } = started(calm())
+  it('has no way out of the guide while it is due', () => {
+    const { page, drawn, sent } = started(calm())
+    const before = sent.length
+    page.leaveGuide()
     expect(drawn.at(-1)?.tab).toBe('start')
+    expect(sent.length).toBe(before)
+  })
+
+  it('leaves for the Plugins tab once it ended, and the Get started tab shows it again', () => {
+    const { page, drawn, sent, hears } = started(calm())
+    hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
+    hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ plugins: [plugin({ id: 'tags' })] }) })
+    expect(drawn.at(-1)?.tab).toBe('start')
+    expect(drawn.at(-1)?.startup?.due).toBe(false)
     page.leaveGuide()
     expect(drawn.at(-1)?.tab).toBe('plugins')
     page.pickTab('start')
     expect(drawn.at(-1)?.tab).toBe('start')
+    expect(drawn.at(-1)?.startup).not.toBeNull()
   })
 
   it('stays on the guide when a plugin is installed and approved while it shows', () => {
@@ -143,5 +168,12 @@ describe('the startup screen on the page', () => {
     hears({ v: 1, kind: 'event', topic: 'core.security', seq: 2 })
     hears({ v: 1, kind: 'reply', id: sent.at(-1)!.id, ok: true, result: calm({ plugins: [plugin({ id: 'tags' })] }) })
     expect(drawn.at(-1)?.tab).toBe('start')
+  })
+
+  it('opens on Plugins once it ended and shows the guide again from its tab', () => {
+    const { page, drawn } = started(calm({ plugins: [plugin({ id: 'tags' })] }))
+    expect(drawn.at(-1)?.tab).toBe('plugins')
+    page.pickTab('start')
+    expect(drawn.at(-1)?.startup?.steps.length).toBe(4)
   })
 })

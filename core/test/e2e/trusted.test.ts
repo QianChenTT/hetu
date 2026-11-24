@@ -38,8 +38,8 @@ self.onmessage = event => {
 
 type Worker = { code: string, manifest?: object, entry?: Partial<Plugin> }
 
-// An approved plugin holding nothing that never draws. welcome leaves it out
-// TODO: end the startup flow beside it once the flow has an end, so the trusted window opens only when asked
+// An approved plugin holding nothing that never draws, which ends the startup flow, so the trusted window opens only
+// when asked. welcome leaves it out
 const quiet: Worker = { code: lifecycle(), manifest: { capabilities: [] }, entry: { granted: [] } }
 
 async function data(options: { switches?: Partial<Switches>, workers?: Record<string, Worker>, before?: (dataDir: string) => Promise<void>, welcome?: boolean } = {}): Promise<string> {
@@ -541,9 +541,9 @@ describe('a plugin', () => {
 })
 
 // hetu ships no plugin, so the trusted window opens by itself over the editor on the startup flow every install goes
-// through
+// through. With no plugin installed it has no way out and the window stays, and Quit still quits hetu
 describe('the welcome guide', () => {
-  it('opens over the editor at start and goes a step at a time, leaves for Plugins and shows again from its tab', async () => {
+  it('opens over the editor at start, goes a step at a time with no way out, keeps its window open and quits on Quit', async () => {
     const app = await start(await data({ welcome: true }), await install())
     await editorPage(app)
     const page = await trustedPage(app)
@@ -558,11 +558,23 @@ describe('the welcome guide', () => {
     expect(await guide.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
     await guide.getByRole('button', { name: 'Back' }).click()
     await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()) === 'Step 1 of 4: Pick the notes folder')
-    await guide.getByRole('button', { name: 'Go to Plugins' }).click()
-    await until(async () => await guide.count() === 0)
-    expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
-    await page.getByRole('tab', { name: 'Get started', exact: true }).click()
-    await until(async () => await guide.count() === 1)
+    expect(await guide.getByRole('button', { name: 'Go to Plugins' }).count()).toBe(0)
+    for (let step = 2; step <= 4; step++) {
+      await guide.getByRole('button', { name: 'Next' }).click()
+      await until(async () => (await guide.getByRole('heading', { level: 3 }).innerText()).startsWith(`Step ${step} of 4`))
+    }
+    expect(await guide.getByRole('button', { name: 'Next' }).count()).toBe(0)
+    expect(await guide.getByRole('button', { name: 'Done' }).count()).toBe(0)
+    expect(await guide.getByRole('button', { name: 'Go to Plugins' }).count()).toBe(0)
+    // Closing the window does nothing while the flow is due
+    await app.evaluate(({ BrowserWindow }) => {
+      for (const window of BrowserWindow.getAllWindows()) if (window.webContents.getURL() === 'hetu://trusted/') window.close()
+    })
+    await tick(500)
+    expect((await visibleWindows(app)).sort()).toEqual(['hetu://editor/', 'hetu://trusted/'])
+    const done = exited(app)
+    await page.getByRole('button', { name: 'Quit', exact: true }).click()
+    expect(await done).toBe(0)
   })
 
   it('goes to a step by its name and stays on Install after an install, its Confirm still waiting out the delay', async () => {
@@ -603,6 +615,12 @@ describe('the welcome guide', () => {
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'greeter' }))
     await showing(page, '1 plugin in the plugin folder')
     expect(await heading()).toBe('Step 2 of 4: Install your first plugin')
+    // A plugin installed ends the flow: the guide stays where it was, now with a way out, and shows again from its tab
+    await guide.getByRole('button', { name: 'Go to Plugins' }).click()
+    await until(async () => await guide.count() === 0)
+    expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
+    await page.getByRole('tab', { name: 'Get started', exact: true }).click()
+    await until(async () => await guide.count() === 1)
   })
 })
 

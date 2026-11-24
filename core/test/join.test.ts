@@ -843,7 +843,7 @@ describe('the windows\' own actions', () => {
   })
 
   // Main opens the trusted window on its startup flow at start while this holds
-  it('say the startup flow is due at every start, a plugin approved or not', async () => {
+  it('say the startup flow is due until the plugin folder holds a plugin, approved or not', async () => {
     const bare = await joined()
     await bare.pluginsManager.start()
     expect(bare.pluginsManager.welcomeDue()).toBe(true)
@@ -852,7 +852,10 @@ describe('the windows\' own actions', () => {
       entries: { tiles: { granted: [{ type: 'ui.view' }] } },
     })
     await viewed.pluginsManager.start()
-    expect(viewed.pluginsManager.welcomeDue()).toBe(true)
+    expect(viewed.pluginsManager.welcomeDue()).toBe(false)
+    const found = await joined({ folder: { tiles: filesFor(workerManifest('tiles', { capabilities: [{ type: 'ui.view' }] })) } })
+    await found.pluginsManager.start()
+    expect(found.pluginsManager.welcomeDue()).toBe(false)
   })
 
   it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {

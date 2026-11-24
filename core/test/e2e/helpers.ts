@@ -74,8 +74,8 @@ export async function openByHand(editor: Page, name: string): Promise<void> {
   await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
 }
 
-// A set-up hetu: an approved plugin holding nothing that answers the lifecycle and never draws
-// TODO: end the startup flow here once it has an end, so the trusted window opens only when asked
+// A set-up hetu: an approved plugin holding nothing that answers the lifecycle and never draws. A plugin installed ends
+// the startup flow, so the trusted window opens only when asked
 const QUIET = `
 self.onmessage = event => {
   const port = event.ports[0]

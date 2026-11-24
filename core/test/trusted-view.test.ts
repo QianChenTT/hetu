@@ -467,9 +467,9 @@ describe('the trusted page', () => {
     }
   })
 
-  it('draws one tab at a time, Get started first, and keeps the tab picked across answers', () => {
+  it('draws one tab at a time, Plugins first once a plugin is installed, and keeps the tab picked across answers', () => {
     const { page, hears, sent, drawn } = started(calm({ plugins: [plugin({ id: 'search' })] }))
-    expect(drawn.at(-1)?.screen.tab).toBe('start')
+    expect(drawn.at(-1)?.screen.tab).toBe('plugins')
     expect(drawn.at(-1)?.screen.tabs.map(tab => tab.label)).toEqual(['Get started', 'Plugins', 'Switches', 'Notes folder', 'Identities', 'Limits'])
     const before = sent.length
     page.pickTab('limits')
