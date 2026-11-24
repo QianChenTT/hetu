@@ -2,7 +2,9 @@ import { ChangeSet, type ChangeSpec, Text } from '@codemirror/state'
 import type { Capability } from '../../api/capabilities.ts'
 import { type BridgeEvent, linkAt, type Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
+import { plainProblem } from '../../api/plain.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
+import { MAX_FRAME_MESSAGE } from '../../api/ui-limits.ts'
 import { Editor } from '../editor.ts'
 import type { Transport } from '../transport.ts'
 import { holds } from './gate.ts'
@@ -17,7 +19,8 @@ import { holds } from './gate.ts'
 // command goes only when the plugin bound a key to it, with the note, its version and the selection only when it reads
 // the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list and moves its link
 // marks as hetu's drawer does. A link click goes as hetu's drawer sends it, to the plugin while it reads the note and
-// holds ui.decoration
+// holds ui.decoration. A view the manifest draws in a frame takes the worker's posts once the test mounts its frame,
+// which posts to the worker as the frame's script would and keeps what the worker posted
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -27,6 +30,13 @@ type Selection = { anchor: number, head: number }[]
 type Drawn = { from: number, to: number, stamp: number }
 // human: the human opened it, so ui.read reaches it
 type Note = { path: string, text: Text, version: number, drawn: Drawn, human: boolean, selection?: { anchor: number, head: number } }
+
+// A view's frame as a test plays it. post sends data as @hetu/sdk/frame does, false when hetu's drawer would drop it.
+// received is what the worker posted, oldest first, as the frame reads it
+export type FakeFrame = {
+  post(data: unknown): boolean
+  readonly received: readonly unknown[]
+}
 
 class Refusal {
   readonly code: string
@@ -53,6 +63,8 @@ export class FakeDrawer {
   private luoshuText: (path: string) => string | undefined = () => undefined
   private readonly trees = new Map<string, UiNode>()
   private readonly instancesOf = new Map<string, string>()
+  // What the worker posted to each mounted frame
+  private readonly frames = new Map<string, unknown[]>()
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
   private n = 0
@@ -75,6 +87,7 @@ export class FakeDrawer {
     this.editor = new Editor()
     this.trees.clear()
     this.instancesOf.clear()
+    this.frames.clear()
     return this.editor
   }
 
@@ -98,6 +111,25 @@ export class FakeDrawer {
       const instance = `v${++this.n}`
       this.instancesOf.set(instance, view)
       this.emit({ topic: 'view.opened', instance, view })
+    }
+  }
+
+  // The frame drawing an instance of a frame view loaded and holds its port
+  mountFrame(instance: string): FakeFrame {
+    const view = this.instancesOf.get(instance)
+    if (view === undefined || this.views[view]?.frame === undefined) throw new Error(`no frame draws ${instance}`)
+    const received: unknown[] = []
+    this.frames.set(instance, received)
+    return {
+      received,
+      post: data => {
+        // JSON text as the frame's SDK sends it, taken as hetu's drawer takes it
+        const text = JSON.stringify(data) as string | undefined
+        const sent = text === undefined || text.length > MAX_FRAME_MESSAGE ? undefined : JSON.parse(text) as unknown
+        if (sent === undefined || plainProblem(sent, MAX_FRAME_MESSAGE) !== null || this.frames.get(instance) !== received) return false
+        this.emit({ topic: 'view.message', instance, data: sent })
+        return true
+      },
     }
   }
 
@@ -326,12 +358,23 @@ export class FakeDrawer {
         own(call.args.instance)
         this.instancesOf.delete(call.args.instance)
         this.trees.delete(call.args.instance)
+        this.frames.delete(call.args.instance)
         return null
       case 'view.title':
-      case 'view.post':
         need('ui.view')
         own(call.args.instance)
         return null
+      case 'view.post': {
+        need('ui.view')
+        own(call.args.instance)
+        const view = this.views[this.instancesOf.get(call.args.instance) as string]
+        if (view?.frame === undefined) throw new Refusal('not-found')
+        const received = this.frames.get(call.args.instance)
+        if (received === undefined) throw new Refusal('unavailable')
+        // Taken from JSON text already, as the frame reads it. Nothing reaches a frame as nothing
+        if (call.args.data !== undefined) received.push(call.args.data)
+        return null
+      }
       case 'view.bind':
         need('ui.view')
         return null
