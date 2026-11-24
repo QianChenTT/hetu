@@ -114,6 +114,11 @@ export class OpenCredit {
     this.pressed(owner)
   }
 
+  // A frame of owner's went, which a stop or restart of owner makes go: a press before it counts for no later frame
+  forget(owner: string): void {
+    if (this.credit?.owner === owner) this.credit = null
+  }
+
   // An open from owner's frames: true once when it is the human's
   use(owner: string): boolean {
     const credit = this.credit

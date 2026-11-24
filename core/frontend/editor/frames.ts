@@ -286,6 +286,7 @@ export class Frames {
     if (held === undefined) return
     this.mounted.delete(instance)
     this.loads.ended(instance)
+    this.credit.forget(held.owner)
     held.port?.close()
     held.element?.remove()
     if (held.url !== null) void this.link.call('editor.frameGone', { url: held.url, navigated })
