@@ -131,7 +131,16 @@ const switchesFile = z.strictObject({ format, ...switchesFields })
 // lists, so what the human granted, switched off or confirmed holds as it was. The entry's next write drops the old name
 const oldKeys = (item: unknown) => typeof item === 'object' && item !== null && (item as { type?: unknown }).type === 'ui.keys'
 const keysRenamed = (items: unknown) => (Array.isArray(items) ? items.map(item => (oldKeys(item) ? { ...item, type: 'ui.keystream' } : item)) : items)
-const storedCapabilities = z.preprocess(keysRenamed, folderCapabilities)
+// Types that left the fixed list. An entry written while one was in it reads with the item dropped from each of its
+// lists, the rest kept, and is written back without it once. An item of the type with a field it never had stays invalid
+const retiredTypes: readonly string[] = ['ui.layout']
+const retired = (item: unknown) => typeof item === 'object' && item !== null && retiredTypes.includes((item as { type?: unknown }).type as string)
+  && Object.keys(item).length === 1
+const capabilityLists = ['granted', 'off', 'firstUse', 'confirmed'] as const
+const withoutRetired = (items: unknown) => (Array.isArray(items) ? items.filter(item => !retired(item)) : items)
+const holdsRetired = (value: unknown) => typeof value === 'object' && value !== null
+  && capabilityLists.some(list => { const items = (value as Record<string, unknown>)[list]; return Array.isArray(items) && items.some(retired) })
+const storedCapabilities = z.preprocess(items => withoutRetired(keysRenamed(items)), folderCapabilities)
 const pluginFields = {
   ...plugin.shape, granted: storedCapabilities, off: storedCapabilities.optional(), firstUse: storedCapabilities.optional(), confirmed: storedCapabilities.optional(),
 }
@@ -198,13 +207,14 @@ function formatOf(value: unknown): number | null {
   return typeof found === 'number' && Number.isSafeInteger(found) ? found : null
 }
 
-// older says the file was read in format 2
+// older says the file was read in format 2 or holds what this build drops, so it is written back
 type Read<T extends z.ZodType> = { result: FileResult, value?: z.output<T>, older?: true }
 
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing. A later build's file
 // reads as newer. A file in format 2 is read by the older schema where the kind has one. Any other format, 1 included,
 // has no reader here and reads as invalid
-async function readChecked<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType): Promise<Read<T>> {
+// stale says a value that parses still holds what this build drops
+async function readChecked<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType, stale?: (value: unknown) => boolean): Promise<Read<T>> {
   let bytes: Buffer | null
   try {
     bytes = await readIfExists(file)
@@ -228,7 +238,8 @@ async function readChecked<T extends z.ZodType>(file: string, schema: T, older?:
     return read.success ? { result: 'ok', value: read.data as z.output<T>, older: true } : { result: 'invalid' }
   }
   const parsed = schema.safeParse(value)
-  return parsed.success ? { result: 'ok', value: parsed.data } : { result: 'invalid' }
+  if (!parsed.success) return { result: 'invalid' }
+  return stale?.(value) === true ? { result: 'ok', value: parsed.data, older: true } : { result: 'ok', value: parsed.data }
 }
 
 // The format number belongs to the file, not to what runs
@@ -378,8 +389,8 @@ export class StateStore {
     return done
   }
 
-  private async checkFile<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType): Promise<Read<T>> {
-    const read = await readChecked(file, schema, older)
+  private async checkFile<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType, stale?: (value: unknown) => boolean): Promise<Read<T>> {
+    const read = await readChecked(file, schema, older, stale)
     if (read.result === 'newer') this.newer.add(file)
     return read
   }
@@ -421,7 +432,7 @@ export class StateStore {
     const { ids, invalid } = sortEntryNames(names)
     for (const id of invalid) checks.push({ check: 'plugin-entry', id, result: 'invalid' })
     for (const id of ids) {
-      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile, pluginOlder)
+      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile, pluginOlder, holdsRetired)
       checks.push({ check: 'plugin-entry', id, result: read.result })
       if (read.older === true) this.older.push({ check: 'plugin-entry', id })
       // With no valid entry there is no hash to check the code against, so the plugin is left out
