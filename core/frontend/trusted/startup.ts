@@ -15,7 +15,7 @@ export type Startup = { steps: StartupStep[], at: number, suggested: string }
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-// at is the step the human went to, else the first step not done
+// at is the step the human went to or the guide was drawn at, else the first step not done
 export function startupScreen(list: SecurityList, at: number | null): Startup | null {
   if (list.stopped !== null) return null
   const steps = stepsOf(list)
