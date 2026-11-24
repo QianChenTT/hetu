@@ -17,6 +17,8 @@ export type Editors = {
 export type NoteNotice =
   | { kind: 'draft', instance: string, path: string, at: number, changedSince: boolean }
   | { kind: 'stale' | 'outside' | 'locked', instance: string, path: string }
+  // kept says whether the tab's unsaved text is kept as a draft
+  | { kind: 'gone', instance: string, path: string, kept: boolean }
   | { kind: 'refused', instance: string, path: string, code: string, reason?: string }
 
 // edits names the plugins whose edits the text holds, which the save after a Restore names as onBehalf
@@ -39,6 +41,9 @@ export type OpenNote = {
   draft: Draft | null
   // The text of a save on its way, so the change event it makes isn't taken for someone else's
   saving: string | null
+  // The note left its path, moved or removed. The tab keeps its text and never saves to the path again, and the path
+  // opens anew in a tab of its own
+  gone: boolean
 }
 
 export class NoteRefused extends Error {
@@ -131,6 +136,7 @@ export class Notes {
       this.editors.create(instance, read.text, read.path)
       const note: OpenNote = {
         instance, path: read.path, key, version: read.version, dirty: false, changes: 0, edits: new Set(), draft: null, saving: null,
+        gone: false,
       }
       this.opened.set(instance, note)
       this.byPath.set(read.path, instance)
@@ -164,11 +170,15 @@ export class Notes {
     this.opened.get(instance)?.edits.add(plugin)
   }
 
-  async save(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused'> {
+  async save(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused' | 'gone'> {
     const note = this.opened.get(instance)
     if (note === undefined) return 'refused'
     clearTimeout(this.timers.get(instance))
     this.timers.delete(instance)
+    if (note.gone) {
+      this.tell({ kind: 'gone', instance, path: note.path, kept: note.dirty && await this.keep(note) })
+      return 'gone'
+    }
     const text = this.editors.text(instance)
     const changes = note.changes
     const edits = [...note.edits].sort()
@@ -206,7 +216,7 @@ export class Notes {
   // The human takes a locked note over: the window clears the lock on that note alone, whoever holds it, then saves
   // again. No Confirm, the human is the policy. Once per locked answer, so a second click saves nothing on the old
   // version and answers null
-  async takeOver(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused' | null> {
+  async takeOver(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused' | 'gone' | null> {
     const note = this.opened.get(instance)
     if (note === undefined || !this.locked.delete(instance)) return null
     const cleared = await this.link.call('lock.clear', { paths: [note.path] })
@@ -244,7 +254,7 @@ export class Notes {
   // dirty buffer is kept as a draft first, and stays as it is when that fails, so nothing typed is lost
   async reload(instance: string): Promise<void> {
     const note = this.opened.get(instance)
-    if (note === undefined) return
+    if (note === undefined || note.gone) return
     if (!await this.keep(note)) return
     let read: Read
     try {
@@ -260,7 +270,8 @@ export class Notes {
   }
 
   // A save of an open note by anyone. A clean buffer takes the new text, a dirty one keeps the human's and says so. The
-  // window's own save, whose event can come before its reply, changes nothing
+  // window's own save, whose event can come before its reply, changes nothing. A note no longer found at its path left
+  // it, as a move or a remove by hetu does
   async outside(path: string): Promise<void> {
     const instance = this.byPath.get(path)
     const note = instance === undefined ? undefined : this.opened.get(instance)
@@ -268,13 +279,23 @@ export class Notes {
     let read: Read
     try {
       read = await this.read(path)
-    } catch {
+    } catch (err) {
+      if ((err as NoteRefused).code === 'not-found' && this.byPath.get(path) === note.instance) await this.left(note)
       return
     }
     if (read.version === note.version || read.text === note.saving) return
     if (note.dirty || note.saving !== null) return this.tell({ kind: 'outside', instance: note.instance, path })
     note.version = read.version
     this.editors.replace(note.instance, read.text, true)
+  }
+
+  // The note left its path: the path is no longer its own, a dirty text is kept as a draft at once and the human told
+  private async left(note: OpenNote): Promise<void> {
+    note.gone = true
+    this.byPath.delete(note.path)
+    clearTimeout(this.timers.get(note.instance))
+    this.timers.delete(note.instance)
+    this.tell({ kind: 'gone', instance: note.instance, path: note.path, kept: note.dirty && await this.keep(note) })
   }
 
   private async read(path: string): Promise<Read> {
