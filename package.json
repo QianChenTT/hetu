@@ -22,7 +22,8 @@
     "package:driven": "node core/build/package.ts driven",
     "test:packaged": "npm run package:dir && npm run test:packaged -w hetu-core",
     "test:e2e:packaged": "npm run build:main && node scripts/e2e-packaged.ts",
-    "measure:bridge": "node scripts/measure-bridge.ts"
+    "measure:bridge": "node scripts/measure-bridge.ts",
+    "sign-release": "node scripts/sign-release.ts"
   },
   "devDependencies": {
     "@electron/fuses": "2.1.3",
