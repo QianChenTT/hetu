@@ -30,6 +30,14 @@ ipcRenderer.on('hetu:focus-frame', (_event, asked: { url?: unknown }) => {
 ipcRenderer.on('hetu:press', (_event, press: unknown) => {
   window.postMessage({ hetu: 'press', press }, location.origin)
 })
+// The page's word to main of the frame it let focus into, null for none, so main drops keys headed for any other frame.
+// Only the page's own message, never a frame's
+window.addEventListener('message', event => {
+  if (event.source !== window || event.origin !== location.origin) return
+  const data = event.data as { hetu?: unknown, url?: unknown } | null
+  if (data?.hetu !== 'focus-let-in') return
+  ipcRenderer.send('hetu:focus-let-in', { url: typeof data.url === 'string' ? data.url : null })
+})
 ipcRenderer.on('hetu:drawer-end', (_event, named: { plugin?: unknown, incarnation?: unknown }) => {
   window.postMessage({ hetu: 'drawer-end', plugin: named.plugin, incarnation: named.incarnation }, location.origin)
 })

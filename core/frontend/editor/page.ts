@@ -709,6 +709,8 @@ function start(bridge: Bridge): void {
     views.focus()
     if (!again) void link.call('editor.focusTaken', { url })
   }
+  // Main told the frame focus is let into, through the preload, so it drops keys headed for any other frame
+  theFrames.onLetIn = url => window.postMessage({ hetu: 'focus-let-in', url }, location.origin)
   theFrames.onOpen = (owner, path, human, dropped) => void (human ? openNote(path, owner, dropped ? ui.resolvedReads(owner) : undefined, !dropped) : theDrawer.frameOpen(owner, path).catch(() => { /* refused: nothing opens, as for editor.open */ }))
   window.addEventListener('blur', () => theFrames.focusMoved())
   document.addEventListener('focusin', () => theFrames.focusMoved())

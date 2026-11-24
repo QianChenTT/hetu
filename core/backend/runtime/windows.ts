@@ -144,3 +144,36 @@ export function frameKeyOfInput(input: EditorInput, focused: string | null): str
   return at.protocol === `${SCHEME}:` && frameOwner(at.hostname) !== null ? focused : null
 }
 
+// A frame as main reads it from the focused frame up, Electron's WebFrameMain
+type FrameChain = { readonly url: string, readonly parent: FrameChain | null }
+
+// The URL of the editor page's own frame that focus is in or inside of, null with focus in the page itself or nowhere
+export function pageFrameOf(focused: FrameChain | null): string | null {
+  if (focused === null || focused.parent === null) return null
+  let frame = focused
+  while (frame.parent !== null && frame.parent.parent !== null) frame = frame.parent
+  return frame.url
+}
+
+export type EditorSent = Exclude<EditorKey, { channel: null }> | { channel: 'hetu:press', sent: { key: true, url: string } }
+
+// What main does with a key of the editor window's input: prevented keeps it from the page and every frame, sent goes
+// to the page. focus.focused is the URL of the frame holding focus and focus.frame the page's own frame it is in or
+// inside of, null with focus in the page. letIn is the frame the page let focus into, by a press in it or the core's
+// own move. A key headed for any other of the page's frames stops here, so a frame that took focus itself hears none
+// of it even before the page pulls focus back, and only a core key still goes on to the page
+export function editorInputOf(
+  input: EditorInput,
+  focus: { focused: string | null, frame: string | null },
+  letIn: string | null,
+  bound: ReadonlyMap<string, ReadonlySet<string>>,
+  mac: boolean,
+): { prevented: boolean, sent: EditorSent | null } {
+  const took = editorKeyOfInput(input, focus.focused, bound, mac)
+  if (took !== null && took.channel !== 'hetu:view-key') return { prevented: true, sent: took.channel === null ? null : took }
+  if (focus.frame !== null && focus.frame !== letIn) return { prevented: true, sent: null }
+  if (took !== null) return { prevented: true, sent: took }
+  const url = frameKeyOfInput(input, focus.focused)
+  return { prevented: false, sent: url === null ? null : { channel: 'hetu:press', sent: { key: true, url } } }
+}
+
