@@ -708,7 +708,7 @@ function start(bridge: Bridge): void {
     views.focus()
     if (!again) void link.call('editor.focusTaken', { url })
   }
-  theFrames.onOpen = (owner, path, human) => void (human ? openNote(path, owner) : ui.pluginOpen(owner, path).catch(() => { /* refused: nothing opens, as for editor.open */ }))
+  theFrames.onOpen = (owner, path, human) => void (human ? openNote(path, owner) : theDrawer.frameOpen(owner, path).catch(() => { /* refused: nothing opens, as for editor.open */ }))
   window.addEventListener('blur', () => theFrames.focusMoved())
   document.addEventListener('focusin', () => theFrames.focusMoved())
 

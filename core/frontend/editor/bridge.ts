@@ -187,6 +187,16 @@ export class Drawer {
     for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
   }
 
+  // A note a frame of the plugin's opens with no press of the human's behind it, held to the item and the live port its
+  // worker's editor.open is held to, then opened as that one is
+  async frameOpen(plugin: string, path: string): Promise<void> {
+    const conn = this.connections.get(plugin)
+    if (conn === undefined) throw new Refusal('stopped')
+    if (!(await this.reachOf(plugin)).verbs.includes(uiNeeds['editor.open'])) throw new Refusal('not-granted')
+    if (!this.live(conn)) throw new Refusal('stopped')
+    await this.ui.pluginOpen(plugin, path)
+  }
+
   closed(instance: string): void {
     this.human.delete(instance)
     this.viewports.delete(instance)
