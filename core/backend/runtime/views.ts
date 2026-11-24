@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto'
-import { pluginId } from '../../api/ids.ts'
+import { viewsHost, viewsOwner } from '../../api/ids.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import { IMAGE_CSP, type Served } from './lib.ts'
 
-// The views hosts: each running plugin's frames and icons on a host of its own, hetu://<id>.views, so Chromium gives
-// each plugin's frames a renderer of their own. Served from the bytes the plugins manager checked when it started the
-// plugin's worker, never read from disk again. A frame loads once from a single-use hetu://<id>.views/<token>/<entry>:
+// The views hosts: each running plugin's frames and icons on a host of its own, hetu://<id>.views with each _ in the
+// id written -- (viewsHost in api/ids.ts), so Chromium gives each plugin's frames a renderer of their own. Served from
+// the bytes the plugins manager checked when it started the plugin's worker, never read from disk again. A frame loads once from a single-use hetu://<id>.views/<token>/<entry>:
 // the entry page is served once, the plugin's other files under the token for as long as the frame lives, and no other
 // page, so a frame that navigates finds nothing. A token is served only on its own plugin's host.
 // Icons come from hetu://<id>.views/icon/<file>, svg or png only, so a plugin's host shows no other plugin's icons.
@@ -24,21 +24,11 @@ const TYPES: Readonly<Record<string, string>> = Object.freeze({
 // with a dot, so none is . or .., and nothing escaped gets through
 const PATH = /^(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*\.(html|css|js|svg|png|woff2)$/
 const TOKEN = /^[0-9a-f]{32}$/
-const VIEWS = '.views'
-
-// The plugin whose views a host serves: the host is exactly <id>.views for a plugin id, else null. The editor page's
-// CSP names hetu://*.views, which Chromium matches at any depth, x.kanban.views among them, so this check is the one
-// that holds a host to a single plugin
-export function viewsOwner(hostname: string): string | null {
-  if (!hostname.endsWith(VIEWS)) return null
-  const id = hostname.slice(0, -VIEWS.length)
-  return pluginId.safeParse(id).success ? id : null
-}
 
 // The proposal's frame policy: everything only from the token's own path on the plugin's host, no network, frames,
 // forms or base, and embedded only by the editor page
 export function frameCsp(plugin: string, token: string): string {
-  const own = `hetu://${plugin}${VIEWS}/${token}/`
+  const own = `hetu://${viewsHost(plugin)}/${token}/`
   return [
     "default-src 'none'", `script-src ${own}`, `style-src ${own}`, `img-src ${own}`, `font-src ${own}`, "connect-src 'none'",
     "frame-src 'none'", "worker-src 'none'", "form-action 'none'", "base-uri 'none'", 'frame-ancestors hetu://editor',
@@ -81,7 +71,7 @@ export class ViewFiles {
     while (this.tokens.has(token)) token = this.token()
     if (!TOKEN.test(token)) return null
     this.tokens.set(token, { plugin, incarnation: held.incarnation, entry, served: false })
-    return `hetu://${plugin}${VIEWS}/${token}/${entry}`
+    return `hetu://${viewsHost(plugin)}/${token}/${entry}`
   }
 
   // The frame at url is gone: its token ends. Answers whose it was, null for a token already gone

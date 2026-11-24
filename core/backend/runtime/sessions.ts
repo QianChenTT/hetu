@@ -5,7 +5,7 @@ import type { Session } from 'electron'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { SCHEME } from './before-ready.ts'
 import type { ServedHost } from './lib.ts'
-import { viewsOwner } from './views.ts'
+import { viewsOwner } from '../../api/ids.ts'
 
 // Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts. The
 // editor role also owns <id>.views for each plugin id, a host of its own for each plugin's views

@@ -6,7 +6,7 @@ import {
 import { label, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
-import { coreNamespaces, ID_PATTERN, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, viewsOwner } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { actionPathProblem } from './paths.ts'
@@ -114,7 +114,8 @@ const frameName = localName.refine(name => name !== 'worker' && name !== 'host' 
 // A frame's single-use URL as main minted it: its plugin's views host, a token of 32 hex digits, then a path in the
 // plugin
 export const FRAME_TOKEN = /^[0-9a-f]{32}$/
-const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(new RegExp(`^hetu://${ID_PATTERN}\\.views/[0-9a-f]{32}/[a-z0-9/._-]*$`))
+const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/([a-z0-9-]+\.views)\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
+  .refine(url => viewsOwner(url.slice('hetu://'.length, url.indexOf('/', 'hetu://'.length))) !== null, 'no plugin\'s views host')
 
 // The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub
 // link whose release main lists the zip assets of. The core copies the source into a staging folder of its own and

@@ -6,8 +6,7 @@ export const MAX_NAME_LENGTH = 64
 // <namespace>.<name> at the longest
 export const MAX_QUALIFIED_LENGTH = MAX_ID_LENGTH + 1 + MAX_NAME_LENGTH
 
-// A plugin id's grammar as regular expression source, for a pattern that holds one among other parts
-export const ID_PATTERN = '[a-z0-9]+(?:[_-][a-z0-9]+)*'
+const id = '[a-z0-9]+(?:[_-][a-z0-9]+)*'
 const name = '[a-z][a-zA-Z0-9]*'
 
 // Becomes a folder name under plugins/ and the first part of every action and topic the plugin owns, so no separators
@@ -16,9 +15,25 @@ const name = '[a-z][a-zA-Z0-9]*'
 // keyed by plugin id would refuse a plugin with one of them. Every other member of Object fails the grammar already
 export const pluginId = z.string()
   .max(MAX_ID_LENGTH, { abort: true })
-  .regex(new RegExp(`^${ID_PATTERN}$`))
+  .regex(new RegExp(`^${id}$`))
   .refine(value => !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(value), 'a Windows device name')
   .refine(value => !isBadKey(value), 'a key plain data refuses')
+
+const VIEWS = '.views'
+
+// A plugin's views host, where its frames and icons load from: <id>.views with each _ written --, since a CSP
+// host-source takes only letters, digits and dashes and drops a source holding an underscore. No id holds --, so a host
+// names one id at most
+export const viewsHost = (plugin: string): string => `${plugin.replaceAll('_', '--')}${VIEWS}`
+
+// The plugin whose views a host serves, else null: the host must be exactly what viewsHost makes of a plugin id, so
+// my_board.views and my---board.views name nobody. The editor page's CSP names hetu://*.views, which Chromium matches
+// at any depth, x.kanban.views among them, so this check is the one that holds a host to a single plugin
+export function viewsOwner(hostname: string): string | null {
+  if (!hostname.endsWith(VIEWS)) return null
+  const plugin = hostname.slice(0, -VIEWS.length).replaceAll('--', '_')
+  return pluginId.safeParse(plugin).success && viewsHost(plugin) === hostname ? plugin : null
+}
 
 // The name a plugin gives one of the plugin's own actions, topics or frames
 export const localName = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(new RegExp(`^${name}$`))
@@ -27,7 +42,7 @@ export const localName = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(
 // the id and the name are each capped
 export const qualifiedName = z.string()
   .max(MAX_QUALIFIED_LENGTH, { abort: true })
-  .regex(new RegExp(`^${ID_PATTERN}\\.${name}$`))
+  .regex(new RegExp(`^${id}\\.${name}$`))
   .refine(value => {
     const dot = value.indexOf('.')
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
