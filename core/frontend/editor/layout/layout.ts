@@ -78,6 +78,11 @@ export function startLayout(options: LayoutOptions): Layout {
 
   const save = () => options.save(arrangement)
   const viewOf = (instance: string): LayoutView | undefined => state?.views.find(view => view.instance === instance)
+  // The key of a view the layout was told of, once the arrangement loaded
+  const loadedKey = (instance: string): string | null => {
+    const view = viewOf(instance)
+    return !loaded || view === undefined ? null : keyOf(view)
+  }
   const shown = (key: string) => {
     arrangement.recent[key] = ++counter
   }
@@ -186,9 +191,8 @@ export function startLayout(options: LayoutOptions): Layout {
     },
 
     open(instance) {
-      const view = viewOf(instance)
-      if (!loaded || view === undefined) return
-      const key = keyOf(view)
+      const key = loadedKey(instance)
+      if (key === null) return
       arrangement.hidden = arrangement.hidden.filter(each => each !== key)
       arrangement = place(arrangement, state?.views ?? [])
       const column = arrangement.places[key]?.column
@@ -203,9 +207,8 @@ export function startLayout(options: LayoutOptions): Layout {
     },
 
     close(instance) {
-      const view = viewOf(instance)
-      if (!loaded || view === undefined) return
-      const key = keyOf(view)
+      const key = loadedKey(instance)
+      if (key === null) return
       if (!arrangement.hidden.includes(key)) arrangement.hidden = [...arrangement.hidden, key]
       save()
       draw()
