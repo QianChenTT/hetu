@@ -380,7 +380,43 @@ body {
   pointer-events: none;
 }
 
+/* Every zone a dragged view can land on, outlined and named by the zone the layout gave it, while the drag lasts */
+#drop-zones {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483642;
+  pointer-events: none;
+}
+
+.drop-zone {
+  position: fixed;
+  box-sizing: border-box;
+  border: 2px dashed #1a5fb4;
+}
+
+.drop-zone span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  padding: 0 4px;
+  background: #1a5fb4;
+  color: #ffffff;
+  font: 11px system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.drop-zone.short span {
+  top: auto;
+  bottom: calc(100% + 2px);
+}
+
+.drop-zone.at-right span {
+  left: auto;
+  right: calc(100% + 2px);
+}
+
 #drag-ghost[hidden],
+#drop-zones[hidden],
 #drop-mark[hidden] {
   display: none;
 }
