@@ -489,6 +489,43 @@ describe('the welcome guide', () => {
     await page.getByRole('tab', { name: 'Get started', exact: true }).click()
     await until(async () => await guide.count() === 1)
   })
+
+  it('goes to a step by its name and stays on Install after an install, its Confirm still waiting out the delay', async () => {
+    const dataDir = await data({ welcome: true })
+    const zip = path.join(await temp(), 'greeter.zip')
+    const files = filesFor(workerManifest('greeter', { name: 'Greeter', capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }] }), { 'worker.js': lifecycle() })
+    await writeFile(zip, makeZip(Object.entries(files).map(([name, text]) => ({ name, data: text }))))
+    const app = await start(dataDir, await install())
+    await app.evaluate(({ dialog }, picked) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [picked] })) as typeof dialog.showOpenDialog
+    }, zip)
+    await editorPage(app)
+    const page = await trustedPage(app)
+    const guide = page.getByRole('region', { name: 'Get started with hetu' })
+    const heading = () => guide.getByRole('heading', { level: 3 }).innerText()
+    const steps = guide.getByRole('list', { name: 'Steps' })
+    await until(async () => await guide.count() === 1)
+    await tick(PAST_DELAY)
+    await steps.getByRole('button', { name: 'Install the plugins you want' }).click()
+    await until(async () => (await heading()) === 'Step 2 of 4: Install the plugins you want')
+    expect(await steps.getByRole('button', { name: 'Install the plugins you want' }).getAttribute('aria-current')).toBe('step')
+    await guide.getByRole('button', { name: 'Install from a zip' }).click()
+    await showing(page, '"Greeter" (greeter), version 1.0.0')
+    await tick(PAST_DELAY)
+    await page.locator('section.installing').getByRole('button', { name: 'Install', exact: true }).click()
+    await showing(page, 'greeter: Class 1, Reader')
+    const confirm = page.getByRole('button', { name: 'Confirm' })
+    // A step picked while the Confirm is new arms nothing early
+    await steps.getByRole('button', { name: 'Approve them' }).click()
+    await until(async () => (await heading()) === 'Step 3 of 4: Approve them')
+    expect(await confirm.isDisabled()).toBe(true)
+    await steps.getByRole('button', { name: 'Install the plugins you want' }).click()
+    await tick(PAST_DELAY)
+    await confirm.click()
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'greeter' }))
+    await showing(page, '1 plugin in the plugin folder')
+    expect(await heading()).toBe('Step 2 of 4: Install the plugins you want')
+  })
 })
 
 // The Install button wired to main: main's own dialog picks the zip, main stages it, the page names it by its handle

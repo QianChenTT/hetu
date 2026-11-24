@@ -508,6 +508,102 @@ describe('the fake drawer', () => {
     expect(drawer.opened).toEqual([])
   })
 
+  // As hetu's drawer does: a plugin's editor.open opens the note in the background, never as the human's, so a plugin
+  // that reads notes through ui.read alone never hears of it. The human's open comes from a node carrying the note
+  it("opens a note a plugin opened in the background, never as the human's", async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer, notes: { 'notes/b.md': 'bee' } })
+    cores.push(made)
+    const heard: unknown[] = []
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) {
+      given = ctx
+      ctx.editor.on('opened', event => heard.push(event))
+    } }))
+    const ctx = given as unknown as PluginContext
+    await ctx.editor.open('notes/b.md')
+    await ctx.editor.open('notes/b.md')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const [open] = await ctx.editor.instances()
+    expect(open).toMatchObject({ path: 'notes/b.md', version: 0 })
+    expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: open!.instance }])
+    expect(drawer.isHuman(open!.instance)).toBe(false)
+    expect(drawer.text(open!.instance)).toBe('bee')
+  })
+
+  it('keeps a note another plugin opened from a plugin that reads only through ui.read', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn({ capabilities: [{ type: 'ui.read', paths: ['**'] }] }), drawer })
+    cores.push(made)
+    const heard: unknown[] = []
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) {
+      given = ctx
+      ctx.editor.on('opened', event => heard.push(event))
+    } }))
+    const ctx = given as unknown as PluginContext
+    const background = drawer.openNote('notes/a.md', 'a', undefined, 'plugin')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(heard).toEqual([])
+    expect(await ctx.editor.instances()).toEqual([])
+    await expect(ctx.editor.read(background)).rejects.toMatchObject({ code: 'not-granted' })
+    const human = drawer.openNote('notes/c.md', 'c')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: human }])
+  })
+
+  it("opens the note a pressed node carries as the human's when the plugin reads or lists it, and none else", async () => {
+    const drawer = new FakeDrawer()
+    const capabilities = [{ type: 'ui.view' }, { type: 'luoshu.list', paths: ['notes/**'] }, { type: 'ui.read', paths: ['**'] }]
+    const made = fakeCore({ manifest: drawn({ capabilities }), drawer, notes: { 'notes/a.md': 'aye', 'secret/b.md': 'bee' } })
+    cores.push(made)
+    const heard: unknown[] = []
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) {
+      given = ctx
+      ctx.editor.on('opened', event => heard.push(event))
+    } }))
+    const ctx = given as unknown as PluginContext
+    await ctx.ui.views.draw('v1', {
+      kind: 'box', id: 'root', children: [
+        { kind: 'button', id: 'a', text: 'a', drag: { type: 'note', value: 'notes/a.md' } },
+        { kind: 'button', id: 'b', text: 'b', drag: { type: 'note', value: 'secret/b.md' } },
+        { kind: 'button', id: 'plain', text: 'plain' },
+      ],
+    })
+    const opened = drawer.press('v1', 'a')
+    expect(opened).not.toBe(null)
+    expect(drawer.isHuman(opened!)).toBe(true)
+    expect(drawer.text(opened!)).toBe('aye')
+    // A note the plugin can't reach opens all the same, and not as the human's
+    const unreached = drawer.press('v1', 'b')
+    expect(drawer.isHuman(unreached!)).toBe(false)
+    expect(drawer.press('v1', 'plain')).toBe(null)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: opened }])
+    expect(await ctx.editor.read(opened!)).toMatchObject({ text: 'aye' })
+    await expect(ctx.editor.read(unreached!)).rejects.toMatchObject({ code: 'not-granted' })
+  })
+
+  it('tells a plugin of a note once when the human presses a note it opened itself', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer, notes: { 'notes/a.md': 'aye' } })
+    cores.push(made)
+    const heard: unknown[] = []
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) {
+      given = ctx
+      ctx.editor.on('opened', event => heard.push(event))
+    } }))
+    const ctx = given as unknown as PluginContext
+    await ctx.ui.views.draw('v1', { kind: 'button', id: 'a', text: 'a', drag: { type: 'note', value: 'notes/a.md' } })
+    await ctx.editor.open('notes/a.md')
+    const opened = drawer.press('v1', 'a')
+    expect(drawer.isHuman(opened!)).toBe(true)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(heard).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: opened }])
+  })
+
   it('hands events from the test to the plugin\'s handlers', async () => {
     const drawer = new FakeDrawer()
     const made = fakeCore({ manifest: drawn(), drawer })

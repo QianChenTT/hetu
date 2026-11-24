@@ -545,7 +545,7 @@ export class FakeCore {
     const ready = this.pluginsManager.waitFor(caller, 'ready', this.readyMs)
     const transport = utility ? portTransportOf(this.router, caller, this.ports) : transportOf(this.router, caller)
     run(plugin, transport, this.drawer === null ? {} : { editor: this.drawer.fresh() })
-    this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
+    this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {}, path => this.memory.notes.get(path))
     this.router.send(caller, {
       v: VERSION, kind: 'init', id: this.manifest.id, incarnation, api: API_VERSION, deps: this.deps(), lastStop: this.lastStop, previousVersion: null,
     })

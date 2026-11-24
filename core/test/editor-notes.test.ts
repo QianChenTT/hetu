@@ -76,6 +76,8 @@ function started(files: Record<string, string> = { 'a.md': 'note a' }, links: Re
 }
 
 const keyOf = (path: string) => `draft${createHash('sha256').update(path).digest('hex').slice(0, 56)}`
+// Where the draft of a note that left its path is kept
+const goneKeyOf = (path: string) => `draft${createHash('sha256').update(`${path}\u0000gone`).digest('hex').slice(0, 56)}`
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
@@ -525,3 +527,163 @@ describe('a save from outside', () => {
   })
 })
 
+
+// hetu moves a note as two changes, the end it left first, and removes one as a change on its path. Each answers
+// not-found to a read after
+describe('a note moved or removed by hetu', () => {
+  it('marks a clean note gone and saves nothing for it', async () => {
+    const { notes, files, core, told } = started()
+    const instance = await notes.open('a.md')
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told).toEqual([{ kind: 'gone', instance, path: 'a.md', kept: false }])
+    expect(notes.opened.get(instance)?.gone).toBe(true)
+    expect(await notes.save(instance)).toBe('gone')
+    expect(core.calls('luoshu.write')).toEqual([])
+  })
+
+  it('keeps the text of a dirty note as a draft at once and keeps it through a save', async () => {
+    const { notes, files, core, told, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine, unsaved')
+    notes.changed(instance)
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(space.get(goneKeyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'mine, unsaved', at: 1000, edits: [] })
+    expect(told).toEqual([{ kind: 'gone', instance, path: 'a.md', kept: true }])
+    views.type(instance, 'mine, typed after')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('gone')
+    expect(core.calls('luoshu.write')).toEqual([])
+    expect(space.get(goneKeyOf('a.md'))).toMatchObject({ text: 'mine, typed after' })
+    expect(views.texts.get(instance)).toBe('mine, typed after')
+  })
+
+  it('never writes the old path again, not when a note with the same bytes comes back to it', async () => {
+    const { notes, files, core, views } = started()
+    const instance = await notes.open('a.md')
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md')
+    await flush()
+    files.set('a.md', { text: 'note a', version: 'v-note a' })
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    views.type(instance, 'typed in the gone tab')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('gone')
+    await notes.reload(instance)
+    expect(views.replaced).toEqual([])
+    expect(core.calls('luoshu.write')).toEqual([])
+    // Opening the path again reads the note there into a tab of its own
+    const again = await notes.open('a.md')
+    expect(again).not.toBe(instance)
+    expect(views.texts.get(again)).toBe('note a')
+  })
+
+  it('takes a refusal other than not-found as no word on where the note is', async () => {
+    const { notes, core, told } = started()
+    const instance = await notes.open('a.md')
+    core.answers['luoshu.read'] = () => ({ ok: false, refusal: { code: 'failed' } })
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told).toEqual([])
+    expect(notes.opened.get(instance)?.gone).toBe(false)
+  })
+})
+
+describe('the draft of a note hetu moved or removed', () => {
+  it('is kept under a key of its own, which a note opened anew at the path never writes or deletes', async () => {
+    const { notes, files, core, space, views, clock } = started()
+    const gone = await notes.open('a.md')
+    views.type(gone, 'typed before it went')
+    notes.changed(gone)
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(space.get(goneKeyOf('a.md'))).toMatchObject({ path: 'a.md', text: 'typed before it went' })
+    expect(space.has(keyOf('a.md'))).toBe(false)
+    files.set('a.md', { text: 'made again', version: 'v-made again' })
+    const again = await notes.open('a.md')
+    views.type(again, 'made again, saved')
+    notes.changed(again)
+    expect(await notes.save(again)).toBe('saved')
+    clock.at = 2000
+    views.type(gone, 'typed after it went')
+    notes.changed(gone)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(space.get(goneKeyOf('a.md'))).toMatchObject({ text: 'typed after it went', at: 2000 })
+    expect(space.has(keyOf('a.md'))).toBe(false)
+  })
+
+  it('is offered when the path opens again with no draft of its own, and goes once restored and saved', async () => {
+    const { notes, files, core, space, views, told } = started()
+    const gone = await notes.open('a.md')
+    views.type(gone, 'typed before it went')
+    notes.changed(gone)
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    files.set('a.md', { text: 'made again', version: 'v-made again' })
+    const again = await notes.open('a.md')
+    expect(told).toContainEqual({ kind: 'draft', instance: again, path: 'a.md', at: 1000, changedSince: true })
+    notes.restore(again)
+    expect(views.texts.get(again)).toBe('typed before it went')
+    expect(await notes.save(again)).toBe('saved')
+    expect(space.has(goneKeyOf('a.md'))).toBe(false)
+  })
+
+  it('stays when a save on its way lands after the note went, and the save answers gone', async () => {
+    const { notes, files, core, space, views } = started()
+    let release = () => {}
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const write = core.answers['luoshu.write']
+    core.answers['luoshu.write'] = async (args, sent) => {
+      const written = await write(args, sent)
+      await gate
+      return written
+    }
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    const saving = notes.save(instance)
+    await flush()
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    release()
+    expect(await saving).toBe('gone')
+    expect(space.get(goneKeyOf('a.md'))).toMatchObject({ text: 'mine' })
+  })
+
+  it('takes no note over once it went', async () => {
+    const { notes, files, core, locked, views } = started()
+    const instance = await notes.open('a.md')
+    locked.add('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('locked')
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(await notes.takeOver(instance)).toBe(null)
+    expect(core.calls('lock.clear')).toEqual([])
+  })
+
+  it('says the text could not be kept, not that it was, when the draft is refused', async () => {
+    const { notes, files, core, told, views } = started()
+    core.answers['storage.set'] = () => ({ ok: false, refusal: { code: 'unavailable' } })
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told.at(-1)).toEqual({ kind: 'refused', instance, path: 'a.md', code: 'unavailable' })
+    expect(told).not.toContainEqual(expect.objectContaining({ kind: 'gone', kept: true }))
+  })
+})
