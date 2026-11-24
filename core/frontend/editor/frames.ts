@@ -366,7 +366,6 @@ export class Frames {
     const token = dragTokenOf(event.dataTransfer?.getData('text/plain') ?? '')
     if (token === null) return
     event.preventDefault()
-    event.stopPropagation()
     if (!(event.target instanceof Element) || event.target.closest('.editor, #empty') === null) return
     const got = await this.link.call('editor.dropToken', { token })
     if (!got.ok) return
