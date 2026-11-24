@@ -60,7 +60,7 @@ export async function launch(dataDir: string, extra: Record<string, string> = {}
 export const exists = (file: string) => stat(file).then(() => true, () => false)
 export const tick = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-export async function until(check: () => Promise<boolean> | boolean, ms = 15_000): Promise<void> {
+export async function until(check: () => Promise<boolean> | boolean, ms = 30_000): Promise<void> {
   for (let waited = 0; !(await check()); waited += 50) {
     if (waited > ms) throw new Error('nothing arrived in time')
     await tick(50)

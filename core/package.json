@@ -24,7 +24,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
     "@humanwhocodes/momoa": "^3.3.13",
-    "@lezer/common": "^1.5.4",
+    "@lezer/common": "^1.5.5",
     "@lezer/markdown": "^1.8.1",
     "yauzl": "3.4.0",
     "zod": "^4.6.7"
@@ -36,6 +36,6 @@
     "acorn-walk": "^8.3.5",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

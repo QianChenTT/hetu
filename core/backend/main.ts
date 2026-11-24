@@ -218,11 +218,21 @@ async function start(): Promise<void> {
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
+          // Checked before the dialog opens, so no folder is picked that couldn't be asked for. One dialog at a time, a
+          // plugin pick's included
           if (call.action === 'app.pickFolder') {
-            return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
+            if (pluginsManager === null) throw { code: 'unavailable' }
+            const manager = pluginsManager
+            if (picking) throw { code: 'throttled' }
+            picking = true
+            try {
+              return await pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options), change => manager.request(change, call.caller))
+            } finally {
+              picking = false
+            }
           }
           // Staged here from the path main's own dialog answered, which never reaches the page
-          // Checked before the dialog opens, so no staging is made that couldn't be answered. One pick at a time
+          // Checked before the dialog opens, so no staging is made that couldn't be answered. One dialog at a time
           if (call.action === 'app.stagePicked') {
             const { source } = call.args as { source: 'zip' | 'folder' }
             if (pluginsManager === null) throw { code: 'unavailable' }
