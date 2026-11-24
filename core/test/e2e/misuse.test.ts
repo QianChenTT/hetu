@@ -724,6 +724,16 @@ describe('a view frame', () => {
     expect(dropped.length).toBeGreaterThan(0)
   })
 
+  it('is pulled back with no key typed once the hold for a late press ends, which the core records', async () => {
+    const { editor, workers, said, dataDir } = await framed()
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    await tell(workers[0]!, { field: 0 })
+    await until(async () => (await said()).some(data => data.stole === true))
+    await until(() => focusIsInNote(editor), 2000)
+    await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' }))
+  })
+
   it('takes focus the core moves into it as no theft, then works its own rows', async () => {
     const { app, editor, said, dataDir } = await framed()
     await open(editor, 'a.md')
