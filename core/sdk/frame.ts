@@ -18,7 +18,7 @@ export type FrameView = {
   theme(): Theme
   onTheme(handler: (theme: Theme) => void): void
   // Opens the note in front as the human's, as a click on a note row of a tree view does, right after the human pressed
-  // in one of the plugin's frames or pressed Enter or Space in it, one open each time, so call it from that click or
+  // in one of the plugin's frames or pressed Enter in it, one open each time, so call it from that click or
   // key. Any other open is the plugin's own, in the background as the worker's editor.open opens one, only where the
   // plugin's luoshu.read reaches
   open(path: string): void

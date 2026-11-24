@@ -90,7 +90,7 @@ function askOf(message: unknown): FrameAsk | null {
 export const OPEN_GRACE_MS = 500
 
 // Which plugin's frames may open one note as the human's: the plugin whose frame the human last pressed in, or pressed
-// Enter or Space in, for one open within OPEN_GRACE_MS. A press anywhere else ends it. Letting go of the press
+// Enter in, for one open within OPEN_GRACE_MS. A press anywhere else ends it. Letting go of the press
 // counts it from then, so a long press opens once too
 export class OpenCredit {
   private readonly clock: () => number

@@ -134,12 +134,12 @@ export function editorKeyOfInput(input: EditorInput, focused: string | null, bou
   return { channel: 'hetu:view-key', sent: { url: focused, key } }
 }
 
-// The URL of the plugin's frame holding focus when Enter or Space went down in it, which the page counts as the
-// human's press there for an open from that plugin's frames. Only those keys and only that one went down, never the
-// text typed, null for any other key or with focus outside a plugin's frame
+// The URL of the plugin's frame holding focus when Enter went down in it, which the page counts as the human's press
+// there for an open from that plugin's frames. Only that key and only that it went down, never the text typed, null
+// for any other key or with focus outside a plugin's frame
 export function frameKeyOfInput(input: EditorInput, focused: string | null): string | null {
   if (input.type !== 'keyDown' || input.isAutoRepeat || input.control || input.meta || input.alt) return null
-  if ((input.key !== 'Enter' && input.key !== ' ') || focused === null || !URL.canParse(focused)) return null
+  if (input.key !== 'Enter' || focused === null || !URL.canParse(focused)) return null
   const at = new URL(focused)
   return at.protocol === `${SCHEME}:` && frameOwner(at.hostname) !== null ? focused : null
 }

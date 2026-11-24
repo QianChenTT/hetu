@@ -167,7 +167,7 @@ export class Frames {
     this.lay(held)
   }
 
-  // A press main pushed: down or up at its point on the page, or Enter or Space in the focused frame served from url,
+  // A press main pushed: down or up at its point on the page, or Enter in the focused frame served from url,
   // counted only while focus is in it by a press or the core's own move
   pushed(press: unknown): void {
     const { down, x, y, key, url } = (typeof press === 'object' && press !== null ? press : {}) as Record<string, unknown>

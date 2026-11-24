@@ -41,7 +41,7 @@ export type FakeFrame = {
   readonly received: readonly unknown[]
   theme(): Theme
   onTheme(handler: (theme: Theme) => void): void
-  // The human pressed in the frame, or pressed Enter or Space in it, so one open from the plugin's frames within
+  // The human pressed in the frame, or pressed Enter in it, so one open from the plugin's frames within
   // OPEN_GRACE_MS is theirs
   pressed(): void
   // The frame's open as @hetu/sdk/frame's: the human's after pressed, else the plugin's own in the background. Answers
