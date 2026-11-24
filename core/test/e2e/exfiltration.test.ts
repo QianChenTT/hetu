@@ -509,3 +509,21 @@ describe('the sockets of a frame\'s WebRTC', () => {
     }
   })
 })
+
+describe('the packets of a frame\'s WebRTC', () => {
+  // TODO: a remote candidate on <name>.local makes Chromium's network service send an mDNS query for ~NOTFOUND, the name
+  // host-resolver-rules maps it to, to 224.0.0.251 and ff02::fb on every interface. The name stays home but the packet
+  // leaves when the frame says. Drop fails once hetu stops it and run it on macOS once checked there
+  it.runIf(process.platform === 'win32').fails('sends no packet to an address other than loopback when a frame hands a remote mDNS candidate, by the net log', async () => {
+    const { app, workers: { kanban: worker } } = await started(rtcFiles)
+    const log = path.join(await temp(), 'net.json')
+    await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
+    const report = await rtcReport(worker!, [], `hetu${randomBytes(6).toString('hex')}`)
+    await app.evaluate(({ netLog }) => netLog.stopLogging())
+    expect(report).toEqual({ tried: [expect.any(String)] })
+    const { constants, events } = JSON.parse(await readFile(log, 'utf8')) as { constants: { logEventTypes: Record<string, number> }, events: { type: number, params?: { address?: string } }[] }
+    const sent = events.filter(event => event.type === constants.logEventTypes.UDP_BYTES_SENT).map(event => event.params?.address ?? '')
+    await found('packets sent', sent)
+    expect(sent.filter(address => !/^(127\.|\[::1\])/.test(address))).toEqual([])
+  })
+})
