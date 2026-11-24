@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { pluginId } from '../../api/ids.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import { IMAGE_CSP, type Served } from './lib.ts'
 
@@ -22,6 +23,16 @@ const TYPES: Readonly<Record<string, string>> = Object.freeze({
 const PATH = /^(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*\.(html|css|js|svg|png|woff2)$/
 const TOKEN = /^[0-9a-f]{32}$/
 const PLUGIN = /^[a-z0-9][a-z0-9-]{0,63}$/
+const VIEWS = '.views'
+
+// The plugin whose views a host serves: the host is exactly <id>.views for a plugin id, else null. The editor page's
+// CSP names hetu://*.views, which Chromium matches at any depth, x.kanban.views among them, so this check is the one
+// that holds a host to a single plugin
+export function viewsOwner(hostname: string): string | null {
+  if (!hostname.endsWith(VIEWS)) return null
+  const id = hostname.slice(0, -VIEWS.length)
+  return pluginId.safeParse(id).success ? id : null
+}
 
 // The proposal's frame policy: everything only from the token's own path, no network, frames, forms or base, and
 // embedded only by the editor page

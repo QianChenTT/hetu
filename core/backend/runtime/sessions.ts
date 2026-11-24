@@ -5,10 +5,12 @@ import type { Session } from 'electron'
 import { hostOnly, parsedUrl } from '../lib/url.ts'
 import { SCHEME } from './before-ready.ts'
 import type { ServedHost } from './lib.ts'
+import { viewsOwner } from './views.ts'
 
-// Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts
+// Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts. The
+// editor role also owns <id>.views for each plugin id, a host of its own for each plugin's views
 export const ROLES = Object.freeze({
-  editor: Object.freeze(['editor', 'views', 'images', 'content']),
+  editor: Object.freeze(['editor', 'images', 'content']),
   trusted: Object.freeze(['trusted']),
   workers: Object.freeze(['workers']),
 })
@@ -17,8 +19,8 @@ export type Role = keyof typeof ROLES
 // Without the persist: prefix a partition lives in memory, so nothing a page stores reaches the disk
 export const partition = (role: Role): string => `hetu-${role}`
 
-// The pages folder each host serves from. views is served from what main holds of each running plugin, images from the
-// notes folder through the luoshu, content has none until its pages exist
+// The pages folder each host serves from. A views host is served from what main holds of its running plugin, images
+// from the notes folder through the luoshu, content has none until its pages exist
 const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'editor', trusted: 'trusted', workers: 'workers' })
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -39,12 +41,12 @@ const CSP = [
   "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ')
 
-// The editor page frames plugins' views and shows their icons, both from the views host, and the images their nodes
-// name from the images host. A frame's own policy names neither host. Its page gets a nonce for the style element
+// The editor page frames plugins' views and shows their icons, both from each plugin's own views host, and the images
+// their nodes name from the images host. A frame's own policy names neither host. Its page gets a nonce for the style element
 // CodeMirror makes, a fresh one each load, named only in that page's policy and on its script
 const editorCsp = (nonce: string | null) => [
   "default-src 'none'", "script-src 'self'", nonce === null ? "style-src 'self'" : `style-src 'self' 'nonce-${nonce}'`,
-  "img-src 'self' hetu://views hetu://images", "font-src 'self'", 'frame-src hetu://views', "base-uri 'none'", "form-action 'none'",
+  "img-src 'self' hetu://*.views hetu://images", "font-src 'self'", 'frame-src hetu://*.views', "base-uri 'none'", "form-action 'none'",
   "frame-ancestors 'none'",
 ].join('; ')
 
@@ -61,22 +63,25 @@ const WORKERS_CSP = [
   "frame-ancestors 'none'",
 ].join('; ')
 
-// Whether a request may leave a role's session: only to hetu on the role's own hosts, with no user or port
+// Whether a request may leave a role's session: only to hetu on the role's own hosts, with no user or port. Whether a
+// views host's plugin runs is for its handler to answer
 export function allowed(role: Role, url: string): boolean {
   const at = parsedUrl(url)
-  return at !== null && at.protocol === `${SCHEME}:` && (ROLES[role] as readonly string[]).includes(at.hostname) && hostOnly(at)
+  if (at === null || at.protocol !== `${SCHEME}:` || !hostOnly(at)) return false
+  return (ROLES[role] as readonly string[]).includes(at.hostname) || (role === 'editor' && viewsOwner(at.hostname) !== null)
 }
 
 const answer = (status: number) => new Response(null, { status })
 
-// A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the views and
-// images hosts from what main answers
+// A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the plugins' views
+// hosts and the images host from what main answers
 export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ServedHost, images?: ServedHost): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405)
   const at = parsedUrl(request.url)
   if (at === null || !allowed(role, request.url)) return answer(404)
-  if (at.hostname === 'views' || at.hostname === 'images') {
-    const found = (await (at.hostname === 'views' ? views : images)?.serve(request.url)) ?? null
+  const ofViews = viewsOwner(at.hostname) !== null
+  if (ofViews || at.hostname === 'images') {
+    const found = (await (ofViews ? views : images)?.serve(request.url)) ?? null
     if (found === null) return answer(404)
     const headers = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
     // The bytes main holds go out as they are, with no copy of a note's image beside the one read

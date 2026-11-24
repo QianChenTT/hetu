@@ -6,7 +6,8 @@ export const MAX_NAME_LENGTH = 64
 // <namespace>.<name> at the longest
 export const MAX_QUALIFIED_LENGTH = MAX_ID_LENGTH + 1 + MAX_NAME_LENGTH
 
-const id = '[a-z0-9]+(?:[_-][a-z0-9]+)*'
+// A plugin id's grammar as regular expression source, for a pattern that holds one among other parts
+export const ID_PATTERN = '[a-z0-9]+(?:[_-][a-z0-9]+)*'
 const name = '[a-z][a-zA-Z0-9]*'
 
 // Becomes a folder name under plugins/ and the first part of every action and topic the plugin owns, so no separators
@@ -15,7 +16,7 @@ const name = '[a-z][a-zA-Z0-9]*'
 // keyed by plugin id would refuse a plugin with one of them. Every other member of Object fails the grammar already
 export const pluginId = z.string()
   .max(MAX_ID_LENGTH, { abort: true })
-  .regex(new RegExp(`^${id}$`))
+  .regex(new RegExp(`^${ID_PATTERN}$`))
   .refine(value => !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(value), 'a Windows device name')
   .refine(value => !isBadKey(value), 'a key plain data refuses')
 
@@ -26,7 +27,7 @@ export const localName = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(
 // the id and the name are each capped
 export const qualifiedName = z.string()
   .max(MAX_QUALIFIED_LENGTH, { abort: true })
-  .regex(new RegExp(`^${id}\\.${name}$`))
+  .regex(new RegExp(`^${ID_PATTERN}\\.${name}$`))
   .refine(value => {
     const dot = value.indexOf('.')
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
