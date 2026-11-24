@@ -386,6 +386,18 @@ describe('keys in the design\'s order', () => {
     expect(board.events('view.command')).toEqual([{ v: 1, kind: 'event', topic: 'view.command', instance: 'v1', command: 'down' }])
   })
 
+  it('tells main the keys a plugin\'s views bound named the page\'s way each time they change and none once its port ends', async () => {
+    const { drawer } = started({ kanban: viewer })
+    const told: [string, string[]][] = []
+    drawer.ui.onBindings = (owner, keys) => told.push([owner, keys])
+    const board = await connected(drawer, 'kanban')
+    await board.call('view.bind', { bindings: [{ key: 'J', command: 'down' }, { key: 'Ctrl-k', command: 'up' }] })
+    await board.call('view.bind', { bindings: [{ key: 'x', command: 'cut' }] })
+    expect(await board.call('view.bind', { bindings: [{ key: 'Mod-s', command: 'x' }] })).toMatchObject({ ok: false })
+    drawer.end('kanban', 1)
+    expect(told).toEqual([['kanban', ['j', 'Mod-k']], ['kanban', ['x']], ['kanban', []]])
+  })
+
   it('refuses a view binding on a core key', async () => {
     const { drawer } = started({ kanban: viewer })
     const board = await connected(drawer, 'kanban')

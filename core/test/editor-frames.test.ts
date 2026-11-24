@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_FRAME_MESSAGE } from '../api/ui.ts'
-import { FRAME_MESSAGES_PER_SECOND, FrameInbox, FrameLoads } from '../frontend/editor/frames.ts'
+import { FOCUS_GRACE_MS, FocusGuard, FRAME_MESSAGES_PER_SECOND, FrameInbox, FrameLoads } from '../frontend/editor/frames.ts'
 
 describe('a frame\'s loads', () => {
   it('hands the port on the first load only and reads any later load as navigated', () => {
@@ -44,5 +44,63 @@ describe('what a frame sends', () => {
     expect(inbox.take('1').ok).toBe(false)
     now = 1000
     expect(inbox.take('1').ok).toBe(true)
+  })
+})
+
+describe('focus going into a frame', () => {
+  it('lets it in once after a press in that frame and keeps it while focus stays there', () => {
+    const guard = new FocusGuard(() => 0)
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+    expect(guard.entered('v1')).toBe(true)
+    guard.left()
+    expect(guard.entered('v1')).toBe(false)
+  })
+
+  it('takes a move into a frame with no press, or after a press elsewhere, as the frame\'s own', () => {
+    const guard = new FocusGuard(() => 0)
+    expect(guard.entered('v1')).toBe(false)
+    guard.allow('v2')
+    expect(guard.entered('v1')).toBe(false)
+    guard.allow('v1')
+    guard.allow(null)
+    expect(guard.entered('v1')).toBe(false)
+  })
+
+  it('takes a frame that held focus as taking it on its own after a press elsewhere, whether or not the page saw focus leave', () => {
+    const guard = new FocusGuard(() => 0)
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+    guard.allow(null)
+    expect(guard.entered('v1')).toBe(false)
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+    guard.allow('v2')
+    expect(guard.entered('v1')).toBe(false)
+  })
+
+  it('takes a move from one frame into another with no press as the other\'s own', () => {
+    const guard = new FocusGuard(() => 0)
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+    expect(guard.entered('v2')).toBe(false)
+  })
+
+  it('lets the core\'s own move in as it lets a press in', () => {
+    const guard = new FocusGuard(() => 0)
+    guard.left()
+    guard.allow('v1')
+    expect(guard.entered('v1')).toBe(true)
+  })
+
+  it(`counts a press only within ${FOCUS_GRACE_MS} ms, so a frame that kept focus from moving on a press can't take it later`, () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    guard.allow('v1')
+    now = FOCUS_GRACE_MS + 1
+    expect(guard.entered('v1')).toBe(false)
+    guard.allow('v1')
+    now += FOCUS_GRACE_MS
+    expect(guard.entered('v1')).toBe(true)
   })
 })
