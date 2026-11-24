@@ -154,8 +154,8 @@ export default definePlugin({
 `
 
 // What else a run holds: kanban's views and other plugins with views of their own, each drawn by the same frame but a
-// view named tree, which its worker draws
-type More = { views?: string[], others?: Record<string, string[]> }
+// view named tree, which its worker draws, and a theme kanban declares
+type More = { views?: string[], others?: Record<string, string[]>, theme?: object }
 
 async function started(frame: Frame, notes: Record<string, string> = {}, more: More = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
   const folder = await temp()
@@ -175,6 +175,7 @@ async function started(frame: Frame, notes: Record<string, string> = {}, more: M
       capabilities: granted,
       entries: { worker: 'worker.js', frames: { board: 'board.html' } },
       views: Object.fromEntries(views.map(view => [view, view === 'tree' ? { title: view, kind: 'view' } : { title: view, kind: 'view', frame: 'board' }])),
+      ...(id === 'kanban' && more.theme !== undefined ? { theme: more.theme } : {}),
     })
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'board.html': frame.html, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>', ...frame.files }))
@@ -466,5 +467,52 @@ describe('WebRTC from a view frame', () => {
     } finally {
       mdns.close()
     }
+  })
+})
+
+const frameSdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'frame.ts').split(path.sep).join('/')
+
+// A frame's script on @hetu/sdk/frame: tells its worker the theme it connected with and each theme it hears after
+const themed = `
+import { connect } from '${frameSdk}'
+void connect().then(view => {
+  view.post({ connected: view.theme() })
+  view.onTheme(theme => view.post({ changed: theme }))
+})
+`
+
+// The theme the page set on the frames' layer
+const pageTheme = (editor: Page) => editor.locator('#editors').evaluate(element => {
+  const style = (element as HTMLElement).style
+  return Object.fromEntries(Array.from(style).filter(name => name.startsWith('--hetu-')).map(name => [name, style.getPropertyValue(name)]))
+})
+
+describe('the theme in a frame', () => {
+  it('hands a frame the page\'s theme with its port and each change after, to a frame open since before and one opened since', async () => {
+    const source = await temp()
+    await writeFolder(source, { 'src/board.ts': themed })
+    const [built] = await buildPlugin(source, { entries: { 'board.js': 'src/board.ts' }, write: false })
+    // The editor's own colors fail the contrast floor, so the page's variables are the drawer's and not the theme's
+    const theme = { tokens: { 'color-bg': '#202020', 'color-accent': '#ff8800', 'color-editor-fg': '#fefefe', 'color-editor-bg': '#ffffff' } }
+    const { editor, worker } = await started({ html: page('board.js'), files: { 'board.js': built!.text } }, {}, { theme })
+    await until(async () => (await messages(worker)).length === 1)
+    expect(await messages(worker)).toEqual([{ connected: {} }])
+    await editor.locator('#views').click()
+    await until(async () => editor.locator('#menu').isVisible())
+    await editor.locator('#menu select').nth(1).selectOption('kanban')
+    await editor.locator('#menu-close').click()
+    await until(async () => (await messages(worker)).length === 2)
+    const variables = await pageTheme(editor)
+    expect(variables).toMatchObject({ '--hetu-color-bg': '#202020', '--hetu-color-editor-fg': '#1f1f1f' })
+    expect((await messages(worker))[1]).toEqual({ changed: variables })
+
+    await worker.evaluate(async () => {
+      const scope = globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }
+      await scope.ctx.ui.views.open('board')
+    })
+    await until(async () => (await messages(worker)).length === 3)
+    expect((await messages(worker))[2]).toEqual({ connected: variables })
+    await tick(300)
+    expect(await messages(worker)).toHaveLength(3)
   })
 })
