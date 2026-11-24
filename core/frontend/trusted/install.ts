@@ -31,6 +31,26 @@ const refused: Readonly<Record<StagedProblem, string>> = {
   unapproved: 'A folder for this plugin is already there and hetu never approved it. Remove it first',
 }
 
+// An api refusal by the side of this hetu the plugin was made for
+const madeFor = {
+  older: 'It was written for an older hetu than this one, so it can’t be installed. Ask its author for a version made for this hetu',
+  newer: 'It was written for a newer hetu than this one, so it can’t be installed. Update hetu first',
+} as const
+
+// The problem's words, an api refusal's by the hetu the plugin was made for
+function refusalOf(plugin: StagedPlugin): string | null {
+  if (plugin.problem === null) return null
+  return plugin.problem === 'api' && plugin.madeFor !== null ? madeFor[plugin.madeFor] : refused[plugin.problem]
+}
+
+// A type a later major removed is the core's own name and shown as one this hetu no longer has, in place of the rest
+// of the list, which is not what the plugin asked for
+function grantsOf(plugin: StagedPlugin): string[] {
+  if (plugin.problem === 'invalid') return []
+  if (plugin.removedTypes.length > 0) return plugin.removedTypes.map(type => `It names ${type}, which this hetu no longer has`)
+  return plugin.capabilities.length === 0 ? ['It asks for nothing'] : plugin.capabilities.map(grantSentence)
+}
+
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
 
 // The plugin's name as its author wrote it in quotes, then its id and version as hetu read them
@@ -38,15 +58,14 @@ function rowOf(plugin: StagedPlugin, picked: ReadonlySet<string>): FoundRow {
   const label = [plugin.name === null ? plugin.id : `${quoted(plugin.name)} (${plugin.id})`, ...(plugin.version === null ? [] : [`version ${plugin.version}`])].join(', ')
   const high = plugin.class === null || plugin.class >= 3
   const known = plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}, ${classNames[plugin.class]}`
-  const unread = plugin.problem === 'invalid'
   return {
     id: plugin.id,
     label,
     line: [high ? `Higher risk: ${known}` : known, ...(plugin.replaces === null ? [] : [`replaces version ${plugin.replaces}`])].join(' · '),
     high,
     lines: plugin.lines,
-    grants: unread ? [] : plugin.capabilities.length === 0 ? ['It asks for nothing'] : plugin.capabilities.map(grantSentence),
-    problem: plugin.problem === null ? null : refused[plugin.problem],
+    grants: grantsOf(plugin),
+    problem: refusalOf(plugin),
     picked: plugin.problem === null && picked.has(plugin.id),
   }
 }

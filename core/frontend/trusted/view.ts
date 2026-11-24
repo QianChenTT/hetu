@@ -124,10 +124,12 @@ export function choiceChange(control: string, choice: Choice): Change | null {
 }
 
 // A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier
-// policy job. One it couldn't give counts as 4. A security control is locked on while the security view is off
+// policy job. One it couldn't give counts as 4. A security control is locked on while the security view is off. An api
+// refusal names the side of this hetu the plugin was made for
 function pluginLine(plugin: ListedPlugin, locked: boolean): string {
   const from = plugin.from === 'folder' ? 'plugin folder' : 'ships with hetu'
-  const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state
+  const reason = plugin.reason === 'api' && plugin.madeFor !== null ? `made for ${plugin.madeFor === 'older' ? 'an older' : 'a newer'} hetu` : plugin.reason
+  const state = reason !== null ? `${plugin.state} (${reason})` : plugin.state
   const known = plugin.from === 'folder' ? [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`] : []
   return [
     plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known, ...(locked ? ['locked while the security view is off'] : []),

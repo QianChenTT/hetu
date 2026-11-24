@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { classCauses, classNumber, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
-import { retiredGrantTypes } from '../../api/manifest.ts'
+import { grantTypesDroppedOnRead } from '../../api/manifest.ts'
 import { coreModuleIds, doorId, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
@@ -132,10 +132,10 @@ const switchesFile = z.strictObject({ format, ...switchesFields })
 // lists, so what the human granted, switched off or confirmed holds as it was. The entry's next write drops the old name
 const oldKeys = (item: unknown) => typeof item === 'object' && item !== null && (item as { type?: unknown }).type === 'ui.keys'
 const keysRenamed = (items: unknown) => (Array.isArray(items) ? items.map(item => (oldKeys(item) ? { ...item, type: 'ui.keystream' } : item)) : items)
-// retiredGrantTypes left the fixed list. An entry written while one was in it reads with the item dropped from each of
+// grantTypesDroppedOnRead left the fixed list. An entry written while one was in it reads with the item dropped from each of
 // its lists, the rest kept, and is written back without it once. An item of the type with a field it never had stays
 // invalid
-const isRetiredGrant = (item: unknown) => typeof item === 'object' && item !== null && retiredGrantTypes.includes((item as { type?: unknown }).type as string)
+const isRetiredGrant = (item: unknown) => typeof item === 'object' && item !== null && grantTypesDroppedOnRead.includes((item as { type?: unknown }).type as string)
   && Object.keys(item).length === 1
 const grantLists = ['granted', 'off', 'firstUse', 'confirmed'] as const
 const withoutRetiredGrants = (items: unknown) => (Array.isArray(items) ? items.filter(item => !isRetiredGrant(item)) : items)

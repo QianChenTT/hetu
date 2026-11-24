@@ -406,7 +406,8 @@ export function stoppedCause(mode: StoppedMode): string {
 // One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the door
 // or the plugin folder) and where it runs (in the core, in main, in a utility process, in a sandboxed worker or in the
 // editor page), its state and why, whether it is a security control, the human's switch and, for a plugin-folder
-// plugin, each item it was granted
+// plugin, each item it was granted. madeFor is the side of this hetu the manifest's api range is on for a plugin
+// refused api, null for any other
 export type ListedPlugin = {
   id: string
   from: 'core' | 'door' | 'folder'
@@ -419,6 +420,7 @@ export type ListedPlugin = {
   // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for a
   // core module or core plugin
   class: number | null
+  madeFor: 'older' | 'newer' | null
 }
 
 // A request waiting for the human in the core's own words, with the word to type where the change asks for one. root
@@ -572,7 +574,9 @@ export type StagedProblem = 'invalid' | 'install-only' | 'api' | 'reserved' | 'u
 // One plugin found: its id, the name and version its manifest gives, null where it didn't read, what it asks for, the
 // class the grant risk classifier would give it with every plugin found that can install installed too (null for none
 // known) and the classifier's lines on why, as an approval's Confirm shows them. replaces is the version it replaces,
-// null for a new one. digest is the SHA-256 of the manifest's bytes as staged, which the Confirm sends back
+// null for a new one. digest is the SHA-256 of the manifest's bytes as staged, which the Confirm sends back. For one
+// refused api, madeFor is the side of this hetu its api range is on and removedTypes the types a later major removed
+// that it names. capabilities is empty while it names one, since the rest of its list is not what it asked for
 export type StagedPlugin = {
   id: string
   name: string | null
@@ -583,6 +587,8 @@ export type StagedPlugin = {
   replaces: string | null
   digest: string
   problem: StagedProblem | null
+  madeFor: 'older' | 'newer' | null
+  removedTypes: string[]
 }
 
 // Where a staging came from as the core staged it: the zip or the folder main's dialog picked, or a link's zip with the

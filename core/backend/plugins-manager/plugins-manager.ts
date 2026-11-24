@@ -6,6 +6,7 @@ import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
+import { apiMadeFor } from '../../api/manifest.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
 import type { Made, StagedRead, Staging, Stagings } from './header.ts'
@@ -133,7 +134,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { state, reason } = this.moduleRow(id)
       return {
         id, from: 'core', place: 'core', state, reason,
-        security: isSecurityControl(id), on: !isOne(switches.off, id), items: [], class: null,
+        security: isSecurityControl(id), on: !isOne(switches.off, id), items: [], class: null, madeFor: null,
       }
     })
     const listed: ListedPlugin[] = this.list().map(row => {
@@ -149,6 +150,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
         })),
         class: entry?.class ?? null,
+        madeFor: row.reason === 'api' && k?.read.manifest != null ? apiMadeFor(k.read.manifest.api) : null,
       }
     })
     const plugins = [...modules, ...listed].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : a.from < b.from ? -1 : 1))
@@ -263,12 +265,15 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     this.installs()
   }
 
-  protected stagedRow({ id, digest, manifest, problem }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
+  // A manifest naming a type a later major removed was read without it, so its list goes out empty rather than as
+  // what it asked for
+  protected stagedRow({ id, digest, manifest, problem, removedTypes }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
     const classed = problem === null && manifest !== null ? this.installClassed(id, manifest, digest, asks, true) : null
     return {
-      id, name: manifest?.name ?? null, version: manifest?.version ?? null, capabilities: [...(manifest?.capabilities ?? [])],
+      id, name: manifest?.name ?? null, version: manifest?.version ?? null,
+      capabilities: removedTypes.length > 0 ? [] : [...(manifest?.capabilities ?? [])],
       class: classed?.own?.entry?.class ?? null, lines: [...(classed?.lines ?? [])], replaces: this.installedEntry(id)?.version ?? null,
-      digest, problem,
+      digest, problem, madeFor: problem === 'api' && manifest !== null ? apiMadeFor(manifest.api) : null, removedTypes: [...removedTypes],
     }
   }
 
