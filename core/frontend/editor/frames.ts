@@ -11,8 +11,9 @@ import type { Rect } from './drag.ts'
 // main records frame.navigated, so a navigated frame never gets a port. A frame talks only to its own plugin's worker
 // through the drawer, plain data as JSON text within the cap at a rate. Frames sit in the lifted layer over their
 // slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
-// it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
-// move ends. Main drops each key headed for a frame other than the one the page told it it let in, so the frame hears
+// it, as main tells the page of every press. A frame's own focus does nothing without the human's activation in it, by
+// the focus-without-user-activation policy. A frame that takes focus any other way, within the 5 s an activation lasts,
+// is pulled back to the note once the move ends. Main drops each key headed for a frame other than the one the page told it it let in, so the frame hears
 // none of what the human types meanwhile. hetu's theme is offered to every frame as the
 // page sets it, never checked or forced on one. A frame may ask hetu to open a note, which is the human's only right
 // after the human pressed in one of its plugin's frames, one open each press, and else the plugin's own. A note
@@ -114,6 +115,24 @@ export class FrameLoads {
   ended(instance: string): void {
     this.loads.delete(instance)
   }
+}
+
+// A view frame's element, hidden until laid out. The source is set last, after every attribute the frame's first load
+// reads, and before the frame joins the page, so its first load is its own page and never about:blank
+export function frameElement(page: Document, url: string): HTMLIFrameElement {
+  const element = page.createElement('iframe')
+  element.className = 'hetu-frame'
+  // Scripts only: no same origin, no top navigation, no forms, no popups
+  element.setAttribute('sandbox', 'allow-scripts')
+  element.setAttribute('referrerpolicy', 'no-referrer')
+  // Its focus(), window.focus(), showModal(), select() and the rest do nothing without the human's activation in it,
+  // with the Blink feature main turns on, so it can't take focus or an IME composition from the note
+  element.setAttribute('allow', "focus-without-user-activation 'none'")
+  element.hidden = true
+  // Tab never moves into a frame, which no press would have let in
+  element.tabIndex = -1
+  element.src = url
+  return element
 }
 
 type Mounted = {
@@ -378,16 +397,7 @@ export class Frames {
     if (!got.ok || this.mounted.get(instance) !== held) return
     const url = (got.result as { url: string }).url
     held.url = url
-    const element = document.createElement('iframe')
-    element.className = 'hetu-frame'
-    // Scripts only: no same origin, no top navigation, no forms, no popups
-    element.setAttribute('sandbox', 'allow-scripts')
-    element.setAttribute('referrerpolicy', 'no-referrer')
-    element.hidden = true
-    // Tab never moves into a frame, which no press would have let in
-    element.tabIndex = -1
-    // The source is set before the frame joins the page, so its first load is its own page and never about:blank
-    element.src = url
+    const element = frameElement(document, url)
     element.addEventListener('load', () => this.loaded(instance, held))
     held.element = element
     this.loads.started(instance)
