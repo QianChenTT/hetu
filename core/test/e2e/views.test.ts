@@ -264,7 +264,8 @@ describe('the views menu\'s status row', () => {
     await until(async () => (await editor.locator('#menu li[data-view="board/count"]').count()) === 1)
     expect(await editor.locator('#menu-body h2').allInnerTexts()).toEqual(['Look', 'Views', 'Status row'])
     const lists = editor.locator('#menu-body ul.menu-views')
-    expect(await lists.nth(0).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/cards'])
+    // The note list every run starts with is a view too
+    expect(await lists.nth(0).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/cards', 'note-list/notes'])
     expect(await lists.nth(1).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/count'])
   })
 })
@@ -377,17 +378,18 @@ describe('the real text', () => {
     await pickLayout(editor, 'tiles')
     const layout = await pluginWorker(app, 'tiles')
     await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    // Opened from the note list while the layout has drawn nothing, so its view still shows
+    await open(editor, 'a.md')
     await drive(layout, async scope => {
       const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
       await scope.ctx.ui.layout.draw({
         kind: 'box', id: 'root', style: { display: 'flex', height: '100%' },
         children: [
-          { kind: 'slot', id: 's', instance: state.views[0]!.instance, style: { width: '300px' } },
+          { kind: 'slot', id: 's', instance: state.views.find(view => (view as { owner?: string }).owner === 'board')!.instance, style: { width: '300px' } },
           { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
         ],
       })
     })
-    await open(editor, 'a.md')
     await until(async () => (await pressed(editor).count()) === 1)
     const editorBox = (await editor.locator('.editor:not([hidden])').boundingBox())!
     await editor.keyboard.press('ControlOrMeta+/')

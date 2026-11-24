@@ -248,14 +248,14 @@ describe('the drawer', () => {
     await open(editor, 'a.md')
     await until(async () => (await shown(editor).innerText()).includes('**bold** text'))
     await shown(editor).click()
+    const editorBox = (await editor.locator('.editor:not([hidden])').boundingBox())!
     await editor.keyboard.press('ControlOrMeta+/')
     await until(async () => editor.locator('#raw').isVisible())
     expect(await editor.locator('#raw-title').innerText()).toBe('a.md')
     expect(await editor.locator('#raw-text').innerText()).toBe('# Title\n\n**bold** text')
-    // With no layout the editor fills the stage, so the raw view covers the stage and not the bar
+    // With no layout the editor sits beside the column of views, so the raw view covers the editor and not the bar
     const box = (await editor.locator('#raw').boundingBox())!
-    const stage = (await editor.locator('#stage').boundingBox())!
-    for (const side of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(box[side] - stage[side])).toBeLessThan(2)
+    for (const side of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(box[side] - editorBox[side])).toBeLessThan(2)
     const bar = (await editor.locator('#bar').boundingBox())!
     expect(bar.y + bar.height).toBeLessThanOrEqual(box.y + 1)
     await editor.keyboard.press('Escape')
