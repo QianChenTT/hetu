@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit, DRAG_PREFIX, dragTokenOf } from '../api/ui-limits.ts'
-import { FOCUS_GRACE_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
+import { FOCUS_GRACE_MS, FOCUS_HOLD_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
 import type { CoreLink } from '../frontend/editor/link.ts'
 
 describe('a frame\'s loads', () => {
@@ -56,6 +56,41 @@ describe('focus going into a frame', () => {
     expect(guard.entered('v1')).toBe(true)
     guard.left()
     expect(guard.entered('v1')).toBe(false)
+  })
+
+  it('lets a frame in when the press that put focus there reaches the page after the move, within the hold', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judged('v1')).toBe('wait')
+    now = FOCUS_HOLD_MS - 1
+    guard.allow('v1')
+    expect(guard.judged('v1')).toBe('in')
+    expect(guard.letIn()).toBe('v1')
+    expect(guard.judged('v1')).toBe('in')
+  })
+
+  it('takes a move with no press behind it as the frame\'s own once the hold ends, and holds it no second time', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judged('v1')).toBe('wait')
+    now = FOCUS_HOLD_MS - 1
+    expect(guard.judged('v1')).toBe('wait')
+    now = FOCUS_HOLD_MS
+    expect(guard.judged('v1')).toBe('taken')
+    expect(guard.letIn()).toBe(null)
+    expect(guard.judged('v1')).toBe('taken')
+    // A press arriving after the hold is a press of its own, which lets the frame in
+    guard.allow('v1')
+    expect(guard.judged('v1')).toBe('in')
+    guard.left()
+    expect(guard.judged('v2')).toBe('wait')
+  })
+
+  it('takes a move at once with no hold when main dropped a key headed for it, which comes after any press main pushed', () => {
+    const guard = new FocusGuard(() => 0)
+    expect(guard.judged('v1', true)).toBe('taken')
+    guard.allow('v1')
+    expect(guard.judged('v1', true)).toBe('in')
   })
 
   it('takes a move into a frame with no press, or after a press elsewhere, as the frame\'s own', () => {
