@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
+import { appMenu, coreKeyOfInput, editorKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer, the window open handler and the WebRTC policy
 class FakeContents extends EventEmitter {
@@ -238,5 +238,36 @@ describe('the core keys main takes', () => {
     expect(coreKeyOfInput(press('/', { control: false }), false)).toBe(null)
     expect(coreKeyOfInput(press('s', { alt: true }), false)).toBe(null)
     expect(coreKeyOfInput(press('s', { type: 'keyUp' }), false)).toBe(null)
+  })
+})
+
+describe('the keys main matches while focus is in a plugin frame', () => {
+  const press = (key: string, extra: Partial<{ code: string, control: boolean, meta: boolean, alt: boolean, shift: boolean, type: string, isAutoRepeat: boolean }> = {}) =>
+    ({ type: 'keyDown', key, code: '', control: false, meta: false, alt: false, shift: false, isAutoRepeat: false, ...extra })
+  const kanban = 'hetu://kanban.views/0123456789abcdef0123456789abcdef/board.html'
+  const bound = new Map([['kanban', new Set(['j', 'Mod-k', 'Mod-s'])], ['files', new Set(['x'])]])
+
+  it('sends a key bound by the plugin of the focused frame to the page with the frame and keeps it from the frame', () => {
+    expect(editorKeyOfInput(press('k', { control: true }), kanban, bound, false)).toEqual({ channel: 'hetu:view-key', sent: { url: kanban, key: 'Mod-k' } })
+    expect(editorKeyOfInput(press('j'), kanban, bound, false)).toEqual({ channel: 'hetu:view-key', sent: { url: kanban, key: 'j' } })
+    expect(editorKeyOfInput(press('k', { meta: true }), kanban, bound, true)).toEqual({ channel: 'hetu:view-key', sent: { url: kanban, key: 'Mod-k' } })
+    expect(editorKeyOfInput(press('j', { isAutoRepeat: true }), kanban, bound, false)).toEqual({ channel: 'hetu:view-key', sent: { url: kanban, key: 'j' } })
+  })
+
+  it('takes a core key first whatever a frame bound and sends a held one once', () => {
+    expect(editorKeyOfInput(press('s', { control: true }), kanban, bound, false)).toEqual({ channel: 'hetu:key', sent: 'save' })
+    expect(editorKeyOfInput(press('s', { control: true }), null, bound, false)).toEqual({ channel: 'hetu:key', sent: 'save' })
+    expect(editorKeyOfInput(press('s', { control: true, isAutoRepeat: true }), kanban, bound, false)).toEqual({ channel: null })
+  })
+
+  it('leaves alone a key the plugin of the focused frame never bound, a key up and a key with focus outside any plugin frame', () => {
+    expect(editorKeyOfInput(press('x'), kanban, bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('k'), kanban, bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('j', { type: 'keyUp' }), kanban, bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('j'), 'hetu://editor/', bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('j'), null, bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('j'), 'hetu://x.kanban.views/0123456789abcdef0123456789abcdef/board.html', bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('j'), 'not a url', bound, false)).toBe(null)
+    expect(editorKeyOfInput(press('Shift', { shift: true }), kanban, new Map([['kanban', new Set(['Shift'])]]), false)).toBe(null)
   })
 })

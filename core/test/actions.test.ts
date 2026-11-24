@@ -6,6 +6,7 @@ import {
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers, serverOf } from '../api/ids.ts'
 import { MAX_LIST } from '../api/manifest.ts'
+import { MAX_VIEW_BINDINGS } from '../api/ui.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
 import { pluginStates, policyJobStates } from '../api/policy-jobs.ts'
 
@@ -38,6 +39,8 @@ describe('the core actions', () => {
       'core.views': 'windows',
       'editor.frame': 'windows',
       'editor.frameGone': 'windows',
+      'editor.focusTaken': 'windows',
+      'editor.viewKeys': 'windows',
       'editor.image': 'windows',
       'core.refused': 'door',
       'core.bindFailed': 'door',
@@ -130,6 +133,18 @@ describe('the core actions', () => {
     ['editor.frameGone', { url: 'hetu://Kanban.views/0123456789abcdef0123456789abcdef/board.html', navigated: true }, false],
     ['editor.frameGone', { url: 'https://example.com/', navigated: false }, false],
     ['editor.frameGone', { url: 'hetu://kanban.views/0123456789abcdef0123456789abcdef/', navigated: 'yes' }, false],
+    ['editor.focusTaken', { url: 'hetu://kanban.views/0123456789abcdef0123456789abcdef/board.html' }, true],
+    ['editor.focusTaken', { url: 'hetu://x.kanban.views/0123456789abcdef0123456789abcdef/board.html' }, false],
+    ['editor.focusTaken', { url: 'https://example.com/' }, false],
+    ['editor.focusTaken', {}, false],
+    ['editor.viewKeys', { plugin: 'kanban', keys: ['j', 'Mod-Shift-k', 'ArrowDown'] }, true],
+    ['editor.viewKeys', { plugin: 'kanban', keys: [] }, true],
+    ['editor.viewKeys', { plugin: 'kanban', keys: Array.from({ length: MAX_VIEW_BINDINGS }, (_, i) => `Alt-${i}`) }, true],
+    ['editor.viewKeys', { plugin: 'kanban', keys: Array.from({ length: MAX_VIEW_BINDINGS + 1 }, (_, i) => `Alt-${i}`) }, false],
+    ['editor.viewKeys', { plugin: 'kanban', keys: ['x'.repeat(65)] }, false],
+    ['editor.viewKeys', { plugin: 'kanban', keys: [''] }, false],
+    ['editor.viewKeys', { plugin: 'Kanban', keys: ['j'] }, false],
+    ['editor.viewKeys', { plugin: 'kanban' }, false],
     ['editor.image', { plugin: 'kanban', path: 'pics/a.png' }, true],
     ['editor.image', { plugin: 'kanban', path: '.obsidian/a.png' }, false],
     ['editor.image', { plugin: 'kanban', path: 'a.md' }, false],
