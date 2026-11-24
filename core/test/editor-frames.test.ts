@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit, DRAG_PREFIX, dragTokenOf } from '../api/ui-limits.ts'
-import { FOCUS_GRACE_MS, FOCUS_HOLD_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
+import { FOCUS_GRACE_MS, FOCUS_HOLD_MS, FocusGuard, frameElement, FrameLoads, Frames } from '../frontend/editor/frames.ts'
 import type { CoreLink } from '../frontend/editor/link.ts'
 
 describe('a frame\'s loads', () => {
@@ -206,6 +206,28 @@ describe('focus going into a frame', () => {
     guard.allow('v1')
     now += FOCUS_GRACE_MS
     expect(guard.entered('v1')).toBe(true)
+  })
+})
+
+describe('a view frame\'s element', () => {
+  // A document making one element that writes down each attribute and its src in the order they are set
+  function made() {
+    const steps: string[] = []
+    const element = {
+      setAttribute: (name: string, value: string) => steps.push(`${name}=${value}`),
+      set src(url: string) { steps.push(`src=${url}`) },
+    } as unknown as HTMLIFrameElement
+    const page = { createElement: (tag: string) => (steps.push(`<${tag}>`), element) } as unknown as Document
+    return { page, steps }
+  }
+
+  it('is sandboxed to scripts with no referrer and denied focus with no activation before its src is set', () => {
+    const { page, steps } = made()
+    frameElement(page, 'hetu://kanban.views/t/board.html')
+    expect(steps).toEqual([
+      '<iframe>', 'sandbox=allow-scripts', 'referrerpolicy=no-referrer', "allow=focus-without-user-activation 'none'",
+      'src=hetu://kanban.views/t/board.html',
+    ])
   })
 })
 
