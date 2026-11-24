@@ -93,7 +93,7 @@ export function pickPlugins(trusted: TrustedWindow, dialog: FolderDialog, source
     : { properties: ['openDirectory'], title: 'Pick a plugin folder or a folder of plugins' })
 }
 
-// Whether the trusted window refuses a close: only while the startup flow is due. A quit goes through, and so does the
+// Whether the trusted window refuses a close: only while the startup flow is due. A quit goes through. So does the
 // system's session ending, since a shutdown, a restart or a logoff closes the windows with no quit and a close refused
 // then holds the session up
 export function keepsOpen(state: { due: boolean, quitting: boolean, sessionEnding: boolean }): boolean {

@@ -448,8 +448,8 @@ export type SecurityList = {
   requests: HeldRequest[]
   identities: ListedIdentity[]
   stopped: StoppedMode | null
-  // The startup flow is due: decided at start, while the plugin folder held no plugin, and ended for the run once one
-  // is installed. Never while hetu is stopped
+  // The startup flow is due: decided at start while the plugin folder held no plugin and ended for the run once one is
+  // installed. Never while hetu is stopped
   startupDue: boolean
 }
 

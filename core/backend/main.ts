@@ -193,7 +193,7 @@ async function start(): Promise<void> {
         const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), editorPreload))
         if (router !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', router)
         // The startup flow has no way out until a plugin is installed, so the window stays. Quit still ends hetu, which
-        // exits once its parts stopped whatever windows are left, and the session ending lets it close
+        // exits once its parts stopped whatever windows are left. The session ending lets it close
         window.on('session-end', () => { sessionEnding = true })
         window.on('close', event => {
           if (keepsOpen({ due: pluginsManager?.startupDue() === true, quitting: quitting !== null, sessionEnding })) event.preventDefault()
