@@ -73,7 +73,7 @@ export class Editor implements EditorClient {
     for (const hook of this.connected) hook()
   }
 
-  // Holds events until release, so the first view.opened and layout.state reach handlers start registers. The port
+  // Holds events until release, so the first view.opened reaches the handlers start registers. The port
   // comes with the worker's start, often before start runs
   hold(): void {
     this.held ??= []
