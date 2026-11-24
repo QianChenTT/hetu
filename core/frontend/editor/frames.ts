@@ -114,8 +114,9 @@ export class Frames {
   // again says the same frame still holds it from a theft already told
   onTheft: ((url: string, again: boolean) => void) | null = null
   // Told a note to open for owner: human for one a frame of owner's asked right after the human's press in one of them,
-  // or a note dragged out of one, else the plugin's own open
-  onOpen: ((owner: string, path: string, human: boolean) => void) | null = null
+  // or a note dragged out of one, else the plugin's own open. dropped says it was dragged, so it opens only where the
+  // luoshu resolves it inside owner's read
+  onOpen: ((owner: string, path: string, human: boolean, dropped: boolean) => void) | null = null
   // The theme's variables as last offered to the frames
   private variables: Readonly<Record<string, string>> = {}
   // The theme main last took, as JSON, so one main refused is sent again with the next offer
@@ -347,7 +348,7 @@ export class Frames {
     if (taken === null || this.mounted.get(instance) !== held) return
     const { ask } = taken
     if (ask.kind === 'open') {
-      if (taken.ok) this.onOpen?.(held.owner, ask.path, this.credit.use(held.owner))
+      if (taken.ok) this.onOpen?.(held.owner, ask.path, this.credit.use(held.owner), false)
       return
     }
     void this.dragToken(instance, held, ask.ask, taken.ok ? ask.path : null)
@@ -370,6 +371,6 @@ export class Frames {
     const got = await this.link.call('editor.dropToken', { token })
     if (!got.ok) return
     const { plugin, path } = got.result as { plugin: string, path: string }
-    this.onOpen?.(plugin, path, true)
+    this.onOpen?.(plugin, path, true, true)
   }
 }

@@ -199,7 +199,12 @@ export class UiPort {
     if (!reach.read) throw new UiRefusal('not-granted')
     // And on where the note is, so a spelling through a link into a folder the plugin can't read opens nothing. It
     // answers as an open whose read failed does, so the plugin can't tell whether a note is there
-    await this.options.hooks.open(path, async resolved => (await this.options.reach(owner, resolved)).read)
+    await this.options.hooks.open(path, this.resolvedReads(owner))
+  }
+
+  // Whether the plugin's own read reaches the path the luoshu resolved a note it named to
+  resolvedReads(owner: string): (resolved: string) => Promise<boolean> {
+    return async resolved => (await this.options.reach(owner, resolved)).read
   }
 
   // A key while focus is in a view instance: its owner's own binding, true when one took it
