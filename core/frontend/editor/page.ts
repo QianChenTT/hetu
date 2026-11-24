@@ -501,8 +501,9 @@ function start(bridge: Bridge): void {
 
   // via names the plugin whose node the human opened the note from, and the note takes focus. With via null, a plugin's
   // open, which isn't the human's: the note goes beside the others for the layout to place, the current one staying
-  // current, and reads judges the path the luoshu resolved
-  async function openNote(path: string, via: string | null, reads?: (resolved: string) => Promise<boolean>): Promise<void> {
+  // current, and reads judges the path the luoshu resolved. stay shows the human's note in front and leaves focus where it
+  // is, in the frame the human pressed in
+  async function openNote(path: string, via: string | null, reads?: (resolved: string) => Promise<boolean>, stay = false): Promise<void> {
     const focus = via !== null
     try {
       const id = await theNotes.open(path, reads)
@@ -514,7 +515,7 @@ function start(bridge: Bridge): void {
         else theLayers.schedule()
         return
       }
-      views.show(id)
+      views.show(id, !stay)
     } catch (err) {
       if (!focus) return
       const code = (err as { code?: string }).code ?? 'failed'
@@ -708,7 +709,7 @@ function start(bridge: Bridge): void {
     views.focus()
     if (!again) void link.call('editor.focusTaken', { url })
   }
-  theFrames.onOpen = (owner, path, human, dropped) => void (human ? openNote(path, owner, dropped ? ui.resolvedReads(owner) : undefined) : theDrawer.frameOpen(owner, path).catch(() => { /* refused: nothing opens, as for editor.open */ }))
+  theFrames.onOpen = (owner, path, human, dropped) => void (human ? openNote(path, owner, dropped ? ui.resolvedReads(owner) : undefined, !dropped) : theDrawer.frameOpen(owner, path).catch(() => { /* refused: nothing opens, as for editor.open */ }))
   window.addEventListener('blur', () => theFrames.focusMoved())
   document.addEventListener('focusin', () => theFrames.focusMoved())
 
