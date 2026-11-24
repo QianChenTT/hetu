@@ -55,8 +55,8 @@ describe('the key inside hetu', () => {
   })
 
   it('refuses a key of another kind', () => {
-    const rsa = generateKeyPairSync('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'pem', type: 'spki' }).toString()
-    expect(() => updateKey(rsa)).toThrow(/not an Ed25519 key/)
+    const p256 = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({ format: 'pem', type: 'spki' }).toString()
+    expect(() => updateKey(p256)).toThrow(/not an Ed25519 key/)
   })
 })
 
