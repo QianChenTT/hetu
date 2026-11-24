@@ -7,8 +7,9 @@ import { SCHEME } from './before-ready.ts'
 import type { ServedHost } from './lib.ts'
 import { viewsOwner } from '../../api/ids.ts'
 
-// Each role's own hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts. The
-// editor role also owns <id>.views for each plugin id, a host of its own for each plugin's views
+// Each role's fixed hosts. Every page of a role lives in its session and nothing in it reaches another role's hosts.
+// The editor role also owns a views host for each plugin id, which allowed checks by viewsOwner, so this list alone is
+// not every host a role reaches
 export const ROLES = Object.freeze({
   editor: Object.freeze(['editor', 'images', 'content']),
   trusted: Object.freeze(['trusted']),
