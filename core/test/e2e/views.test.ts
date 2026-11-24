@@ -378,17 +378,18 @@ describe('the real text', () => {
     await pickLayout(editor, 'tiles')
     const layout = await pluginWorker(app, 'tiles')
     await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    // Opened from the note list while the layout has drawn nothing, so its view still shows
+    await open(editor, 'a.md')
     await drive(layout, async scope => {
       const state = (scope.heard.filter(event => event.topic === 'layout.state').at(-1) as unknown as { state: { views: { instance: string }[] } }).state
       await scope.ctx.ui.layout.draw({
         kind: 'box', id: 'root', style: { display: 'flex', height: '100%' },
         children: [
-          { kind: 'slot', id: 's', instance: state.views[0]!.instance, style: { width: '300px' } },
+          { kind: 'slot', id: 's', instance: state.views.find(view => (view as { owner?: string }).owner === 'board')!.instance, style: { width: '300px' } },
           { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
         ],
       })
     })
-    await open(editor, 'a.md')
     await until(async () => (await pressed(editor).count()) === 1)
     const editorBox = (await editor.locator('.editor:not([hidden])').boundingBox())!
     await editor.keyboard.press('ControlOrMeta+/')
