@@ -160,8 +160,6 @@ describe('a staged update', () => {
     ['a class above 0', { class: 1, granted: [read] }, false, [read]],
     ['a class 0 plugin asking for a grant it doesn’t hold', { class: 0 }, false, [{ type: 'storage' }]],
     ['the policy job down', { class: 0 }, true, []],
-    // A layout draws the whole window, so a new one never takes its place unasked
-    ['a class 0 plugin holding ui.layout', { class: 0, granted: [{ type: 'ui.layout' }] }, false, [{ type: 'ui.layout' }]],
   ] as [string, object, boolean, Capability[]][])('waits for the Confirm with %s', async (_name, entry, broken, next) => {
     const { made, outcome } = await updating(entry, broken, next)
     expect(outcome).toMatchObject({ outcome: 'confirm' })

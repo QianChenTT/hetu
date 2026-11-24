@@ -26,7 +26,7 @@ export default definePlugin({
     scope.heard = heard
     const opened: string[] = []
     scope.opened = opened
-    for (const topic of ['view.opened', 'view.message', 'layout.state'] as const) ctx.ui.on(topic, event => heard.push(event))
+    for (const topic of ['view.opened', 'view.message'] as const) ctx.ui.on(topic, event => heard.push(event))
     ctx.editor.on('opened', event => opened.push((event as { instance: string }).instance))
   },
 })

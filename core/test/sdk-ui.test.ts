@@ -58,7 +58,13 @@ describe('ctx.ui', () => {
   it('answers unavailable with no port', async () => {
     const ui = new Ui(new Editor())
     await expect(ui.views.draw('v1', text('a', 'x'))).rejects.toMatchObject({ code: 'unavailable' })
-    await expect(ui.layout.draw(text('a', 'x'))).rejects.toMatchObject({ code: 'unavailable' })
+  })
+
+  // The drawer draws the window's layout itself, so ctx.ui holds views and events and nothing to draw a skeleton
+  it('holds no layout', () => {
+    const ui = new Ui(new Editor())
+    expect(Object.keys(ui)).not.toContain('layout')
+    expect('layout' in ui).toBe(false)
   })
 
   it('sends the whole tree first and then only the difference', async () => {
@@ -92,12 +98,12 @@ describe('ctx.ui', () => {
     const first = drawerEnd()
     editor.connect(first.transport)
     await ui.views.bind([{ key: 'j', command: 'down' }])
-    await ui.layout.draw(box('root', [text('a', 'x')]))
+    await ui.views.draw('v1', box('root', [text('a', 'x')]))
     const second = drawerEnd()
     editor.connect(second.transport)
     await new Promise(resolve => setTimeout(resolve, 0))
-    await ui.layout.draw(box('root', [text('a', 'x')]))
-    expect(second.calls.map(call => call.verb)).toEqual(['view.bind', 'layout.draw'])
+    await ui.views.draw('v1', box('root', [text('a', 'x')]))
+    expect(second.calls.map(call => call.verb)).toEqual(['view.bind', 'view.draw'])
     expect((second.calls[1]?.args as { ops: { op: string }[] }).ops[0]?.op).toBe('tree')
   })
 
@@ -108,12 +114,12 @@ describe('ctx.ui', () => {
     editor.connect(end.transport)
     const heard: unknown[] = []
     ui.on('view.event', event => heard.push(event))
-    ui.on('layout.state', event => heard.push(event))
+    ui.on('view.shown', event => heard.push(event))
     end.event({ topic: 'view.event', instance: 'v1', node: 'add', type: 'click' })
-    end.event({ topic: 'layout.state', state: { width: 1 } })
+    end.event({ topic: 'view.shown', instance: 'v1', width: 300, height: 200 })
     expect(heard).toEqual([
       { v: 1, kind: 'event', topic: 'view.event', instance: 'v1', node: 'add', type: 'click' },
-      { v: 1, kind: 'event', topic: 'layout.state', state: { width: 1 } },
+      { v: 1, kind: 'event', topic: 'view.shown', instance: 'v1', width: 300, height: 200 },
     ])
     expect(await ui.views.open('board')).toBe('v7')
   })
@@ -125,17 +131,17 @@ describe('ctx.ui', () => {
     const end = drawerEnd()
     editor.connect(end.transport)
     end.event({ topic: 'view.opened', instance: 'v1', view: 'board' })
-    end.event({ topic: 'layout.state', state: { width: 1 } })
+    end.event({ topic: 'view.shown', instance: 'v1', width: 300, height: 200 })
     const heard: string[] = []
     ui.on('view.opened', event => heard.push(event.topic))
-    ui.on('layout.state', event => heard.push(event.topic))
+    ui.on('view.shown', event => heard.push(event.topic))
     expect(heard).toEqual([])
     editor.release()
-    expect(heard).toEqual(['view.opened', 'layout.state'])
+    expect(heard).toEqual(['view.opened', 'view.shown'])
     end.event({ topic: 'view.closed', instance: 'v1' })
     ui.on('view.closed', event => heard.push(event.topic))
     end.event({ topic: 'view.closed', instance: 'v1' })
-    expect(heard).toEqual(['view.opened', 'layout.state', 'view.closed'])
+    expect(heard).toEqual(['view.opened', 'view.shown', 'view.closed'])
   })
 
   it('opens a note through ctx.editor', async () => {

@@ -69,7 +69,6 @@ const everyCapability = [
   { type: 'ui.view' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
-  { type: 'ui.layout' },
   { type: 'ui.keystream' },
   { type: 'events.subscribe', topics: ['note.written'] },
   { type: 'storage' },

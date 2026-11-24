@@ -52,12 +52,13 @@ describe('a manifest', () => {
   })
 
   it('parses an api range outside this core, which the plugins manager refuses with api', () => {
-    expect(API_VERSION).toBe(5)
+    expect(API_VERSION).toBe(6)
+    expect(supportsApi('^6')).toBe(true)
     expect(supportsApi('^5')).toBe(true)
     expect(supportsApi('^4')).toBe(true)
     expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
-    expect(supportsApi('^6')).toBe(false)
+    expect(supportsApi('^7')).toBe(false)
     expect(supportsApi('^0')).toBe(false)
     // A prefix of this version is another version
     expect(supportsApi('^10')).toBe(false)
@@ -136,6 +137,15 @@ describe('a manifest', () => {
       expect(supportsApi('^4', ['ui.keystream'])).toBe(false)
       expect(supportsApi('^4', ['ui.view', 'ui.keys'])).toBe(false)
       expect(supportsApi('^5', ['door.handle', 'ui.keystream'])).toBe(true)
+    })
+
+    // ui.layout went with layout.draw and the layout topics, which reached only ui.layout holders, so a plugin naming
+    // no ui.layout loses nothing
+    it('keeps version 5 under version 6 unless the manifest names ui.layout', () => {
+      expect(apiChanges[6]).toEqual({ added: [], removed: ['ui.layout'], reshaped: [], actionsChanged: false })
+      expect(supportsApi('^5', ['ui.view', 'ui.keystream', 'door.handle'])).toBe(true)
+      expect(supportsApi('^5', ['ui.view', 'ui.layout'])).toBe(false)
+      expect(supportsApi('^4', ['ui.layout'])).toBe(false)
     })
   })
 

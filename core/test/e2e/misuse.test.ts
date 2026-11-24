@@ -24,7 +24,7 @@ export default definePlugin({
     scope.ctx = ctx
     const heard: unknown[] = []
     scope.heard = heard
-    const topics = ['view.opened', 'view.event', 'view.message', 'layout.state', 'layout.event', 'layout.drop', 'layout.open'] as const
+    const topics = ['view.opened', 'view.event', 'view.message'] as const
     for (const topic of topics) ctx.ui.on(topic, event => heard.push(event))
     ctx.ui.on('view.opened', event => {
       void ctx.ui.views.draw(event.instance, {

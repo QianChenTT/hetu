@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { coreActions, eventActions, providerActions } from '../api/actions.ts'
 import { capabilityTypes } from '../api/capabilities.ts'
 import { doorId } from '../api/ids.ts'
-import { layoutTopics, uiNeeds } from '../api/ui.ts'
+import { uiNeeds } from '../api/ui.ts'
 import { placeProblems, type Place } from './listed-places.ts'
 import { apiConstants, namedIn, relaysOf, type Known, type Named, type Relays } from './named-parts.ts'
 import { shippedFiles } from './shipped-files.ts'
@@ -25,11 +25,10 @@ const files = shippedFiles({ kinds: ['ts', 'js'] }).filter(file => file !== 'cor
 const retired = ['leases', 'mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks']
 export const outside: ReadonlyMap<string, string> = new Map(retired.map(id => [id, id]))
 
-// The names core's own contract tables hold, read from core/api: the capability types, the drawer's verbs, its event
-// topics to the layout and the actions. Core defines these, so net.fetch or layout.draw is not core knowing a plugin
-// (D-639, D-643)
+// The names core's own contract tables hold, read from core/api: the capability types, the drawer's verbs and the
+// actions. Core defines these, so net.fetch or view.draw is not core knowing a plugin (D-639, D-643)
 export const contract: ReadonlySet<string> = new Set([
-  ...capabilityTypes, ...Object.keys(uiNeeds), ...layoutTopics,
+  ...capabilityTypes, ...Object.keys(uiNeeds),
   ...Object.keys(coreActions), ...Object.keys(eventActions), ...Object.keys(providerActions),
 ])
 
@@ -46,9 +45,7 @@ export const listed: readonly Place[] = [
   { place: 'lib/canonical.ts', text: "refuse('git')", hits: 1, why: 'the refusal of a path inside a .git folder, not the git plugin' },
   { place: 'backend/providers/history/history.ts', text: "findProgram('git'", hits: 2, why: 'the git program history runs, not the git plugin' },
   { place: 'backend/policy/grant-risk-classifier/rules.ts', text: "'git', 'node', 'nodejs'", hits: 1, why: 'the git program among the commands that run others, not the git plugin' },
-  { place: 'frontend/editor/ui-port.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on' },
-  { place: 'sdk/ui.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on, as the SDK names it' },
-  { place: 'frontend/editor/bridge.ts', text: "? 'layout' :", hits: 1, why: 'the surface a layout.draw call draws on, the skeleton' },
+  { place: 'frontend/editor/ui-port.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface the layout of the drawer draws on' },
   { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'net', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
   { place: 'backend/door/checks.ts', text: "route: 'mcp'", hits: 1, why: 'the route of the door\'s one endpoint, POST /mcp, named for the protocol and not the mcp plugin' },
 ]
@@ -165,21 +162,24 @@ describe('the parts outside main check itself', () => {
     ["if (action === 'notify.show') {}", `${at}:1 'notify.show' names notify, a part hetu doesn't run in main`],
     ["if (call.verb === 'layout.secret') {}", `${at}:1 'layout.secret' names layout, a part hetu doesn't run in main`],
     ["send(owner, { topic: 'layout.secret', instance })", `${at}:1 'layout.secret' names layout, a part hetu doesn't run in main`],
+    // The verb and the topics of the layout plugin left the tables with it
+    ["if (call.verb === 'layout.draw') {}", `${at}:1 'layout.draw' names layout, a part hetu doesn't run in main`],
+    ["send(owner, { topic: 'layout.state', state })", `${at}:1 'layout.state' names layout, a part hetu doesn't run in main`],
   ])('fails %j, a name no table of core holds', (source, problem) => {
     expect(problems(source)).toEqual([problem])
   })
 
   it.each([
     ["if (granted.type === 'net.fetch') {}", 'net.fetch'],
-    ["if (call.verb === 'layout.draw') {}", 'layout.draw'],
-    ["if (topic === 'layout.state') {}", 'layout.state'],
+    ["if (call.verb === 'view.draw') {}", 'view.draw'],
   ])('passes %j, a name the tables of core/api hold', (source, name) => {
     expect(contract.has(name)).toBe(true)
     expect(problems(source)).toEqual([])
   })
 
   it('reads the tables from core/api and counts a constant holding a name no table holds', () => {
-    for (const name of ['net.fetch', 'layout.draw', 'layout.close', 'events.subscribe', 'luoshu.read', 'core.status']) expect(contract.has(name), name).toBe(true)
+    for (const name of ['net.fetch', 'view.draw', 'editor.open', 'events.subscribe', 'luoshu.read', 'core.status']) expect(contract.has(name), name).toBe(true)
+    for (const name of ['ui.layout', 'layout.draw', 'layout.state', 'layout.close']) expect(contract.has(name), name).toBe(false)
     expect(named.get('notify.show')).toBe('notify')
     expect(named.get('net.fetch')).toBe(undefined)
     expect(named.get('layout')).toBe('layout')

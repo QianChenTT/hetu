@@ -22,7 +22,6 @@ const one: Record<Capability['type'], Capability> = {
   'luoshu.list': { type: 'luoshu.list', paths: ['**'] },
   'net.fetch': { type: 'net.fetch', hosts: ['api.example.com'] },
   'ui.view': { type: 'ui.view' },
-  'ui.layout': { type: 'ui.layout' },
   'ui.decoration': { type: 'ui.decoration' },
   'ui.command': { type: 'ui.command' },
   'ui.keystream': { type: 'ui.keystream' },
@@ -46,6 +45,11 @@ describe('a grant as a plain sentence', () => {
       expect(sentence, type).toMatch(/^[A-Z]/)
       expect(sentence, type).not.toContain(type)
     }
+  })
+
+  // ui.layout left the fixed list, so its sentence went too and it reads as any type no row names
+  it('has no sentence for ui.layout', () => {
+    expect(grantSentence({ type: 'ui.layout' } as never)).toBe('Use "ui.layout"')
   })
 
   it('says all your notes for ** and **/*, quotes any other scope as data and says no notes for none', () => {
@@ -93,7 +97,7 @@ describe('what the install box draws', () => {
   })
 
   it('names the source and that the plugins are unsigned, then each plugin with its grants as sentences', () => {
-    const box = installBox(staging([found({}), found({ id: 'layout', name: 'Layout', version: '0.3.0', capabilities: [{ type: 'ui.layout' }], class: 0 })]))
+    const box = installBox(staging([found({}), found({ id: 'layout', name: 'Layout', version: '0.3.0', capabilities: [{ type: 'ui.view' }], class: 0 })]))
     expect(box).toMatchObject({
       step: 'found',
       source: 'From the zip "C:\\plugins.zip"',
@@ -105,7 +109,7 @@ describe('what the install box draws', () => {
       { id: 'search', label: '"Search" (search), version 1.2.0', line: 'class 1, Reader', high: false, lines: [], grants: ['Read all your notes'], problem: null, picked: true },
       {
         id: 'layout', label: '"Layout" (layout), version 0.3.0', line: 'class 0, Contained', high: false, lines: [],
-        grants: ['Lay out the whole editor window once you pick it as the layout'], problem: null, picked: false,
+        grants: ['Show panes and items of its own in the editor window'], problem: null, picked: false,
       },
     ])
   })

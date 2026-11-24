@@ -68,7 +68,7 @@ describe('the start order', () => {
     })
     await pluginsManager.start()
     expect(runtime.half('outline').got('init')).toEqual([{
-      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 5, deps: { git: 'unavailable', luoshu: 'ready' },
+      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 6, deps: { git: 'unavailable', luoshu: 'ready' },
       lastStop: null, previousVersion: null,
     }])
   })

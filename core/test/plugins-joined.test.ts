@@ -72,7 +72,7 @@ const notesFolder = async (notes: Record<string, string>) => {
 const uiView = { type: 'ui.view' } as Capability
 const olderCopies: [string, Capability[], Partial<Plugin>][] = [
   ['file-explorer', [listAll, readAll, writeAll, uiView], { class: 4, firstUse: [writeAll] }],
-  ['layout', [{ type: 'ui.layout' }, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
+  ['layout', [{ type: 'ui.layout' } as unknown as Capability, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
   ['hidden-marks', [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }, uiView], { class: 1 }],
 ]
 

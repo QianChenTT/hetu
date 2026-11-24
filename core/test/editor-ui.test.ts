@@ -90,7 +90,6 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
 
 const text = (id: string, value: string): UiNode => ({ kind: 'text', id, text: value })
 const viewer: Reach = { verbs: ['ui.view'] }
-const layouter: Reach = { verbs: ['ui.layout'] }
 
 async function connected(drawer: Drawer, plugin: string) {
   const made = port()
@@ -232,13 +231,13 @@ describe("the drawer's own layout on the drawer port", () => {
     expect(shown(drawer)).toEqual(['v1'])
   })
 
-  // The window draws hetu's layout, so a layout plugin draws nothing, one called layout or holding ui.layout included
-  it('refuses a skeleton from every plugin and tells no plugin of the window', async () => {
-    const { drawer, drawn } = started({ layout: layouter, kanban: viewer })
+  // The window draws hetu's layout and layout.draw is no verb, so no plugin draws a skeleton, one called layout included
+  it('refuses a skeleton from every plugin as an unknown call and tells no plugin of the window', async () => {
+    const { drawer, drawn } = started({ layout: viewer, kanban: viewer })
     const own = await connected(drawer, 'layout')
     const board = await connected(drawer, 'kanban')
     drawer.ui.arrangementLoaded(null)
-    expect(await own.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await own.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
     expect(drawer.ui.surfaces.tree('layout', SKELETON)).toBe(null)
     drawer.ui.state(stateOf(drawer))
     drawer.ui.nodeEvent('layout', SKELETON, 'bottom-toggle', 'click')
@@ -311,7 +310,7 @@ describe("the drawer's own layout on the drawer port", () => {
 
 describe('events from the human, by owner', () => {
   it('sends a node\'s event to the owner of its surface only', async () => {
-    const { drawer } = started({ layout: layouter, kanban: viewer, files: viewer })
+    const { drawer } = started({ layout: viewer, kanban: viewer, files: viewer })
     const own = await connected(drawer, 'layout')
     const board = await connected(drawer, 'kanban')
     const tree = await connected(drawer, 'files')

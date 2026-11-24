@@ -16,7 +16,6 @@ describe('the class of one grant', () => {
     ['ui.view', { type: 'ui.view' }, 0],
     ['ui.decoration', { type: 'ui.decoration' }, 0],
     ['ui.command', { type: 'ui.command' }, 0],
-    ['ui.layout', { type: 'ui.layout' }, 0],
     ['storage', { type: 'storage' }, 0],
     ['events.subscribe', { type: 'events.subscribe', topics: ['luoshu.changed'] }, 0],
     ['plugin.call on its own', call, 0],
@@ -91,6 +90,8 @@ describe('a plugin\'s class', () => {
   it('counts a type it doesn’t know as 4, so nothing new is ever class 0 by default', () => {
     expect(caps.classify([{ type: 'net.listen' } as unknown as Capability], [])).toBe(4)
     expect(caps.firstUse([{ type: 'net.listen' } as unknown as Capability], [])).toEqual([{ type: 'net.listen' }])
+    // ui.layout left the fixed list in version 6
+    expect(caps.classify([{ type: 'ui.layout' } as unknown as Capability], [])).toBe(4)
   })
 })
 
