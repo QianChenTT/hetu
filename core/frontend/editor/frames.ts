@@ -10,12 +10,51 @@ import type { Rect } from './drag.ts'
 // with scripts only, so its origin is opaque. It gets a port on its first load and on any later one it is removed and
 // main records frame.navigated, so a navigated frame never gets a port. A frame talks only to its own plugin's worker
 // through the drawer, plain data as JSON text within the cap at a rate. Frames sit in the lifted layer over their
-// slots and are never moved in the DOM, which would load them again. A frame is inert under a shield of the drawer's
-// until the human clicks it, and inert again once the human presses anywhere else in the page. Chromium lets a frame in
-// another process focus itself even so, so one that takes focus while inert is closed for the rest of the page's life,
-// focus goes back to the note and its slot says why. No frame takes what the human types on its own
+// slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
+// it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
+// move ends, which leaves it a key or none of what the human types
 
 export const FRAME_MESSAGES_PER_SECOND = 100
+
+// How long after a press, or the core's own move, focus may still go into that frame
+export const FOCUS_GRACE_MS = 500
+// While a frame holds focus the page hears nothing when another frame takes it, so it looks again this often
+export const FOCUS_WATCH_MS = 50
+
+// Who put focus in a frame: the human by a press that landed in it or the core by its own move, each counted for one
+// move into that frame and only for a short while. Any other move into a frame is the frame's own
+export class FocusGuard {
+  private readonly clock: () => number
+  private allowed: { instance: string, at: number } | null = null
+  // The frame let in last, while focus stays in it
+  private holder: string | null = null
+
+  constructor(clock: () => number = () => performance.now()) {
+    this.clock = clock
+  }
+
+  // A press landed in this frame, or on the page's own elements with null, or the core is moving focus there itself.
+  // A frame holding focus keeps it only through a press in it, since the page may not see focus leave and come back
+  allow(instance: string | null): void {
+    this.allowed = instance === null ? null : { instance, at: this.clock() }
+    if (instance !== this.holder) this.holder = null
+  }
+
+  // Focus is in this frame now: true when it was let in already or just allowed
+  entered(instance: string): boolean {
+    if (this.holder === instance) return true
+    const allowed = this.allowed
+    const ok = allowed !== null && allowed.instance === instance && this.clock() - allowed.at <= FOCUS_GRACE_MS
+    this.allowed = null
+    this.holder = ok ? instance : null
+    return ok
+  }
+
+  // Focus is in the page's own document again
+  left(): void {
+    this.holder = null
+  }
+}
 
 // Which load a frame is at: the first gets the port, any later one means it navigated
 export class FrameLoads {
@@ -66,7 +105,6 @@ type Mounted = {
   owner: string
   frame: string
   element: HTMLIFrameElement | null
-  shield: HTMLElement | null
   box: Rect | null
   url: string | null
   port: MessagePort | null
@@ -80,10 +118,11 @@ export class Frames {
   private readonly loads = new FrameLoads()
   private readonly mounted = new Map<string, Mounted>()
   private readonly gone: (instance: string) => boolean
-  // Instances whose frame took focus on its own, with the note shown in their slot
-  private readonly closed = new Map<string, HTMLElement>()
-  // Told when a frame took focus on its own, so the page gives it back to the note
-  onTheft: (() => void) | null = null
+  private readonly guard = new FocusGuard()
+  private checking = false
+  private watch: ReturnType<typeof setInterval> | null = null
+  // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note
+  onTheft: ((url: string | null) => void) | null = null
 
   // relay hands what a frame sent to its owner's worker. gone says an instance is closed or its owner down
   constructor(link: CoreLink, host: HTMLElement, relay: (owner: string, instance: string, data: unknown) => void, gone: (instance: string) => boolean) {
@@ -95,18 +134,13 @@ export class Frames {
 
   // The frame drawing a view instance laid over its slot, mounted on first use, or hidden while no slot holds it
   place(owner: string, instance: string, frame: string, box: Rect | null): void {
-    const note = this.closed.get(instance)
-    if (note !== undefined) {
-      lay(note, box)
-      return
-    }
     let held = this.mounted.get(instance)
     if (held !== undefined && (held.owner !== owner || held.frame !== frame)) {
       this.remove(instance, false)
       held = undefined
     }
     if (held === undefined) {
-      held = { owner, frame, element: null, shield: null, box: null, url: null, port: null, inbox: new FrameInbox() }
+      held = { owner, frame, element: null, box: null, url: null, port: null, inbox: new FrameInbox() }
       this.mounted.set(instance, held)
       void this.mount(instance, held)
     }
@@ -114,43 +148,65 @@ export class Frames {
     this.lay(held)
   }
 
-  // Focus left the page's own document. A frame that took it while inert took it on its own
-  checkFocus(): void {
-    for (const [instance, held] of this.mounted) {
-      if (held.element !== null && held.element.inert && document.activeElement === held.element) this.theft(instance, held)
+  // Main's word that the human pressed at this point of the page, in a frame or not. The frame drawn there may take
+  // focus from it
+  pressed(x: number, y: number): void {
+    this.guard.allow(this.at(document.elementFromPoint(x, y))?.[0] ?? null)
+  }
+
+  // Focus moved, in the page or into a frame. It is checked once the move is done, since focus pulled back while the
+  // move still runs is moved on again by it
+  focusMoved(): void {
+    if (this.checking) return
+    this.checking = true
+    setTimeout(() => {
+      this.checking = false
+      this.check()
+    }, 0)
+  }
+
+  private check(): void {
+    const found = this.at(document.activeElement)
+    if (found === null) {
+      this.guard.left()
+      this.watching(false)
+      return
+    }
+    const [instance, held] = found
+    if (this.guard.entered(instance)) {
+      this.watching(true)
+      return
+    }
+    // TODO: decide what a plugin caught taking focus gets (stop it, a notice), only pulled back for now
+    this.onTheft?.(held.url)
+  }
+
+  private watching(on: boolean): void {
+    if (on && this.watch === null) this.watch = setInterval(() => this.check(), FOCUS_WATCH_MS)
+    if (!on && this.watch !== null) {
+      clearInterval(this.watch)
+      this.watch = null
     }
   }
 
-  private theft(instance: string, held: Mounted): void {
-    const note = document.createElement('div')
-    note.className = 'hetu-down'
-    note.textContent = `${held.owner}'s frame took focus without a click, so it is closed until the window loads again`
-    this.host.append(note)
-    this.closed.set(instance, note)
-    const box = held.box
-    this.remove(instance, false)
-    lay(note, box)
-    this.onTheft?.()
+  // The instance whose frame main served from this URL
+  instanceAt(url: string): string | null {
+    for (const [instance, held] of this.mounted) if (held.url === url) return instance
+    return null
   }
 
-  // The human pressed somewhere in the page outside every frame: each goes inert under its shield again
-  deactivate(): void {
-    for (const held of this.mounted.values()) {
-      if (held.element === null || held.element.inert) continue
-      held.element.inert = true
-      this.lay(held)
-    }
+  // The frame that is this element, with its instance
+  private at(element: Element | null): [string, Mounted] | null {
+    for (const entry of this.mounted) if (element !== null && entry[1].element === element) return entry
+    return null
   }
 
   private lay(held: Mounted): void {
-    if (held.element === null || held.shield === null) return
-    lay(held.element, held.box)
-    lay(held.shield, held.element.inert ? held.box : null)
+    if (held.element !== null) lay(held.element, held.box)
   }
 
   // Frames not placed this time are hidden, and removed once their view closed or went down
   forget(keep: ReadonlySet<string>): void {
-    for (const [instance, note] of this.closed) if (!keep.has(instance)) lay(note, null)
     for (const [instance, held] of this.mounted) {
       if (keep.has(instance)) continue
       if (this.gone(instance)) this.remove(instance, false)
@@ -177,7 +233,6 @@ export class Frames {
     this.loads.ended(instance)
     held.port?.close()
     held.element?.remove()
-    held.shield?.remove()
     if (held.url !== null) void this.link.call('editor.frameGone', { url: held.url, navigated })
   }
 
@@ -197,28 +252,14 @@ export class Frames {
     element.setAttribute('sandbox', 'allow-scripts')
     element.setAttribute('referrerpolicy', 'no-referrer')
     element.hidden = true
-    element.inert = true
+    // Tab never moves into a frame, which no press would have let in
+    element.tabIndex = -1
     // The source is set before the frame joins the page, so its first load is its own page and never about:blank
     element.src = url
     element.addEventListener('load', () => this.loaded(instance, held))
-    element.addEventListener('focus', () => {
-      if (element.inert && this.mounted.get(instance) === held) this.theft(instance, held)
-    })
-    const shield = document.createElement('div')
-    shield.className = 'hetu-frame-shield'
-    shield.hidden = true
-    shield.title = `${held.owner}: click to use`
-    // Only the human's own click lets the frame take input
-    shield.addEventListener('click', event => {
-      if (!event.isTrusted || held.element === null) return
-      held.element.inert = false
-      this.lay(held)
-      held.element.focus()
-    })
     held.element = element
-    held.shield = shield
     this.loads.started(instance)
-    this.host.append(element, shield)
+    this.host.append(element)
     this.lay(held)
   }
 

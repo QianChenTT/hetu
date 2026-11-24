@@ -162,24 +162,18 @@ body {
   font: 14px system-ui, sans-serif;
 }
 
-/* In the lifted layer: views, frames and a frame's shield, then titles, then editors, so nothing a layout places over
-   an editor's box, its titles included, covers the note */
+/* In the lifted layer: views and frames, then titles, then editors, so nothing a layout places over an editor's box,
+   its titles included, covers the note */
 .hetu-surface,
 .hetu-items,
 .hetu-down,
-.hetu-frame,
-.hetu-frame-shield {
+.hetu-frame {
   z-index: 1;
   contain: paint;
 }
 
 .hetu-frame {
   border: 0;
-}
-
-.hetu-frame-shield {
-  cursor: pointer;
-  background: transparent;
 }
 
 #editors > .hetu-surface {

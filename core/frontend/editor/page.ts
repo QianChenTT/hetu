@@ -651,6 +651,8 @@ function start(bridge: Bridge): void {
     const took = tag !== null && tag.tree.surface !== SKELETON ? theDrawer.viewKey(tag.tree.surface, name) : theDrawer.key(null, name)
     if (took) event.preventDefault()
   })
+  // A key pressed in a frame never reaches the page, so main matches the views' bindings itself
+  ui.onBindings = (owner, keys) => void link.call('editor.viewKeys', { plugin: owner, keys })
 
   element('raw-open').addEventListener('click', toggleRaw)
   element('security').addEventListener('click', () => shell.open())
@@ -659,11 +661,23 @@ function start(bridge: Bridge): void {
 
   window.addEventListener('message', event => {
     if (event.source !== window || event.origin !== location.origin) return
-    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown } | null
+    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown, url?: unknown, press?: { down?: unknown, x?: unknown, y?: unknown } } | null
     // A core key main took before any frame could, since a frame with focus would hear it first
     if (data?.hetu === 'key' && typeof data.key === 'string' && (CORE_KEY_NAMES as readonly string[]).includes(data.key)) {
       if (data.key === 'raw' && rawOpen) toggleRaw()
       else coreKey(data.key as CoreKey)
+      return
+    }
+    // A key a plugin's views bound, pressed while focus was in that frame of the plugin's
+    if (data?.hetu === 'view-key') {
+      const instance = typeof data.url === 'string' ? theFrames.instanceAt(data.url) : null
+      if (instance !== null && typeof data.key === 'string') ui.viewKey(instance, data.key)
+      return
+    }
+    // A press main saw, a frame's own included, which the page alone never hears
+    if (data?.hetu === 'press') {
+      const press = data.press
+      if (press?.down === true && typeof press.x === 'number' && typeof press.y === 'number') theFrames.pressed(press.x, press.y)
       return
     }
     if (typeof data?.plugin !== 'string' || typeof data.incarnation !== 'number') return
@@ -675,14 +689,14 @@ function start(bridge: Bridge): void {
   link.on('core.status', () => void readViews())
   link.on('core.security', () => void readViews())
 
-  // A frame that took focus on its own is closed and the note gets it back
-  theFrames.onTheft = () => views.focus()
-  window.addEventListener('blur', () => theFrames.checkFocus())
-
-  // A press anywhere but on a frame's shield puts every frame back behind its shield
-  window.addEventListener('pointerdown', event => {
-    if (!(event.target instanceof Element) || event.target.closest('.hetu-frame-shield') === null) theFrames.deactivate()
-  }, true)
+  // A frame that took focus on its own gives it back to the note and the core records it. The page sees focus leave its
+  // own document for a frame as a blur
+  theFrames.onTheft = url => {
+    views.focus()
+    if (url !== null) void link.call('editor.focusTaken', { url })
+  }
+  window.addEventListener('blur', () => theFrames.focusMoved())
+  document.addEventListener('focusin', () => theFrames.focusMoved())
 
   shell.start()
   theNotes.start()

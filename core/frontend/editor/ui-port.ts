@@ -56,6 +56,8 @@ export class UiPort {
   private readonly bindings = new Map<string, Map<string, string>>()
   private current: string | null = null
   private lastState = ''
+  // Told the keys an owner's views bound, named the page's way, each time they change
+  onBindings: ((owner: string, keys: string[]) => void) | null = null
 
   constructor(options: Options) {
     this.options = options
@@ -171,6 +173,7 @@ export class UiPort {
         const bound = call.args.bindings.map(binding => [this.options.normal(binding.key), binding.command] as const)
         if (bound.some(([key]) => this.options.reserved(key))) throw new UiRefusal('invalid')
         this.bindings.set(owner, new Map(bound))
+        this.onBindings?.(owner, bound.map(([key]) => key))
         return null
       }
       case 'layout.draw': {
@@ -249,7 +252,7 @@ export class UiPort {
 
   private dropViews(owner: string): void {
     for (const held of this.views.all()) if (held.owner === owner) this.surfaces.dropSurface(owner, held.instance)
-    this.bindings.delete(owner)
+    if (this.bindings.delete(owner)) this.onBindings?.(owner, [])
     this.views.ended(owner)
     this.options.hooks.changed()
   }
