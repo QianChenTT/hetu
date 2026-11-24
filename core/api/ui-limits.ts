@@ -90,8 +90,8 @@ function askOf(message: unknown): FrameAsk | null {
 export const OPEN_GRACE_MS = 500
 
 // Which plugin's frames may open one note as the human's: the plugin whose frame the human last pressed in, or pressed
-// Enter or Space in, for one open within OPEN_GRACE_MS. A press anywhere else ends it. Letting go of a press not yet
-// used counts again from then, so a long press opens once
+// Enter or Space in, for one open within OPEN_GRACE_MS. A press anywhere else ends it. Letting go of the press
+// counts it from then, so a long press opens once too
 export class OpenCredit {
   private readonly clock: () => number
   private credit: { owner: string, at: number, used: boolean } | null = null
@@ -106,7 +106,7 @@ export class OpenCredit {
   }
 
   released(owner: string | null): void {
-    if (this.credit !== null && this.credit.owner === owner && !this.credit.used) this.credit.at = this.clock()
+    if (this.credit !== null && this.credit.owner === owner) this.credit.at = this.clock()
   }
 
   keyed(owner: string): void {
