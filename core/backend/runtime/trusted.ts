@@ -76,9 +76,14 @@ async function pickOne(trusted: TrustedWindow, dialog: FolderDialog, options: Pa
   return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths[0]
 }
 
-// The folder dialog for app.pickFolder
-export function pickFolder(trusted: TrustedWindow, dialog: FolderDialog): Promise<string | null> {
-  return pickOne(trusted, dialog, { properties: ['openDirectory', 'createDirectory'], title: 'Pick the notes folder' })
+// The folder dialog for app.pickFolder, the folder picked then asked for as luoshu.pick, which waits for the Confirm. null
+// when the human cancelled. Asked here from main's own answer and not sent back by the page: the dialog closing gives
+// the trusted window focus, which restarts its input delay, so a request the page sent then counted for nothing. The
+// click that opened the dialog counted and the human picked the folder in main's own dialog, so nothing the page could
+// fake is asked for. The Confirm still waits out the delay
+export async function pickFolder<T>(trusted: TrustedWindow, dialog: FolderDialog, ask: (change: { kind: 'luoshu.pick', folder: string }) => Promise<T>): Promise<T | null> {
+  const folder = await pickOne(trusted, dialog, { properties: ['openDirectory', 'createDirectory'], title: 'Pick the notes folder' })
+  return folder === null ? null : ask({ kind: 'luoshu.pick', folder })
 }
 
 // The dialog for app.stagePicked: one zip or one folder holding one plugin or several

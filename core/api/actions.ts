@@ -176,8 +176,8 @@ const coreTable = {
   'core.restart': { from: 'windows', args: target },
   'app.quit': { from: 'windows', args: nothing },
   'app.relaunch': { from: 'trusted', args: nothing },
-  // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.pick,
-  // which waits for the Confirm
+  // The OS folder dialog over the trusted window, the folder picked then asked for as luoshu.pick in main, which waits
+  // for the Confirm. Answers as security.request does, or null when the human cancelled
   'app.pickFolder': { from: 'trusted', args: nothing },
   ...installTable,
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
@@ -485,7 +485,7 @@ export type ActionResults = InstallResults & {
   // One entry for each path asked about that is locked, in the order asked, the path as the caller spelled it and
   // when its lock ends in milliseconds since the epoch. A path no lock holds is left out
   'lock.held': { locks: { path: string, until: number }[] }
-  'app.pickFolder': string | null
+  'app.pickFolder': { applied: true } | { held: string } | null
   'gate.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }

@@ -7,7 +7,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage, setUp } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -280,6 +280,7 @@ self.onmessage = event => {
     // An approval writes no signer until plugin provenance, so this build is trusted as the human would trust one
     await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(listener), await hashOf(reader)] })
     await store.writeLuoshu({ folder: await temp() })
+    await setUp(dataDir)
     const app = await launch(dataDir)
     const editor = await editorPage(app)
     // The grant risk classifier is a core module, on from the start

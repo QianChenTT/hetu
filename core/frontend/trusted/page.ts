@@ -4,7 +4,7 @@ import { Arming } from './arming.ts'
 import { controlKey, sameControl } from './focus.ts'
 import { installSay, type InstallBox } from './install.ts'
 import type { Startup } from './startup.ts'
-import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, TrustedPage } from './view.ts'
+import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, type Tab, TrustedPage } from './view.ts'
 
 // The preload's bridge, there only in the window's top frame
 const bridge = (window as unknown as { hetu?: Bridge }).hetu
@@ -136,38 +136,201 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   return section
 }
 
-// The page's own menu, which shows the startup screen again
-function menu(page: TrustedPage): HTMLDetailsElement {
-  const made = element('details')
-  made.className = 'menu'
-  made.append(element('summary', 'Menu'), button('Show the startup screen again', () => page.showStartup()))
-  return made
-}
-
-// The four steps above the rest, each with what it has done and the control it offers, then Close for now
-function startupSection(page: TrustedPage, startup: Startup): HTMLElement {
+// The welcome guide: where it stands, then one step with what it has done and the control it offers, then Back, Next
+// and Go to Plugins. Approving stays a request here, so its Confirm is drawn above and waits out the delay
+function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLElement {
   const section = element('section')
   section.className = 'startup'
-  const heading = element('h2', 'Start with hetu in four steps')
+  const heading = element('h2', 'Get started with hetu')
   heading.id = 'startup-heading'
   section.setAttribute('aria-labelledby', heading.id)
-  const steps = element('ol')
-  for (const step of startup.steps) {
-    const item = element('li')
-    item.append(element('h3', step.title), ...step.lines.map(line => element('p', line)))
-    if (step.done !== null) {
-      const done = element('p', step.done)
-      done.className = 'done'
-      item.append(done)
-    }
-    if (step.offers === 'folder') item.append(button('Pick a folder', () => page.pickFolder()))
-    if (step.offers === 'install') item.append(installControls(page, 'startup', 'or from a GitHub link, a suggestion to edit or replace', startup.suggested))
-    steps.append(item)
+  const where = element('ol')
+  where.className = 'guide-steps'
+  where.setAttribute('aria-label', 'Steps')
+  for (const [at, step] of startup.steps.entries()) {
+    const item = element('li', step.done === null ? step.title : `${step.title} (done)`)
+    if (step.done !== null) item.className = 'done-step'
+    if (at === startup.at) item.setAttribute('aria-current', 'step')
+    where.append(item)
   }
-  section.append(heading, steps, button('Close for now', () => page.closeStartup()))
+  const step = startup.steps[startup.at]!
+  const body = element('div')
+  body.className = 'guide-step'
+  body.append(element('h3', `Step ${startup.at + 1} of ${startup.steps.length}: ${step.title}`), ...step.lines.map(line => element('p', line)))
+  if (step.done !== null) {
+    const done = element('p', step.done)
+    done.className = 'done'
+    body.append(done)
+  }
+  if (step.offers === 'folder') body.append(button('Pick a folder', () => page.pickFolder()))
+  if (step.offers === 'install') body.append(installControls(page, 'startup', 'or from a GitHub link, a suggestion to edit or replace', startup.suggested))
+  if (step.offers === 'approve') {
+    for (const plugin of shown.plugins.filter(row => row.actions.includes('approve'))) {
+      const row = element('div')
+      row.className = 'plugin'
+      const approve = button('Approve', () => act(page, plugin.id, 'approve'))
+      approve.dataset.key = `guide-approve:${plugin.id}`
+      row.append(element('p', plugin.line), approve)
+      body.append(row)
+    }
+  }
+  const moves = element('p')
+  moves.className = 'guide-moves'
+  // Keyed so focus stays on the move pressed when Back goes on the first step or Next turns into Done
+  const keyed = (made: HTMLButtonElement, key: string) => {
+    made.dataset.key = key
+    return made
+  }
+  if (startup.at > 0) moves.append(keyed(button('Back', () => page.guideTo(startup.at - 1)), 'guide-back'))
+  if (startup.at < startup.steps.length - 1) moves.append(keyed(button('Next', () => page.guideTo(startup.at + 1)), 'guide-next'))
+  else moves.append(keyed(button('Done', () => page.leaveGuide()), 'guide-next'))
+  moves.append(button('Go to Plugins', () => page.leaveGuide()))
+  section.append(heading, where, body, moves)
   return section
 }
 
+// What was typed to prove attention for each request, kept across draws so a tab picked or an event never empties it
+const typedConfirms = new Map<string, string>()
+
+// The tabs on the left with what stays in reach below them, Restart and Quit. Up and Down move between the tabs
+function sideBar(page: TrustedPage, shown: Screen): HTMLElement {
+  const nav = element('nav')
+  nav.className = 'side'
+  nav.setAttribute('aria-label', 'Settings and hetu')
+  const list = element('div')
+  list.setAttribute('role', 'tablist')
+  list.setAttribute('aria-orientation', 'vertical')
+  list.setAttribute('aria-label', 'Settings')
+  for (const [at, tab] of shown.tabs.entries()) {
+    const made = button(tab.label, () => page.pickTab(tab.id))
+    if (tab.mark !== null) {
+      const mark = element('span', tab.mark)
+      mark.className = 'mark'
+      made.append(' ', mark)
+    }
+    made.id = `tab-${tab.id}`
+    made.className = 'tab'
+    made.dataset.key = `tab:${tab.id}`
+    made.setAttribute('role', 'tab')
+    made.setAttribute('aria-selected', String(tab.id === shown.tab))
+    made.setAttribute('aria-controls', 'panel')
+    made.tabIndex = tab.id === shown.tab ? 0 : -1
+    made.addEventListener('keydown', event => {
+      const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
+      if (step === 0) return
+      event.preventDefault()
+      const next = shown.tabs[(at + step + shown.tabs.length) % shown.tabs.length]!
+      page.pickTab(next.id)
+      document.getElementById(`tab-${next.id}`)?.focus()
+    })
+    list.append(made)
+  }
+  const app = element('div')
+  app.className = 'app-actions'
+  app.append(
+    button('Restart hetu', () => page.relaunch()),
+    button('Quit', () => page.quit()),
+  )
+  nav.append(list, app)
+  return nav
+}
+
+// What the picked tab holds
+function tabContent(page: TrustedPage, shown: Screen, tab: Tab): HTMLElement[] {
+  if (tab === 'start') return shown.startup === null ? [] : [guideSection(page, shown, shown.startup)]
+  if (tab === 'plugins') {
+    const list = element('section')
+    list.className = 'plugins'
+    list.append(element('h2', 'Plugins'), installControls(page, 'list', 'or from a GitHub link', ''))
+    for (const plugin of shown.plugins) {
+      const row = element('div')
+      row.className = 'plugin'
+      row.append(element('p', plugin.line))
+      for (const action of plugin.actions) row.append(button(actionLabels[action], () => act(page, plugin.id, action)))
+      for (const item of plugin.items) {
+        const line = element('p', item.line)
+        line.className = 'item'
+        line.append(button(item.on ? 'Switch off' : 'Switch on', () => page.ask({
+          kind: item.on ? 'item.off' : 'item.on', plugin: plugin.id, capability: item.capability,
+        } as Change)))
+        row.append(line)
+      }
+      for (const own of plugin.switches) row.append(switchLine(page, own, 'item'))
+      list.append(row)
+    }
+    const install = element('section')
+    install.className = 'install'
+    install.append(element('h2', 'Install'), element('p', shown.installNote))
+    return [list, install]
+  }
+  if (tab === 'switches') {
+    const switches = element('section')
+    switches.append(element('h2', 'Switches'))
+    for (const row of shown.switches) switches.append(switchLine(page, row))
+    switches.append(element('p', 'hetu recommends keeping every security plugin on'))
+    // Dev mode is a group of settings, each loosening what loads
+    const dev = element('section')
+    dev.append(element('h2', 'Dev'))
+    for (const row of shown.dev) dev.append(switchLine(page, row))
+    return [switches, dev]
+  }
+  if (tab === 'notes') {
+    const luoshu = element('section')
+    luoshu.className = 'luoshu'
+    luoshu.append(element('h2', 'Notes folder'))
+    const folderLine = element('p', shown.luoshu)
+    folderLine.append(button('Pick a folder', () => page.pickFolder()))
+    luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
+    return [luoshu]
+  }
+  if (tab === 'identities') {
+    const identities = element('section')
+    identities.className = 'identities'
+    identities.append(element('h2', 'Identities'), element('p', shown.identities.about))
+    for (const row of shown.identities.rows) {
+      const line = element('p')
+      line.className = 'identity'
+      line.append(labelOf(row.label), document.createTextNode(row.line))
+      const { change } = row
+      if (change !== null) line.append(button('Revoke', () => page.ask(change)))
+      identities.append(line)
+    }
+    return [identities]
+  }
+  return limitsContent(page, shown)
+}
+
+function limitsContent(page: TrustedPage, shown: Screen): HTMLElement[] {
+  const limits = element('section')
+  limits.className = 'limits'
+  limits.append(element('h2', 'Limits'))
+  limits.append(element('p', 'Each runs at the fixed value unless you set one, for all plugins or for one. Every change waits for your Confirm'))
+  for (const limit of shown.limits) {
+    const row = element('div')
+    row.className = 'limit'
+    const set = [...(limit.all !== null ? [`all: ${limit.all}`] : []), ...limit.plugins.map(one => `${one.plugin}: ${one.value}`)]
+    row.append(element('p', [limit.constant, `fixed ${limit.fixed}`, ...set].join(' · ')))
+    const value = element('input')
+    value.inputMode = 'numeric'
+    value.autocomplete = 'off'
+    value.spellcheck = false
+    value.setAttribute('aria-label', `New value for ${limit.constant}`)
+    const who = element('select')
+    who.setAttribute('aria-label', `Who ${limit.constant} is set for`)
+    who.append(new Option('all plugins', ''))
+    for (const plugin of shown.plugins) who.append(new Option(plugin.id, plugin.id))
+    row.append(value, who, button('Set', () => {
+      const change = limitChange(limit.constant, value.value, who.value === '' ? null : who.value)
+      if (change === null) page.say('Type a whole number from 1 up')
+      else page.ask(change)
+    }))
+    limits.append(row)
+  }
+  return [limits]
+}
+
+// The stopped mode alone, or the tabs on the left and on the right what waits for a Confirm above the picked tab, so
+// nothing waiting sits unseen on a tab not shown
 function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   const root = document.getElementById('root')
   if (root === null) return
@@ -175,9 +338,6 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   arming.show('request', shown.request?.id ?? null)
   arming.show('staging', shown.installing?.step === 'found' ? shown.installing.staged : null)
   const parts: HTMLElement[] = []
-
-  if (shown.stopped === null) parts.push(menu(page))
-  if (shown.startup !== null) parts.push(startupSection(page, shown.startup))
 
   if (shown.stopped !== null) {
     const section = element('section')
@@ -212,7 +372,12 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
       typed = element('input')
       typed.autocomplete = 'off'
       typed.spellcheck = false
-      typed.addEventListener('input', arm)
+      typed.value = typedConfirms.get(request.id) ?? ''
+      const field = typed
+      typed.addEventListener('input', () => {
+        typedConfirms.set(request.id, field.value)
+        arm()
+      })
       label.append(typed)
       section.append(label)
     }
@@ -235,99 +400,23 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     parts.push(shownNote)
   }
 
-  if (shown.stopped === null) {
-    const list = element('section')
-    list.className = 'plugins'
-    list.append(element('h2', 'Plugins'), installControls(page, 'list', 'or from a GitHub link', ''))
-    for (const plugin of shown.plugins) {
-      const row = element('div')
-      row.className = 'plugin'
-      row.append(element('p', plugin.line))
-      for (const action of plugin.actions) row.append(button(actionLabels[action], () => act(page, plugin.id, action)))
-      for (const item of plugin.items) {
-        const line = element('p', item.line)
-        line.className = 'item'
-        line.append(button(item.on ? 'Switch off' : 'Switch on', () => page.ask({
-          kind: item.on ? 'item.off' : 'item.on', plugin: plugin.id, capability: item.capability,
-        } as Change)))
-        row.append(line)
-      }
-      for (const own of plugin.switches) row.append(switchLine(page, own, 'item'))
-      list.append(row)
-    }
-    parts.push(list)
-
-    const switches = element('section')
-    switches.append(element('h2', 'Switches'))
-    for (const row of shown.switches) switches.append(switchLine(page, row))
-    switches.append(element('p', 'hetu recommends keeping every security plugin on'))
-    parts.push(switches)
-
-    // Dev mode is a group of settings, each loosening what loads
-    const dev = element('section')
-    dev.append(element('h2', 'Dev'))
-    for (const row of shown.dev) dev.append(switchLine(page, row))
-    parts.push(dev)
-
-    const luoshu = element('section')
-    luoshu.className = 'luoshu'
-    luoshu.append(element('h2', 'Notes'))
-    const folderLine = element('p', shown.luoshu)
-    folderLine.append(button('Pick a folder', () => page.pickFolder()))
-    luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
-    parts.push(luoshu)
-
-    const identities = element('section')
-    identities.className = 'identities'
-    identities.append(element('h2', 'Identities'), element('p', shown.identities.about))
-    for (const row of shown.identities.rows) {
-      const line = element('p')
-      line.className = 'identity'
-      line.append(labelOf(row.label), document.createTextNode(row.line))
-      const { change } = row
-      if (change !== null) line.append(button('Revoke', () => page.ask(change)))
-      identities.append(line)
-    }
-    parts.push(identities)
-
-    const install = element('section')
-    install.className = 'install'
-    install.append(element('h2', 'Install'), element('p', shown.installNote))
-    parts.push(install)
-
-    const limits = element('section')
-    limits.className = 'limits'
-    limits.append(element('h2', 'Limits'))
-    limits.append(element('p', 'Each runs at the fixed value unless you set one, for all plugins or for one. Every change waits for your Confirm'))
-    for (const limit of shown.limits) {
-      const row = element('div')
-      row.className = 'limit'
-      const set = [...(limit.all !== null ? [`all: ${limit.all}`] : []), ...limit.plugins.map(one => `${one.plugin}: ${one.value}`)]
-      row.append(element('p', [limit.constant, `fixed ${limit.fixed}`, ...set].join(' · ')))
-      const value = element('input')
-      value.inputMode = 'numeric'
-      value.autocomplete = 'off'
-      value.spellcheck = false
-      value.setAttribute('aria-label', `New value for ${limit.constant}`)
-      const who = element('select')
-      who.setAttribute('aria-label', `Who ${limit.constant} is set for`)
-      who.append(new Option('all plugins', ''))
-      for (const plugin of shown.plugins) who.append(new Option(plugin.id, plugin.id))
-      row.append(value, who, button('Set', () => {
-        const change = limitChange(limit.constant, value.value, who.value === '' ? null : who.value)
-        if (change === null) page.say('Type a whole number from 1 up')
-        else page.ask(change)
-      }))
-      limits.append(row)
-    }
-    parts.push(limits)
-
-    parts.push(button('Restart hetu', () => page.relaunch()))
-    parts.push(button('Quit', () => page.quit()))
-  }
-
+  for (const id of typedConfirms.keys()) if (id !== shown.request?.id) typedConfirms.delete(id)
   const focused = focusedIn(root)
-  root.replaceChildren(...parts)
+  if (shown.stopped !== null) {
+    root.className = 'stopped-mode'
+    root.replaceChildren(...parts)
+  } else {
+    const panel = element('div')
+    panel.id = 'panel'
+    panel.setAttribute('role', 'tabpanel')
+    panel.setAttribute('aria-labelledby', `tab-${shown.tab}`)
+    panel.append(...tabContent(page, shown, shown.tab))
+    const content = element('div')
+    content.className = 'content'
+    content.append(...parts, panel)
+    root.className = 'tabbed'
+    root.replaceChildren(sideBar(page, shown), content)
+  }
   if (focused !== null) refocus(root, focused)
   say(note ?? installSay(shown.installing))
   arm()
@@ -378,6 +467,6 @@ function act(page: TrustedPage, plugin: string, action: PluginAction): void {
 }
 
 if (bridge !== undefined) {
-  const page: TrustedPage = new TrustedPage(bridge, (shown, note) => draw(page, shown, note))
+  const page: TrustedPage = new TrustedPage(bridge, (shown, note) => draw(page, shown, note), () => arming.focusDelayRuns())
   page.start()
 }
