@@ -384,6 +384,17 @@ describe('editor.open', () => {
     expect(resolved).toEqual({ 'a.md': true, 'private/x.md': false })
     expect(core.calls('luoshu.read')).toEqual([])
   })
+
+  // From a frame, held to the item and the live port its worker's editor.open is held to
+  it('opens from a frame only while the plugin holds ui.view and its worker is connected', async () => {
+    const { drawer, opened } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'] }, files: { verbs: [], read: ['a.md'] } })
+    await expect(drawer.frameOpen('kanban', 'a.md')).rejects.toMatchObject({ code: 'stopped' })
+    await connected(drawer, 'files')
+    await expect(drawer.frameOpen('files', 'a.md')).rejects.toMatchObject({ code: 'not-granted' })
+    await connected(drawer, 'kanban')
+    await drawer.frameOpen('kanban', 'a.md')
+    expect(opened).toEqual(['a.md'])
+  })
 })
 
 describe('keys in the design\'s order', () => {
