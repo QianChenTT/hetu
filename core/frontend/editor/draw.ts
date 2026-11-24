@@ -50,7 +50,7 @@ type Placed = { row: boolean, style: Record<string, string> }
 
 // Rows drawn past each edge of a list: as many as the list shows and at least this many, so the rows a fast scroll
 // brings on screen are drawn before its scroll event comes
-const LIST_SLACK = 4
+const MIN_LIST_SLACK = 4
 
 export class TreeView {
   readonly owner: string
@@ -62,7 +62,7 @@ export class TreeView {
   private held = new Map<string, Held>()
   private tree: UiNode | null = null
   // The ids a parent placed in the draw going on
-  private placedNow = new Set<string>()
+  private placedThisDraw = new Set<string>()
   // Each list's height its rows were last counted for. A list whose box changes size draws its rows again
   private readonly listHeights = new Map<HTMLElement, number>()
   private sized: ResizeObserver | null = null
@@ -95,7 +95,7 @@ export class TreeView {
     this.tree = tree
     this.writes = 0
     const seen = new Set<string>()
-    this.placedNow = new Set()
+    this.placedThisDraw = new Set()
     this.placeholders = new Map()
     this.popovers = new Map()
     this.zones = new Map()
@@ -103,13 +103,11 @@ export class TreeView {
     this.writes += this.sync(this.root, top)
     for (const [id, held] of this.held) {
       if (seen.has(id)) {
-        if (held.placed !== null && !this.placedNow.has(id)) this.place(held, null)
+        if (held.placed !== null && !this.placedThisDraw.has(id)) this.place(held, null)
         continue
       }
-      held.element.remove()
+      this.drop(held.element)
       this.held.delete(id)
-      this.listHeights.delete(held.element)
-      this.sized?.unobserve(held.element)
       this.writes++
     }
     this.refocus(focused)
@@ -139,7 +137,7 @@ export class TreeView {
   private place(held: Held, placed: Placed | null): void {
     const element = held.element
     const before = held.placed
-    if (placed !== null) this.placedNow.add(held.node.id)
+    if (placed !== null) this.placedThisDraw.add(held.node.id)
     if ((before?.row ?? false) !== (placed?.row ?? false)) {
       element.classList.toggle('hetu-row', placed?.row === true)
       this.writes++
@@ -161,7 +159,7 @@ export class TreeView {
 
   // An element taken out or moved while the pointer was on it never hears the pointer leave, so it drops the hover and
   // pressed looks it had
-  private moved(element: Element): void {
+  private dropPointerStates(element: Element): void {
     const tag = tags.get(element)
     if (tag?.tree !== this) return
     const held = this.held.get(tag.id)
@@ -180,7 +178,7 @@ export class TreeView {
       const next = at.nextElementSibling
       if (!keep.has(at)) {
         at.remove()
-        this.moved(at)
+        this.dropPointerStates(at)
         moves++
       }
       at = next
@@ -191,7 +189,7 @@ export class TreeView {
         at = at.nextElementSibling
         continue
       }
-      if (child.parentElement !== null) this.moved(child)
+      if (child.parentElement !== null) this.dropPointerStates(child)
       parent.insertBefore(child, at)
       moves++
     }
@@ -217,7 +215,7 @@ export class TreeView {
     let held = this.held.get(node.id)
     let made = false
     if (held === undefined || held.node.kind !== node.kind) {
-      held?.element.remove()
+      if (held !== undefined) this.drop(held.element)
       const element = this.create(node)
       const styled = node.kind === 'popover' ? element.lastElementChild as HTMLElement : element
       held = { node, element, styled, states: { hover: false, focus: false, pressed: false }, applied: [], look: '', placed: null }
@@ -360,7 +358,7 @@ export class TreeView {
     this.put(inner, 'height', `${node.rows.length * node.rowHeight}px`)
     this.listHeights.set(element, element.clientHeight)
     const shows = Math.ceil((element.clientHeight || 600) / node.rowHeight)
-    const slack = Math.max(LIST_SLACK, shows)
+    const slack = Math.max(MIN_LIST_SLACK, shows)
     const first = Math.max(0, Math.floor(element.scrollTop / node.rowHeight) - slack)
     const count = shows + slack * 2
     const rows: HTMLElement[] = []
@@ -376,7 +374,7 @@ export class TreeView {
     const children = this.kids(node.children, seen)
     this.put(element, 'display', 'flex')
     this.put(element, 'flex-direction', node.direction)
-    const placed: HTMLElement[] = []
+    const ordered: HTMLElement[] = []
     const filler = fillerOf(node.sizes, children.length)
     children.forEach((child, at) => {
       const size = node.sizes?.[at]
@@ -384,7 +382,7 @@ export class TreeView {
       const flex = at === filler || size === undefined ? '1 1 0' : `0 0 ${size}px`
       const min = node.direction === 'row' ? 'min-width' : 'min-height'
       this.place(this.heldOf(child), { row: false, style: { flex, [min]: `${node.min?.[at] ?? 0}px` } })
-      placed.push(child)
+      ordered.push(child)
       if (!last && node.resizable === true) {
         let divider = element.querySelector<HTMLElement>(`:scope > [data-divider="${at}"]`)
         if (divider === null) {
@@ -398,10 +396,10 @@ export class TreeView {
             this.hooks.divider(node.id, index, event, element)
           })
         }
-        placed.push(divider)
+        ordered.push(divider)
       }
     })
-    this.writes += this.sync(element, placed)
+    this.writes += this.sync(element, ordered)
   }
 
   // What the tree holds for an element it built this draw
@@ -409,12 +407,20 @@ export class TreeView {
     return this.held.get((tags.get(element) as Tagged).id) as Held
   }
 
-  // A list is watched for a change of its size, which no draw follows when it comes from the window or a divider
+  // An element the tree no longer draws, taken out of the page and no longer watched
+  private drop(element: HTMLElement): void {
+    element.remove()
+    this.listHeights.delete(element)
+    this.sized?.unobserve(element)
+  }
+
+  // A list is watched for a change of its size, which no draw follows when it comes from the window or a divider. A
+  // list out of the page, as in a tree the page dropped, asks for nothing
   private watch(list: HTMLElement): void {
     this.sized ??= new ResizeObserver(entries => {
       const changed = entries.some(entry => {
         const counted = this.listHeights.get(entry.target as HTMLElement)
-        return counted !== undefined && counted !== (entry.target as HTMLElement).clientHeight
+        return entry.target.isConnected && counted !== undefined && counted !== (entry.target as HTMLElement).clientHeight
       })
       if (changed) this.hooks.scrolled()
     })
