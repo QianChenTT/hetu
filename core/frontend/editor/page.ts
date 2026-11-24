@@ -146,6 +146,10 @@ function start(bridge: Bridge): void {
   const drawHooks = (owner: string, surface: string): DrawHooks => ({
     event: (node, type, value) => ui.nodeEvent(owner, surface, node, type, value),
     dragStart: (_node, payload, event) => payloadDrag(owner, payload, event),
+    // The human's own gesture, as a click on it is
+    payloadActivated: (_node, payload) => {
+      if (payload.type === 'note') void openNote(payload.value, true, owner)
+    },
     divider: (node, index, event, split) => dividerDrag(owner, surface, node, index, event, split),
     iconUrl: src => `hetu://views/icon/${owner}/${src}`,
     imageUrl: async path => {
@@ -366,7 +370,8 @@ function start(bridge: Bridge): void {
         const first = ui.views.all().find(held => held.owner === plugin.plugin && held.view === view && held.first) ?? null
         return {
           key, name: `${plugin.name} (${plugin.plugin})`, title: spec.title, running: first !== null && !first.down, favorite: settings.value.favorites.includes(key),
-          instance: first?.instance ?? null, shown: first !== null && shown.has(first.instance),
+          // Hide and Show ask the layout, so with none drawing there is no button
+          instance: ui.drawing() === null ? null : first?.instance ?? null, shown: first !== null && shown.has(first.instance),
         }
       })),
       conflicts: theDrawer.conflicts().map(conflict => ({

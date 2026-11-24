@@ -310,6 +310,51 @@ describe('a layout redrawing to mislead (A-30)', () => {
   })
 })
 
+describe('views with no layout', () => {
+  // Views were drawn only by a layout plugin, so with none, or one that failed, no view showed and nothing in a view
+  // could open a note
+  it('draws every view in one column beside the editor, titled, with items under them', async () => {
+    const { editor } = await started({
+      notes: { 'a.md': 'alpha' },
+      plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: { ...view('cards'), ...view('count', { kind: 'item' }) } } } },
+    })
+    await until(async () => (await pressed(editor).count()) === 2)
+    await until(async () => (await editor.locator('#editors .hetu-title', { hasText: 'board · Cards' }).count()) === 1)
+    const card = (await pressed(editor).first().boundingBox())!
+    const empty = (await editor.locator('#empty').boundingBox())!
+    expect(card.x + card.width).toBeLessThanOrEqual(empty.x)
+    // Hide and Show ask a layout, so with none drawing the menu offers neither
+    await editor.locator('#views').click()
+    await until(async () => (await editor.locator('#menu li[data-view="board/cards"]').count()) === 1)
+    expect(await editor.locator('#menu li[data-view="board/cards"] button', { hasText: /^(Hide|Show)$/ }).count()).toBe(0)
+  })
+
+  // A plugin holding luoshu.list alone opens nothing itself, the human opens the note through its row. A keyboard Enter
+  // on the row counts as a click does
+  it('opens a note from a row carrying it, by a click or by Enter on the row', async () => {
+    const { app, editor } = await started({
+      notes: { 'a.md': 'alpha', 'b.md': 'beta' },
+      plugins: { opener: { granted: [{ type: 'ui.view' }, { type: 'luoshu.list', paths: ['**'] }], manifest: { views: view('rows') } } },
+    })
+    const worker = await pluginWorker(app, 'opener')
+    await until(async () => (await heard(worker)).some(event => event.topic === 'view.opened'))
+    await drive(worker, async scope => {
+      const opened = scope.heard.find(event => event.topic === 'view.opened') as unknown as { instance: string }
+      await scope.ctx.ui.views.draw(opened.instance, {
+        kind: 'box', id: 'root', children: ['a.md', 'b.md'].map(name => ({ kind: 'button', id: name.replace('.', '-'), text: 'Open ' + name, drag: { type: 'note', value: name } })),
+      })
+    })
+    const row = (name: string) => editor.locator('#editors .hetu-button', { hasText: 'Open ' + name })
+    await until(async () => (await row('b.md').count()) === 1)
+    await row('a.md').click()
+    await until(async () => (await editor.locator('#title').innerText()).startsWith('a.md'))
+    await row('b.md').focus()
+    await editor.keyboard.press('Enter')
+    await until(async () => (await editor.locator('#title').innerText()).startsWith('b.md'))
+    expect(await shown(editor).innerText()).toBe('beta')
+  })
+})
+
 describe('notes opened by plugins', () => {
   it('opens a note inside the plugin\'s read scope and refuses one outside', async () => {
     const { app, editor } = await started({
