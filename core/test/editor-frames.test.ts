@@ -219,6 +219,16 @@ describe("an open from a frame counted as the human's", () => {
     expect(credit.use('kanban')).toBe(false)
   })
 
+  it('takes no open of a plugin once a frame of its went, as on a stop or restart, and leaves another plugin\'s', () => {
+    const credit = new OpenCredit(() => 0)
+    credit.pressed('kanban')
+    credit.forget('kanban')
+    expect(credit.use('kanban')).toBe(false)
+    credit.pressed('board')
+    credit.forget('kanban')
+    expect(credit.use('board')).toBe(true)
+  })
+
   it("takes Enter in the plugin's frame as a press, one open each", () => {
     const credit = new OpenCredit(() => 0)
     credit.keyed('kanban')
