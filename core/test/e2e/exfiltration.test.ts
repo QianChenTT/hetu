@@ -552,7 +552,9 @@ async function openSockets(pids: number[]): Promise<string[]> {
 
 const onWindows = process.platform === 'win32'
 // UDP 5353 is mDNS, which Chromium's network service asks and answers on for WebRTC with its mDNS hiding on
-const onMdnsPort = (entry: string) => entry.endsWith(' 5353')
+const isUdp5353 = (entry: string) => entry.startsWith('udp ') && entry.endsWith(' 5353')
+// A UDP socket bound on every address, as each of libwebrtc's pair is
+const isUdpWildcard = (entry: string) => /^udp (0\.0\.0\.0|::) \d+$/.test(entry)
 
 // Each expected failure below holds only its last expect. What it stands on runs as a plain test before it, so a
 // start, a report or a capture going wrong fails the run instead of passing as the expected failure
@@ -576,35 +578,46 @@ describe('the sockets of a frame\'s WebRTC', () => {
     }
   })
   // With WebRTC's mDNS hiding on, Chromium's network service bound UDP 5353 on 0.0.0.0 and :: for its mDNS responder.
-  // The look every 300 ms can miss a short bind, so the packets test checks binds by the net log as well
-  it.runIf(onWindows)('leaves no hetu process holding the mDNS port 5353 while a frame offers', () => {
-    expect(open?.filter(onMdnsPort)).toEqual([])
+  // A look every 300 ms can miss a short bind and the net log holds no bind of the responder's, so the remote mDNS
+  // candidate in the packets test is the guard on 5353
+  it.runIf(onWindows)('sees no hetu process holding UDP 5353 in a look every 300 ms while a frame offers', () => {
+    expect(open?.filter(isUdp5353)).toEqual([])
+  })
+  // Anything else off loopback, a TCP socket or a bind on one address among them, fails here and not inside the
+  // expected failure below
+  it.runIf(onWindows)('finds every socket off loopback besides UDP 5353 a UDP bind on every address while a frame offers', () => {
+    expect(open?.filter(entry => !isUdp5353(entry) && !isUdpWildcard(entry))).toEqual([])
   })
   // Accepted as it stands: libwebrtc binds a UDP pair on 0.0.0.0 and :: for each peer connection's gathering, under
   // disable_non_proxied_udp, and holds it for the connection's life. It sends nothing and what it reads reaches nothing.
   // No switch or policy in the app stops it and it raises the firewall's prompt. Fails while the pair is there
   // TODO: run the socket and packet tests on macOS once checked there
   it.runIf(onWindows).fails('leaves no hetu process holding a socket on an address other than loopback while a frame offers', () => {
-    expect(open?.filter(entry => !onMdnsPort(entry))).toEqual([])
+    expect(open?.filter(entry => !isUdp5353(entry))).toEqual([])
   })
 })
 
 // While the frame tried what it was sent, by the net log: the addresses other than loopback the network service sent UDP
-// to and the local addresses it bound a UDP socket on the mDNS port at. The log holds every bind, however short, where
-// a look at the sockets every 300 ms can miss one
-async function udpByNetLog(app: ElectronApplication, worker: Worker, servers: object[], mdns?: string): Promise<{ sent: string[], mdns: string[] }> {
+// to, the local addresses other than loopback it bound a UDP socket at and those on 5353. The log holds every bind of a
+// net socket, however short, where a look at the sockets every 300 ms can miss one
+async function udpInNetLog(app: ElectronApplication, worker: Worker, servers: object[], mdns?: string): Promise<{ sentOffLoopback: string[], boundOffLoopback: string[], boundOn5353: string[] }> {
   const log = path.join(await temp(), 'net.json')
   await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
   const report = await rtcReport(worker, servers, mdns)
+  // Events the network service is still sending as the report comes in
+  await tick(500)
   await app.evaluate(({ netLog }) => netLog.stopLogging())
   expect(report).toEqual({ tried: [expect.any(String)] })
   const { constants, events } = JSON.parse(await readFile(log, 'utf8')) as { constants: { logEventTypes: Record<string, number> }, events: { type: number, params?: { address?: string } }[] }
   expect(constants.logEventTypes.UDP_BYTES_SENT).toEqual(expect.any(Number))
   expect(constants.logEventTypes.UDP_LOCAL_ADDRESS).toEqual(expect.any(Number))
   const addresses = (type: number | undefined) => events.filter(event => event.type === type).map(event => event.params?.address ?? '')
+  const offLoopback = (address: string) => !/^(127\.|\[::1\])/.test(address)
+  const bound = addresses(constants.logEventTypes.UDP_LOCAL_ADDRESS).filter(offLoopback)
   return {
-    sent: addresses(constants.logEventTypes.UDP_BYTES_SENT).filter(address => !/^(127\.|\[::1\])/.test(address)),
-    mdns: addresses(constants.logEventTypes.UDP_LOCAL_ADDRESS).filter(address => address.endsWith(':5353')),
+    sentOffLoopback: addresses(constants.logEventTypes.UDP_BYTES_SENT).filter(offLoopback),
+    boundOffLoopback: bound,
+    boundOn5353: bound.filter(address => address.endsWith(':5353')),
   }
 }
 
@@ -612,12 +625,18 @@ async function udpByNetLog(app: ElectronApplication, worker: Worker, servers: ob
 // for ~NOTFOUND, the name host-resolver-rules maps it to, to 224.0.0.251 and ff02::fb on every interface when the frame
 // said, from sockets on 5353 that also read the LAN's mDNS traffic
 describe('the packets of a frame\'s WebRTC', () => {
-  it.runIf(onWindows)('sends nothing off loopback and binds nothing on the mDNS port 5353 while a frame offers a peer connection or hands a remote mDNS candidate, by the net log', async () => {
+  it.runIf(onWindows)('sends nothing off loopback and binds nothing on 5353 by the net log, for an offer and a remote mDNS candidate', async () => {
     const { app, workers: { kanban: worker } } = await started(rtcFiles)
-    // A peer connection offering to a STUN server on loopback, under the policy, sends nothing anywhere
-    const offered = await udpByNetLog(app, worker!, [{ urls: 'stun:127.0.0.1:9' }])
-    const handed = await udpByNetLog(app, worker!, [], `hetu${randomBytes(6).toString('hex')}`)
-    await found('udp by the net log', { offered, handed })
-    expect({ offered, handed }).toEqual({ offered: { sent: [], mdns: [] }, handed: { sent: [], mdns: [] } })
+    const pids = await app.evaluate(({ app: electronApp }) => electronApp.getAppMetrics().map(metric => metric.pid))
+    expect(pids.length).toBeGreaterThanOrEqual(4)
+    // A peer connection offering to a STUN server on loopback, under the policy, sends nothing anywhere. The responder's
+    // bind on 5353 isn't in the net log, so the remote candidate below is the guard on 5353
+    const offered = await udpInNetLog(app, worker!, [{ urls: 'stun:127.0.0.1:9' }])
+    // The control: the log holds the binds of the offer's UDP pair, so an empty capture can't pass
+    expect(offered.boundOffLoopback.length).toBeGreaterThanOrEqual(1)
+    const [open, handed] = await Promise.all([openSockets(pids), udpInNetLog(app, worker!, [], `hetu${randomBytes(6).toString('hex')}`)])
+    await found('udp in the net log', { offered, handed, open })
+    expect({ offered: offered.sentOffLoopback, handed: { sent: handed.sentOffLoopback, on5353: handed.boundOn5353 }, polled: open.filter(isUdp5353) })
+      .toEqual({ offered: [], handed: { sent: [], on5353: [] }, polled: [] })
   })
 })
