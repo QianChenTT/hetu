@@ -1,6 +1,9 @@
+import { z } from 'zod'
+import { MAX_VIEW_SIZE } from '../../../api/manifest.ts'
 import type { LayoutState, LayoutView, NodeEventType, UiNode } from '../../../api/ui.ts'
+import { viewKey } from '../settings.ts'
 import { type Arrangement, type Column, columnViews, dropView, emptyArrangement, keyOf, place, rank, skeleton, splitColumns, STRIP } from './arrange.ts'
-import { BOTTOM_MIN, fit, fitItems, ITEM_MIN, type Side, sideMin } from './fit.ts'
+import { BOTTOM_DEFAULT, BOTTOM_MIN, fit, fitItems, ITEM_MIN, type Side, SIDE_DEFAULT, sideMin } from './fit.ts'
 
 // hetu's layout, a part of the drawer. It hears the window's state, places every view, folds what doesn't fit and
 // draws the skeleton. The drawer runs drags and resizes and tells it only the result, which it keeps in the window's
@@ -28,40 +31,37 @@ export type Layout = {
   event(node: string, type: NodeEventType): void
 }
 
-const COLUMNS: readonly Column[] = ['left', 'main', 'right', 'bottom']
+const COLUMNS = ['left', 'main', 'right', 'bottom'] as const satisfies readonly Column[]
 
 function isColumn(value: string): value is Column {
   return (COLUMNS as readonly string[]).includes(value)
 }
 
-// What the settings hold, taken only in the shape this layout writes
+// Views each of places, recent and hidden holds at most
+export const MAX_ARRANGED = 512
+
+// Places, recent views and hidden views keyed by view as owner/view, so a key such as __proto__ or constructor names no
+// view and refuses the map it is in
+const keyed = <T extends z.ZodType>(value: T) =>
+  z.record(viewKey, value).refine(held => Object.keys(held).length <= MAX_ARRANGED).catch(() => ({}))
+// A column shows the view it showed. A note's instance in main is the last page's, so main starts on the current note
+const shown = viewKey.nullable().catch(null)
+const size = (fallback: number, least = 0) => z.int().min(least).max(MAX_VIEW_SIZE).catch(fallback)
+
+// What the settings hold, parsed once as it is read. A field of another shape or past its bounds is read as it starts,
+// each a new value, since the layout changes what it holds in place
+const stored = z.object({
+  places: keyed(z.object({ column: z.enum(COLUMNS), order: z.int().min(0).max(MAX_ARRANGED), byHand: z.boolean().catch(false) })),
+  widths: z.object({ left: size(SIDE_DEFAULT), right: size(SIDE_DEFAULT) }).catch(() => ({ left: SIDE_DEFAULT, right: SIDE_DEFAULT })),
+  bottom: z.object({ height: size(BOTTOM_DEFAULT, BOTTOM_MIN), open: z.boolean().catch(true) }).catch(() => ({ height: BOTTOM_DEFAULT, open: true })),
+  active: z.object({ left: shown, right: shown, main: shown, bottom: shown }).catch(() => ({ left: null, right: null, main: null, bottom: null })),
+  hidden: z.array(viewKey).max(MAX_ARRANGED).catch(() => []),
+  recent: keyed(z.int().min(0)),
+})
+
 function arrangementOf(value: unknown): Arrangement {
-  const empty = emptyArrangement()
-  if (typeof value !== 'object' || value === null) return empty
-  const held = value as Partial<Arrangement>
-  const places: Arrangement['places'] = {}
-  for (const [key, at] of Object.entries(held.places ?? {})) {
-    if (typeof at === 'object' && at !== null && isColumn(String(at.column)) && typeof at.order === 'number') {
-      places[key] = { column: at.column, order: at.order, byHand: at.byHand === true }
-    }
-  }
-  const bottom = {
-    height: typeof held.bottom?.height === 'number' && held.bottom.height >= BOTTOM_MIN ? held.bottom.height : empty.bottom.height,
-    open: held.bottom?.open !== false,
-  }
-  const width = (side: Side) => (typeof held.widths?.[side] === 'number' ? held.widths[side] : empty.widths[side])
-  const recent: Record<string, number> = {}
-  for (const [key, when] of Object.entries(held.recent ?? {})) if (typeof when === 'number') recent[key] = when
-  // A column shows the view it showed. A note's instance in main is the last page's, so main starts on the current note
-  const view = (value: unknown) => (typeof value === 'string' && value.includes('/') ? value : null)
-  return {
-    places,
-    widths: { left: width('left'), right: width('right') },
-    bottom,
-    active: { left: view(held.active?.left), right: view(held.active?.right), main: view(held.active?.main), bottom: view(held.active?.bottom) },
-    hidden: Array.isArray(held.hidden) ? held.hidden.filter((key): key is string => typeof key === 'string') : [],
-    recent,
-  }
+  const parsed = stored.safeParse(typeof value === 'object' && value !== null ? value : {})
+  return parsed.success ? parsed.data : emptyArrangement()
 }
 
 export function startLayout(options: LayoutOptions): Layout {

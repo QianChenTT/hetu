@@ -14,12 +14,15 @@ const ARRANGEMENT = 'arrangement'
 export const MAX_FAVORITES = 64
 export const MAX_KEY_OWNERS = 64
 
+// A view as owner/view, the way favorites and the layout's arrangement name it
+export const viewKey = z.string().max(130).refine(value => {
+  const [owner, view, ...rest] = value.split('/')
+  return rest.length === 0 && pluginId.safeParse(owner).success && localName.safeParse(view).success
+}, 'owner/view')
+
 const shape = z.strictObject({
   theme: pluginId.nullable(),
-  favorites: z.array(z.string().max(130).refine(value => {
-    const [owner, view, ...rest] = value.split('/')
-    return rest.length === 0 && pluginId.safeParse(owner).success && localName.safeParse(view).success
-  }, 'owner/view')).max(MAX_FAVORITES),
+  favorites: z.array(viewKey).max(MAX_FAVORITES),
   keyOwners: z.record(z.string().max(40), pluginId).refine(owners => Object.keys(owners).length <= MAX_KEY_OWNERS),
 })
 
