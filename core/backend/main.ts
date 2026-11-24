@@ -19,13 +19,14 @@ import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { afterFailure, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
+import { frameOwner } from '../api/ids.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { ViewImages } from './runtime/images.ts'
 import { bytesReader } from './providers/luoshu/bytes.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
-import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
+import { appMenu, editorKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import type { Updater } from './updater/header.ts'
 import { createUpdater } from './updater/updater.ts'
@@ -120,6 +121,8 @@ async function start(): Promise<void> {
     // Each running plugin's frames and icons, served on the plugin's own host in the editor session from the bytes
     // it started with
     const views = new ViewFiles()
+    // The keys each plugin's views bound, as the editor page last sent them, for keys pressed in that plugin's frames
+    const viewKeys = new Map<string, ReadonlySet<string>>()
     // The router and the plugins manager exist once the core is wired, before any worker starts
     let router: Router | null = null
     let pluginsManager: PluginsManager | null = null
@@ -267,6 +270,17 @@ async function start(): Promise<void> {
             if (gone !== null && navigated) recording?.coalesced('frame.navigated', { plugin: gone.plugin })
             return null
           }
+          if (call.action === 'editor.focusTaken') {
+            const plugin = frameOwner(new URL((call.args as { url: string }).url).hostname)
+            if (plugin !== null) recording?.coalesced('frame.focus-taken', { plugin })
+            return null
+          }
+          if (call.action === 'editor.viewKeys') {
+            const { plugin, keys } = call.args as { plugin: string, keys: string[] }
+            if (keys.length === 0) viewKeys.delete(plugin)
+            else viewKeys.set(plugin, new Set(keys))
+            return null
+          }
           if (call.action === 'app.openSecurity') trusted.show()
           else if (call.action === 'app.relaunch') {
             ending.relaunch()
@@ -308,18 +322,28 @@ async function start(): Promise<void> {
       const unloaded = () => {
         drawers.unloaded(contents)
         views.unloaded()
+        viewKeys.clear()
         images.unloaded()
       }
       contents.on('did-navigate', unloaded)
       contents.on('render-process-gone', unloaded)
       contents.on('destroyed', unloaded)
       contents.on('dom-ready', () => drawers.loaded(contents))
-      // The core keys reach the page whatever has focus, a frame included
+      // The core keys reach the page whatever has focus, a frame included, and so do the keys a plugin's views bound
+      // while focus is in one of its frames
       contents.on('before-input-event', (event, input) => {
-        const core = coreKeyOfInput(input, process.platform === 'darwin')
-        if (core === null) return
+        const took = editorKeyOfInput(input, contents.focusedFrame?.url ?? null, viewKeys, process.platform === 'darwin')
+        if (took === null) return
         event.preventDefault()
-        if (!input.isAutoRepeat) contents.send('hetu:key', core)
+        if (took.channel !== null) contents.send(took.channel, took.sent)
+      })
+      // Each press and release to the page at once, a frame's included, which the page alone never hears. A press in a
+      // frame comes with the frame's own x and y, so the point on the page is taken from the screen
+      contents.on('before-mouse-event', (_event, mouse) => {
+        if ((mouse.type !== 'mouseDown' && mouse.type !== 'mouseUp') || mouse.globalX === undefined || mouse.globalY === undefined) return
+        const content = window.getContentBounds()
+        const zoom = contents.getZoomFactor()
+        contents.send('hetu:press', { down: mouse.type === 'mouseDown', x: (mouse.globalX - content.x) / zoom, y: (mouse.globalY - content.y) / zoom })
       })
       // Closing the last window quits hetu, so it goes the way Quit goes and the page keeps its drafts first
       window.on('close', event => {

@@ -1,6 +1,7 @@
 import type { BrowserWindow, Session, WebContents, WebPreferences } from 'electron'
-import { type CoreKey, coreKeyOf } from '../../api/keys.ts'
+import { type CoreKey, coreKeyOf, keyName } from '../../api/keys.ts'
 import { SCHEME } from './before-ready.ts'
+import { frameOwner } from '../../api/ids.ts'
 
 export const EDITOR_URL = `${SCHEME}://editor/`
 
@@ -114,3 +115,22 @@ export function coreKeyOfInput(input: { type: string, key: string, code: string,
   if (input.type !== 'keyDown') return null
   return coreKeyOf({ key: input.key, code: input.code, ctrlKey: input.control, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift }, mac)
 }
+
+type EditorInput = Parameters<typeof coreKeyOfInput>[0] & { isAutoRepeat: boolean }
+type EditorKey = { channel: 'hetu:key', sent: CoreKey } | { channel: 'hetu:view-key', sent: { url: string, key: string } } | { channel: null }
+
+// What main does with a key of the editor window's input before the page or any frame hears it, null to let it go on. A
+// core key goes to the page whatever has focus, a held one once. focused is the URL of the frame holding focus. While
+// it is a plugin's frame, which hears a key before the page, a key that plugin's views bound goes to the page with the
+// frame's URL
+export function editorKeyOfInput(input: EditorInput, focused: string | null, bound: ReadonlyMap<string, ReadonlySet<string>>, mac: boolean): EditorKey | null {
+  const core = coreKeyOfInput(input, mac)
+  if (core !== null) return input.isAutoRepeat ? { channel: null } : { channel: 'hetu:key', sent: core }
+  if (input.type !== 'keyDown' || focused === null || !URL.canParse(focused)) return null
+  const at = new URL(focused)
+  const plugin = at.protocol === `${SCHEME}:` ? frameOwner(at.hostname) : null
+  const key = keyName({ key: input.key, ctrlKey: input.control, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift }, mac)
+  if (plugin === null || key === null || bound.get(plugin)?.has(key) !== true) return null
+  return { channel: 'hetu:view-key', sent: { url: focused, key } }
+}
+
