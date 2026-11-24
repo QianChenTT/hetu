@@ -271,9 +271,9 @@ describe('the keys main matches while focus is in a plugin frame', () => {
     expect(editorKeyOfInput(press('Shift', { shift: true }), kanban, new Map([['kanban', new Set(['Shift'])]]), false)).toBe(null)
   })
 
-  it('names the focused plugin frame of an Enter or Space going down, which the page counts as a press there', () => {
+  it('names the focused plugin frame of an Enter going down, which the page counts as a press there', () => {
     expect(frameKeyOfInput(press('Enter'), kanban)).toBe(kanban)
-    expect(frameKeyOfInput(press(' '), kanban)).toBe(kanban)
+    expect(frameKeyOfInput(press(' '), kanban)).toBe(null)
     expect(frameKeyOfInput(press('Enter', { shift: true }), kanban)).toBe(kanban)
   })
 

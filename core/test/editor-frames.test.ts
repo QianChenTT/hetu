@@ -219,7 +219,7 @@ describe("an open from a frame counted as the human's", () => {
     expect(credit.use('kanban')).toBe(false)
   })
 
-  it("takes Enter or Space in the plugin's frame as a press, one open each", () => {
+  it("takes Enter in the plugin's frame as a press, one open each", () => {
     const credit = new OpenCredit(() => 0)
     credit.keyed('kanban')
     expect(credit.use('board')).toBe(false)
