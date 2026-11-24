@@ -262,6 +262,9 @@ export class Layers {
     for (const { node, element } of placeholders) {
       if (node.kind === 'slot' || node.kind === 'editor') slots[node.id] = sizeOf(box(element)) as { width: number, height: number }
     }
+    // A layout that throws on this state draws the plain layout and tells changed(), which places again inside this
+    // call. Those passes hand the port the plain layout's state, new once at most and then skipped as the last state
+    // seen, so they end within two
     this.hooks.state({ width: Math.round(stageBox.width), height: Math.round(stageBox.height), slots })
     if (shownSetChanged) this.hooks.viewsShownChanged()
   }

@@ -223,12 +223,13 @@ export class UiPort {
     if (this.views.get(instance) !== null) this.arrange(layout => layout.close(instance))
   }
 
-  // A call into the layout. One that throws, or draws a skeleton the tree's check refuses, leaves the plain layout
-  // drawing until the layout draws again
+  // A call into the layout. One that throws, or draws a skeleton the tree's check refuses, is logged as the page logs a
+  // failed handler and leaves the plain layout drawing until the layout draws again
   private arrange(act: (layout: Layout) => void): void {
     try {
       act(this.layout)
-    } catch {
+    } catch (err) {
+      console.error('the layout failed, the plain layout draws until it draws again', err)
       this.surfaces.dropSurface(LAYOUT_OWNER, SKELETON)
       this.options.hooks.changed()
     }
