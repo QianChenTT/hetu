@@ -11,6 +11,9 @@ export type SettingsValue = { theme: string | null, favorites: string[], keyOwne
 const KEY = 'settings'
 // The layout's arrangement, under a key of its own, so a drag or a resize draws no settings again
 const ARRANGEMENT = 'arrangement'
+// The arrangement is written at most once in this many ms, the latest, so a plugin opening and closing a view in a loop
+// moves the layout each time and writes nothing each time
+export const ARRANGEMENT_WRITE_MS = 500
 export const MAX_FAVORITES = 64
 export const MAX_KEY_OWNERS = 64
 
@@ -42,6 +45,9 @@ export class Settings {
   private readonly link: CoreLink
   private held: SettingsValue = defaults()
   private kept: unknown = null
+  // Whether the arrangement changed since it was last written, and the write waiting for its time
+  private unwritten = false
+  private writeTimer: ReturnType<typeof setTimeout> | null = null
   onChange: (() => void) | null = null
 
   constructor(link: CoreLink) {
@@ -82,10 +88,20 @@ export class Settings {
     await this.set({ ...this.held, keyOwners })
   }
 
-  // Kept for the run even when storage refuses, as the settings are
-  async keepArrangement(value: unknown): Promise<void> {
+  // Kept for the run even when storage refuses, as the settings are, and written within ARRANGEMENT_WRITE_MS
+  keepArrangement(value: unknown): void {
     this.kept = value
-    await this.link.call('storage.set', { key: ARRANGEMENT, value })
+    this.unwritten = true
+    this.writeTimer ??= setTimeout(() => void this.writeArrangement(), ARRANGEMENT_WRITE_MS)
+  }
+
+  // The arrangement written now if it changed since its last write, as when the page goes
+  async writeArrangement(): Promise<void> {
+    if (this.writeTimer !== null) clearTimeout(this.writeTimer)
+    this.writeTimer = null
+    if (!this.unwritten) return
+    this.unwritten = false
+    await this.link.call('storage.set', { key: ARRANGEMENT, value: this.kept })
   }
 
   // Kept for the run even when storage refuses, so the human's pick holds until hetu quits

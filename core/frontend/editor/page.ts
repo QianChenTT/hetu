@@ -125,7 +125,7 @@ function start(bridge: Bridge): void {
           layers?.changed()
           drawMenuSoon()
         },
-        arranged: arrangement => void settings.keepArrangement(arrangement),
+        arranged: arrangement => settings.keepArrangement(arrangement),
         // A post that lands answers null, so a missing Frames has to be told apart from it
         post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
         // A plugin's open adds the note without taking the human's focus or the current note from them
@@ -712,6 +712,8 @@ function start(bridge: Bridge): void {
   theNotes.start()
   theDrawer.start()
   raw.start()
+  // A change made in the last moments is written as the page goes
+  window.addEventListener('pagehide', () => void settings.writeArrangement())
   void settings.load().then(() => {
     ui.arrangementLoaded(settings.arrangement)
     return readViews()
