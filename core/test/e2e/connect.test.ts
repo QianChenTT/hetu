@@ -1,5 +1,6 @@
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
+import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { command, fakeDoor, handleRefusals, installDoor, outcome, reports, startedWith, writeHolder } from './door-driver.ts'
 import { cleanup, logged, pageAt, temp, tick, until, visibleWindows, setUp } from './helpers.ts'
@@ -37,15 +38,37 @@ const asked = (number: number, client = CLAUDE) => ({ client, name: 'Claude Code
 const connect = async (worker: Worker, args: unknown) => outcome(await command(worker, 'connect', args))
 const collect = async (worker: Worker, handle: string) => (await command(worker, 'collect', { handle })).result
 
-async function trustedPage(app: ElectronApplication, editor: Page): Promise<Page> {
+// The trusted page, with the test's clock just before the click that showed it. main's input delay starts at the show,
+// so no later than that
+async function trustedPage(app: ElectronApplication, editor: Page): Promise<{ page: Page, clicked: number }> {
   const notice = editor.getByRole('button', { name: 'A security change is waiting: consent.ask "mcp-http-handler"' })
   await notice.waitFor()
   await tick(PAST_DELAY)
+  const clicked = Date.now()
   await notice.click()
   const page = await pageAt(app, 'hetu://trusted/')
   await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
-  return page
+  return { page, clicked }
 }
+
+type Marks = { shown?: number, enabled?: number }
+
+// Put in the trusted page before its own code runs: when a request's heading first showed and when its Confirm first
+// turned enabled after, each by the page's clock, so a slow machine can't make the check of the delay miss it
+function markConfirm(): void {
+  if (!location.href.startsWith('hetu://trusted/')) return
+  const marks: Marks = {}
+  ;(window as unknown as { confirmMarks: Marks }).confirmMarks = marks
+  new MutationObserver(() => {
+    const request = document.querySelector('section.request')
+    if (request === null || request.querySelector('h1') === null) return
+    marks.shown ??= performance.now()
+    const confirm = [...request.querySelectorAll('button')].find(button => button.textContent === 'Confirm')
+    if (marks.enabled === undefined && confirm !== undefined && !confirm.disabled) marks.enabled = performance.now()
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] })
+}
+
+const marksOf = (page: Page) => page.evaluate(() => ({ ...(window as unknown as { confirmMarks: Marks }).confirmMarks }))
 
 type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
 let next = 5000
@@ -70,7 +93,8 @@ describe('a connect in the trusted window', () => {
     // A second while one waits is refused, whoever it is for
     expect(await connect(worker, asked(1, 'other-client'))).toEqual({ refused: 'throttled' })
 
-    const page = await trustedPage(app, editor)
+    await app.context().addInitScript(markConfirm)
+    const { page, clicked } = await trustedPage(app, editor)
     const heading = page.locator('section.request h1')
     await until(async () => (await heading.innerText()).startsWith('Connect the client from "claude.ai"'))
     expect(await heading.innerText()).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as "${CLAUDE}#3"`)
@@ -81,12 +105,20 @@ describe('a connect in the trusted window', () => {
     ])
     expect(await page.locator('section.request').getByRole('button').allInnerTexts()).toEqual(['Confirm', 'Cancel'])
 
-    // Inside the delay the page's Confirm is disabled and the core refuses one sent anyway
-    const confirm = page.getByRole('button', { name: 'Confirm' })
-    expect(await confirm.isDisabled()).toBe(true)
+    // Inside the delay the core refuses a Confirm sent anyway. Sent only while the test's clock is in the first half of
+    // the delay since the click, the rest left for the call to reach main. A slower machine skips it, the delay checked
+    // by the marks below
     const id = ((await ask(editor, 'core.status')).result as { pending: { id: string }[] }).pending[0]!.id
-    expect((await ask(page, 'security.confirm', { requestId: id })).refusal?.code).toBe('throttled')
-    expect(await collect(worker, handle)).toEqual({ answer: 'waiting' })
+    if (Date.now() - clicked < INPUT_DELAY_MS / 2) {
+      expect((await ask(page, 'security.confirm', { requestId: id })).refusal?.code).toBe('throttled')
+      expect(await collect(worker, handle)).toEqual({ answer: 'waiting' })
+    }
+
+    // The page's Confirm turned enabled no sooner than the delay after the request showed
+    const confirm = page.getByRole('button', { name: 'Confirm' })
+    await until(async () => (await marksOf(page)).enabled !== undefined)
+    const marks = await marksOf(page)
+    expect(marks.enabled! - marks.shown!).toBeGreaterThanOrEqual(INPUT_DELAY_MS)
 
     await tick(PAST_DELAY)
     await confirm.click()
@@ -99,7 +131,7 @@ describe('a connect in the trusted window', () => {
   it('hands a Cancel as no once, then a connect waiting when the door restarts is gone and can\'t be confirmed', async () => {
     const { app, editor, worker } = await started()
     const first = ((await connect(worker, asked(4))).result as { handle: string }).handle
-    const page = await trustedPage(app, editor)
+    const { page } = await trustedPage(app, editor)
     await until(async () => (await page.locator('section.request h1').innerText()).includes('#4"'))
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Cancel' }).click()
