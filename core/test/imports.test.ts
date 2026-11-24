@@ -63,6 +63,7 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'recording', under: 'core/backend/recording/' },
   { part: 'security-view', under: 'core/backend/security-view/' },
   { part: 'door', under: 'core/backend/door/' },
+  { part: 'updater', under: 'core/backend/updater/' },
   { part: 'tooling', under: 'scripts/' },
 ]
 
@@ -74,7 +75,7 @@ export const parts: readonly { part: string, under: string }[] = [
 // router and boot through their doors (the runtime's types sit in its own door, so the plugins manager imports the runtime and not the other way). The
 // core modules: the holder reads the modules through their doors and each module the contract alone or with lib
 // (the build bounds their Node built-ins). The joins and tooling may import anything. The door, which runs in a
-// utility process as a plugin's host half, imports the contract and the SDK
+// utility process as a plugin's host half, imports the contract and the SDK. The updater the contract and the libs
 export const arrows: Readonly<Record<string, readonly string[]>> = {
   contract: [],
   lib: ['contract'],
@@ -100,13 +101,14 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   recording: ['contract', 'lib'],
   'security-view': ['contract'],
   door: ['contract', 'sdk'],
+  updater: ['contract', 'lib', 'backend-lib'],
   join: ['*'],
   tooling: ['*'],
 }
 
 // The parts reached from outside only through their header.ts. The gate, the classifier and storage are in no part's
 // row but the joins', which build them, so nothing else may import them and they need no door
-export const doors = new Set(['router', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'lock', 'recording', 'security-view'])
+export const doors = new Set(['router', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'lock', 'recording', 'security-view', 'updater'])
 
 // Files outside the arrows, each with its reason. The utility process's own bootstrap runs in its own process and not
 // in main: it is bundled apart into utility.js and runs a utility half through the SDK's runner, so it and the check

@@ -2,8 +2,9 @@
 // offline. Node's own fetch, not Electron's net, which goes through the default session that refuses every request
 // and keeps cookies. Node's fetch keeps none and no cookie or credential is sent here
 
+import { z } from 'zod'
 import { installProblemWords } from '../../api/trusted.ts'
-import { hostOnly, parsedUrl } from '../lib/url.ts'
+import { hostOnly, parsedUrl } from './url.ts'
 
 // The fetch main uses, Node's global one unless a test hands in its own
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>
@@ -60,8 +61,8 @@ export function onGitHub(url: string): boolean {
 }
 
 // The name every request gives in its one header naming the client, which GitHub's API asks of every request. It
-// names hetu's installer and no person
-const CLIENT_NAME = 'hetu-installer'
+// names hetu and no person
+const CLIENT_NAME = 'hetu'
 const REDIRECTS: readonly number[] = Object.freeze([301, 302, 303, 307, 308])
 const MOST_REDIRECTS = 5
 
@@ -198,4 +199,52 @@ export async function getFromGitHub(url: string, wanted: Wanted, limits: FetchLi
   } finally {
     stop.end()
   }
+}
+
+const MiB = 1024 * 1024
+
+// A release's answer from the API, every asset with its uploader included. GitHub holds at most 1,000 assets a release
+export const releaseLimits: FetchLimits = Object.freeze({ bytes: 8 * MiB, ms: 20_000 })
+
+const releaseAnswer = z.object({
+  tag_name: z.string(),
+  assets: z.array(z.object({
+    name: z.string(),
+    size: z.number().int().nonnegative(),
+    // uploaded once whole. An upload under way is starter
+    state: z.string(),
+    browser_download_url: z.string(),
+    // sha256:<hex>, computed by GitHub at upload, null for an asset uploaded before GitHub kept one
+    digest: z.string().nullable().optional(),
+  })),
+})
+
+// A release as the API answers it, the fields read here and nothing more
+export type ReleaseAnswer = z.infer<typeof releaseAnswer>
+
+const API = 'https://api.github.com'
+// The answer GitHub's docs ask a client to accept and the API version whose release shape is read here
+const RELEASE_WANTED: Wanted = Object.freeze({ accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' })
+
+function parsedRelease(bytes: Buffer): ReleaseAnswer {
+  let body: unknown
+  try {
+    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+  } catch {
+    throw new FetchRefused('bad-answer')
+  }
+  const checked = releaseAnswer.safeParse(body)
+  if (!checked.success) throw new FetchRefused('bad-answer')
+  return checked.data
+}
+
+// A repo's release asked of the API, the one a tag names or the latest when tag is null. GitHub's latest is the newest
+// full release, never a draft or a prerelease. Throws FetchRefused, the API's 404 for a repo or a release it doesn't
+// have as no-release
+export async function readRelease(owner: string, repo: string, tag: string | null, limits: FetchLimits, options: { fetch?: Fetch, signal?: AbortSignal }): Promise<ReleaseAnswer> {
+  const which = tag === null ? 'latest' : `tags/${encodeURIComponent(tag)}`
+  const bytes = await getFromGitHub(`${API}/repos/${owner}/${repo}/releases/${which}`, RELEASE_WANTED, limits, options).catch((err: unknown) => {
+    throw err instanceof FetchRefused && err.problem === 'not-found' ? new FetchRefused('no-release') : err
+  })
+  return parsedRelease(bytes)
 }

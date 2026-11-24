@@ -380,7 +380,43 @@ body {
   pointer-events: none;
 }
 
+/* Every zone a dragged view can land on, outlined and named by the zone the layout gave it, while the drag lasts */
+#drop-zones {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483642;
+  pointer-events: none;
+}
+
+.drop-zone {
+  position: fixed;
+  box-sizing: border-box;
+  border: 2px dashed #1a5fb4;
+}
+
+.drop-zone span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  padding: 0 4px;
+  background: #1a5fb4;
+  color: #ffffff;
+  font: 11px system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.drop-zone.short span {
+  top: auto;
+  bottom: calc(100% + 2px);
+}
+
+.drop-zone.at-right span {
+  left: auto;
+  right: calc(100% + 2px);
+}
+
 #drag-ghost[hidden],
+#drop-zones[hidden],
 #drop-mark[hidden] {
   display: none;
 }
@@ -497,11 +533,13 @@ body {
 .cm-hetu-line-codeblock { font-family: ui-monospace, monospace; background: #f6f6f6; }
 .cm-hetu-line-rule { border-bottom: 1px solid #cccccc; }
 
-/* The core layer: the raw view sits over everything, in fixed styles */
+/* The core layer: the raw view sits over the editor's box, which the page sets, above every layer plugins draw in, in
+   fixed styles */
 #raw {
   position: fixed;
-  inset: 0;
+  box-sizing: border-box;
   z-index: 2147483647;
+  border: 2px solid #000000;
   display: flex;
   flex-direction: column;
   background: #ffffff;
@@ -521,6 +559,14 @@ body {
   background: #eeeeee;
   border-bottom: 1px solid #999999;
   font: 13px system-ui, sans-serif;
+}
+
+/* Fixed words of the core's own, so a view drawn beside the real text can't pass for it */
+#raw-label {
+  padding: 1px 6px;
+  background: #000000;
+  color: #ffffff;
+  font-weight: bold;
 }
 
 #raw-title {

@@ -1,6 +1,6 @@
 import { getEventListeners } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FetchRefused, getFromGitHub, githubHosts, onGitHub, type Fetch } from '../backend/plugins-manager/github.ts'
+import { FetchRefused, getFromGitHub, githubHosts, onGitHub, type Fetch } from '../backend/lib/github.ts'
 import { releaseZips } from '../backend/plugins-manager/release.ts'
 
 type Call = { url: string, init: RequestInit }
@@ -141,7 +141,7 @@ describe('every request', () => {
       expect(init.method).toBe('GET')
       expect(init.redirect).toBe('manual')
       expect(init.credentials).toBe('omit')
-      expect(init.headers).toEqual({ accept: 'application/octet-stream', 'user-agent': 'hetu-installer' })
+      expect(init.headers).toEqual({ accept: 'application/octet-stream', 'user-agent': 'hetu' })
     }
   })
 
@@ -166,7 +166,7 @@ describe('every request', () => {
     })
     await releaseZips('https://github.com/o/r', { fetch })
     expect(calls[0].init.headers).toEqual({
-      accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'hetu-installer',
+      accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'hetu',
     })
   })
 })

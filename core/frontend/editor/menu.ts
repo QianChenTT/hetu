@@ -9,7 +9,8 @@ export type MenuData = {
   themes: { id: string, name: string }[]
   theme: string | null
   themeFallback: boolean
-  views: { key: string, name: string, title: string, running: boolean, favorite: boolean, instance: string | null, shown: boolean }[]
+  // item is a status row item, which the layout keeps in the status row and no drag moves
+  views: { key: string, name: string, title: string, item: boolean, running: boolean, favorite: boolean, instance: string | null, shown: boolean }[]
   conflicts: { key: string, plugins: { id: string, name: string }[], owner: string | null }[]
 }
 
@@ -66,16 +67,32 @@ export function drawMenu(body: HTMLElement, data: MenuData, actions: MenuActions
     note.textContent = 'This theme\'s editor colors are too close to read, so the editor keeps hetu\'s'
     parts.push(note)
   }
+  const views = data.views.filter(view => !view.item)
+  const items = data.views.filter(view => view.item)
   parts.push(heading('Views'))
-  if (data.views.length === 0) {
+  if (views.length === 0) {
     const none = document.createElement('p')
     none.className = 'menu-note'
     none.textContent = 'No plugin declares a view'
     parts.push(none)
   }
+  parts.push(viewList(views, actions))
+  // Items sit in the status row, apart from the views a drag moves
+  if (items.length > 0) parts.push(heading('Status row'), viewList(items, actions))
+  if (data.conflicts.length > 0) {
+    parts.push(heading('Keys two plugins want'))
+    for (const conflict of data.conflicts) {
+      parts.push(choice(conflict.key, conflict.plugins, 'Neither', conflict.owner, id => actions.ownKey(conflict.key, id)))
+    }
+  }
+  body.replaceChildren(...parts)
+}
+
+// Each view or item with its star, its plugin's name and title and Hide or Show
+function viewList(views: MenuData['views'], actions: MenuActions): HTMLUListElement {
   const list = document.createElement('ul')
   list.className = 'menu-views'
-  for (const view of data.views) {
+  for (const view of views) {
     const item = document.createElement('li')
     item.dataset.view = view.key
     const star = action(view.favorite ? '★' : '☆', () => actions.favorite(view.key, !view.favorite))
@@ -91,12 +108,5 @@ export function drawMenu(body: HTMLElement, data: MenuData, actions: MenuActions
     }
     list.append(item)
   }
-  parts.push(list)
-  if (data.conflicts.length > 0) {
-    parts.push(heading('Keys two plugins want'))
-    for (const conflict of data.conflicts) {
-      parts.push(choice(conflict.key, conflict.plugins, 'Neither', conflict.owner, id => actions.ownKey(conflict.key, id)))
-    }
-  }
-  body.replaceChildren(...parts)
+  return list
 }

@@ -27,6 +27,8 @@ import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
+import type { Updater } from './updater/header.ts'
+import { createUpdater } from './updater/updater.ts'
 import { wireCore } from './wire.ts'
 
 // The bundle sits in core/dist with the utility bootstrap, the door, the built pages and the workers preload beside it.
@@ -68,6 +70,9 @@ async function start(): Promise<void> {
   let pluginsManagerOf: PluginsManager | null = null
   let routerOf: Router | null = null
   let workers: WorkerRenderers | null = null
+  let updater: Updater | null = null
+  // An update's installer, started once Quit has run, false when it started nothing so hetu starts again
+  let startAfterQuit: (() => boolean) | null = null
   let quitting: Promise<void> | null = null
   let code = 0
   // Restart hetu, and quitting after a failure, start a new run once this one has exited
@@ -77,6 +82,7 @@ async function start(): Promise<void> {
   const seen = new Set<BrowserWindow>()
   app.on('before-quit', event => {
     event.preventDefault()
+    updater?.close()
     quitting ??= (async () => {
       // A quit the human asked for: windows hear core.quitting and get a moment to keep their drafts, as after a failure
       if (ending.asked() && routerOf !== null && [...seen].some(window => !window.isDestroyed())) {
@@ -89,7 +95,8 @@ async function start(): Promise<void> {
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
     })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => {
-      if (again) app.relaunch()
+      // An installer started starts hetu again itself, so it wins over a restart
+      if (startAfterQuit !== null ? !startAfterQuit() : again) app.relaunch()
       app.exit(code)
     })
   })
@@ -278,6 +285,17 @@ async function start(): Promise<void> {
     pluginsManagerOf = wired.pluginsManager
     routerOf = wired.router
     parts = { pluginsManager: wired.pluginsManager, router: wired.router, recording: wired.recording, release: booted.release }
+    // A locked build checks GitHub's latest full release for a signed update once the core is ready. Install quits the
+    // way Quit does and starts the installer just before the exit
+    updater = createUpdater({
+      locked: LOCKED, running: app.getVersion(), platform: process.platform, recording: wired.recording, dataDir: booted.dataDir,
+      quit: start => {
+        if (quitting !== null) return false
+        startAfterQuit = start
+        app.quit()
+        return true
+      },
+    })
 
     // Each editor window comes with its way into the router, made before its page loads, and its drawer ports once each
     // load's preload listens
@@ -341,6 +359,7 @@ async function start(): Promise<void> {
     if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
     else {
       editor = show(editorWindow())
+      updater.ready()
       // Over the editor, on its welcome guide, until a layout plugin is approved
       if (wired.pluginsManager.welcomeDue()) trusted.show()
     }

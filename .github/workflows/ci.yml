@@ -220,13 +220,14 @@ jobs:
             Show-Waiting
             throw "the uninstall left $($left -join ', ')"
           }
-      - name: keep the setup and its hash
+      - name: keep the setup, the update file and their hashes
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hetu-setup
           path: |
             dist-package/installer/hetu-setup-*-x64.exe
+            dist-package/installer/hetu-update.json
             dist-package/installer/SHA256SUMS
 
   # SCA: dev dependencies and medium or lower advisories only warn, high and critical in
