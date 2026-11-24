@@ -11,8 +11,8 @@ import type { Rect } from './drag.ts'
 // through the drawer, plain data as JSON text within the cap at a rate. Frames sit in the lifted layer over their
 // slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
 // it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
-// move ends, and main drops each key headed for a frame other than the one the page told it it let in, so the frame
-// hears none of what the human types meanwhile. hetu's theme is offered to every frame as the
+// move ends. Main drops each key headed for a frame other than the one the page told it it let in, so the frame hears
+// none of what the human types meanwhile. hetu's theme is offered to every frame as the
 // page sets it, never checked or forced on one. A frame may ask hetu to open a note, which is the human's only right
 // after the human pressed in one of its plugin's frames, one open each press, and else the plugin's own. A note
 // dragged out of a frame carries a token main minted for its plugin and note, and dropped on the editor it opens as the
@@ -61,7 +61,7 @@ export class FocusGuard {
   }
 
   // The frame let in, while focus stays in it, null for none
-  held(): string | null {
+  letIn(): string | null {
     return this.holder
   }
 
@@ -120,7 +120,7 @@ export class Frames {
   // drops a key headed for any other frame before the page sees that frame take focus
   onLetIn: ((url: string | null) => void) | null = null
   // The URL main was told last
-  private told: string | null = null
+  private lastTold: string | null = null
   // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note.
   // again says the same frame still holds it from a theft already told
   onTheft: ((url: string, again: boolean) => void) | null = null
@@ -197,7 +197,7 @@ export class Frames {
     const found = this.at(document.elementFromPoint(x, y))
     this.guard.allow(found?.[0] ?? null)
     this.credit.pressed(found?.[1].owner ?? null)
-    this.tell()
+    this.reportLetIn()
   }
 
   // Main's word that the human let go of a press at this point of the page
@@ -220,14 +220,14 @@ export class Frames {
     const found = this.at(document.activeElement)
     if (found === null) {
       this.guard.left()
-      this.tell()
+      this.reportLetIn()
       this.caught = null
       this.watching(false)
       return
     }
     const [instance, held] = found
     const entered = this.guard.entered(instance)
-    this.tell()
+    this.reportLetIn()
     if (entered) {
       this.caught = null
       this.watching(true)
@@ -252,11 +252,11 @@ export class Frames {
   }
 
   // Main told the frame focus is let into whenever it changed
-  private tell(): void {
-    const instance = this.guard.held()
+  private reportLetIn(): void {
+    const instance = this.guard.letIn()
     const url = instance === null ? null : this.mounted.get(instance)?.url ?? null
-    if (url === this.told) return
-    this.told = url
+    if (url === this.lastTold) return
+    this.lastTold = url
     this.onLetIn?.(url)
   }
 
@@ -313,7 +313,9 @@ export class Frames {
     this.credit.forget(held.owner)
     held.port?.close()
     held.element?.remove()
-    this.tell()
+    // A frame holding focus as it goes holds it no longer, so a later frame given the same instance isn't let in by it
+    if (this.guard.letIn() === instance) this.guard.left()
+    this.reportLetIn()
     if (held.url !== null) void this.link.call('editor.frameGone', { url: held.url, navigated })
   }
 

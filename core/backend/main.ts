@@ -27,7 +27,7 @@ import { bytesReader } from './providers/luoshu/bytes.ts'
 import { checkSender, type SenderFrame, WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
-import { appMenu, editorInputOf, guardContents, openEditor, openTrusted, pageFrameOf, quietPlacement } from './runtime/windows.ts'
+import { appMenu, guardedKeyOf, guardContents, openEditor, openTrusted, childFrameOf, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import type { Updater } from './updater/header.ts'
 import { createUpdater } from './updater/updater.ts'
@@ -366,8 +366,8 @@ async function start(): Promise<void> {
       // for a frame the page didn't let focus into stops here, before the frame hears it
       contents.on('before-input-event', (event, input) => {
         const focused = contents.focusedFrame
-        const focus = { focused: focused?.url ?? null, frame: pageFrameOf(focused ?? null) }
-        const { prevented, sent } = editorInputOf(input, focus, letIn, viewKeys, process.platform === 'darwin')
+        const focus = { focused: focused?.url ?? null, frame: childFrameOf(focused) }
+        const { prevented, sent } = guardedKeyOf(input, focus, letIn, viewKeys, process.platform === 'darwin')
         if (prevented) event.preventDefault()
         if (sent !== null && !contents.isDestroyed()) contents.send(sent.channel, sent.sent)
       })
