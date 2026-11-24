@@ -150,6 +150,26 @@ describe('the theme the frames are offered', () => {
   })
 })
 
+describe('the frame focus is in', () => {
+  it('holds only a frame it let in, until focus leaves it or a press lands elsewhere', () => {
+    const guard = new FocusGuard(() => 0)
+    expect(guard.holding('v1')).toBe(false)
+    expect(guard.entered('v1')).toBe(false)
+    expect(guard.holding('v1')).toBe(false)
+    guard.allow('v1')
+    expect(guard.holding('v1')).toBe(false)
+    expect(guard.entered('v1')).toBe(true)
+    expect(guard.holding('v1')).toBe(true)
+    expect(guard.holding('v2')).toBe(false)
+    guard.allow(null)
+    expect(guard.holding('v1')).toBe(false)
+    guard.allow('v1')
+    guard.entered('v1')
+    guard.left()
+    expect(guard.holding('v1')).toBe(false)
+  })
+})
+
 describe("an open from a frame counted as the human's", () => {
   it('takes one open of the plugin pressed in, then none until the next press', () => {
     const credit = new OpenCredit(() => 0)

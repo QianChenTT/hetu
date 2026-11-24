@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { appMenu, coreKeyOfInput, editorKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
+import { appMenu, coreKeyOfInput, editorKeyOfInput, frameKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer, the window open handler and the WebRTC policy
 class FakeContents extends EventEmitter {
@@ -269,5 +269,26 @@ describe('the keys main matches while focus is in a plugin frame', () => {
     expect(editorKeyOfInput(press('j'), 'hetu://x.kanban.views/0123456789abcdef0123456789abcdef/board.html', bound, false)).toBe(null)
     expect(editorKeyOfInput(press('j'), 'not a url', bound, false)).toBe(null)
     expect(editorKeyOfInput(press('Shift', { shift: true }), kanban, new Map([['kanban', new Set(['Shift'])]]), false)).toBe(null)
+  })
+
+  it('names the focused plugin frame of an Enter or Space going down, which the page counts as a press there', () => {
+    expect(frameKeyOfInput(press('Enter'), kanban)).toBe(kanban)
+    expect(frameKeyOfInput(press(' '), kanban)).toBe(kanban)
+    expect(frameKeyOfInput(press('Enter', { shift: true }), kanban)).toBe(kanban)
+  })
+
+  it('names nothing for another key, a key up, a held key, a key with Ctrl, Alt or Meta or focus outside any plugin frame', () => {
+    expect(frameKeyOfInput(press('a'), kanban)).toBe(null)
+    expect(frameKeyOfInput(press('Tab'), kanban)).toBe(null)
+    expect(frameKeyOfInput(press('Enter', { type: 'keyUp' }), kanban)).toBe(null)
+    expect(frameKeyOfInput(press('Enter', { isAutoRepeat: true }), kanban)).toBe(null)
+    expect(frameKeyOfInput(press('Enter', { control: true }), kanban)).toBe(null)
+    expect(frameKeyOfInput(press(' ', { alt: true }), kanban)).toBe(null)
+    expect(frameKeyOfInput(press('Enter', { meta: true }), kanban)).toBe(null)
+    expect(frameKeyOfInput(press('Enter'), null)).toBe(null)
+    expect(frameKeyOfInput(press('Enter'), 'hetu://editor/')).toBe(null)
+    expect(frameKeyOfInput(press('Enter'), 'hetu://x.kanban.views/0123456789abcdef0123456789abcdef/board.html')).toBe(null)
+    expect(frameKeyOfInput(press('Enter'), 'https://kanban.views/')).toBe(null)
+    expect(frameKeyOfInput(press('Enter'), 'not a url')).toBe(null)
   })
 })
