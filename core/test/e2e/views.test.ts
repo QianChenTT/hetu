@@ -264,7 +264,8 @@ describe('the views menu\'s status row', () => {
     await until(async () => (await editor.locator('#menu li[data-view="board/count"]').count()) === 1)
     expect(await editor.locator('#menu-body h2').allInnerTexts()).toEqual(['Look', 'Views', 'Status row'])
     const lists = editor.locator('#menu-body ul.menu-views')
-    expect(await lists.nth(0).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/cards'])
+    // The note list every run starts with is a view too
+    expect(await lists.nth(0).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/cards', 'note-list/notes'])
     expect(await lists.nth(1).locator('li').evaluateAll(items => items.map(item => (item as HTMLElement).dataset.view))).toEqual(['board/count'])
   })
 })
