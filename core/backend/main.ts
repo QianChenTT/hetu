@@ -71,6 +71,8 @@ async function start(): Promise<void> {
   let routerOf: Router | null = null
   let workers: WorkerRenderers | null = null
   let updater: Updater | null = null
+  // An update's installer, started once Quit has run, false when it started nothing so hetu starts again
+  let startAfterQuit: (() => boolean) | null = null
   let quitting: Promise<void> | null = null
   let code = 0
   // Restart hetu, and quitting after a failure, start a new run once this one has exited
@@ -93,7 +95,8 @@ async function start(): Promise<void> {
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
     })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => {
-      if (again) app.relaunch()
+      // An installer started starts hetu again itself, so it wins over a restart
+      if (startAfterQuit !== null ? !startAfterQuit() : again) app.relaunch()
       app.exit(code)
     })
   })
@@ -282,8 +285,17 @@ async function start(): Promise<void> {
     pluginsManagerOf = wired.pluginsManager
     routerOf = wired.router
     parts = { pluginsManager: wired.pluginsManager, router: wired.router, recording: wired.recording, release: booted.release }
-    // A locked build checks GitHub's latest full release for a signed update once the core is ready
-    updater = createUpdater({ locked: LOCKED, running: app.getVersion(), platform: process.platform, recording: wired.recording })
+    // A locked build checks GitHub's latest full release for a signed update once the core is ready. Install quits the
+    // way Quit does and starts the installer just before the exit
+    updater = createUpdater({
+      locked: LOCKED, running: app.getVersion(), platform: process.platform, recording: wired.recording, dataDir: booted.dataDir,
+      quit: start => {
+        if (quitting !== null) return false
+        startAfterQuit = start
+        app.quit()
+        return true
+      },
+    })
 
     // Each editor window comes with its way into the router, made before its page loads, and its drawer ports once each
     // load's preload listens
