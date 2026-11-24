@@ -123,9 +123,56 @@ jobs:
             (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\hetu.lnk')
           )
           $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'hetu.lnk'
+          # Each process of the setup, the uninstaller or hetu with its command line and the text of its windows, so a phase
+          # that hangs shows what it waits on, a message box among them. NSIS keeps no log of its own
+          function Show-Waiting {
+            Add-Type -TypeDefinition @'
+          using System;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public static class WindowTexts {
+            delegate bool Visit(IntPtr window, IntPtr data);
+            [DllImport("user32.dll")] static extern bool EnumWindows(Visit visit, IntPtr data);
+            [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, Visit visit, IntPtr data);
+            [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wide, StringBuilder text, uint flags, uint ms, out IntPtr result);
+            static string Text(IntPtr window) {
+              var text = new StringBuilder(2048);
+              IntPtr result;
+              SendMessageTimeout(window, 0x000D, (IntPtr)text.Capacity, text, 2, 2000, out result);
+              return text.ToString();
+            }
+            public static List<string> Of(uint pid) {
+              var lines = new List<string>();
+              EnumWindows((window, data) => {
+                uint owner;
+                GetWindowThreadProcessId(window, out owner);
+                if (owner != pid) return true;
+                lines.Add("window: " + Text(window));
+                EnumChildWindows(window, (child, more) => { var text = Text(child); if (text.Length > 0) lines.Add("  " + text); return true; }, IntPtr.Zero);
+                return true;
+              }, IntPtr.Zero);
+              return lines;
+            }
+          }
+          '@
+            Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'hetu|uninstall|^Un_|^Au_' } | ForEach-Object {
+              Write-Host "process $($_.ProcessId), parent $($_.ParentProcessId): $($_.CommandLine)"
+              foreach ($line in [WindowTexts]::Of([uint32] $_.ProcessId)) { Write-Host "  $line" }
+            }
+          }
+          # Each phase ends within its own time limit, the waiting processes shown when it doesn't
           function Invoke-Phase([string] $phase, [string] $file, [string[]] $arguments, [int] $expected) {
             Write-Host "$(Get-Date -Format o) $phase"
-            $run = Start-Process $file -ArgumentList $arguments -Wait -PassThru
+            $run = Start-Process $file -ArgumentList $arguments -PassThru
+            # Holding the handle keeps the exit code readable once the process is gone
+            $null = $run.Handle
+            if (-not $run.WaitForExit(120000)) {
+              Write-Host "$(Get-Date -Format o) $phase still running after 120 s"
+              Show-Waiting
+              throw "$phase timed out"
+            }
             Write-Host "$(Get-Date -Format o) $phase ended with $($run.ExitCode)"
             if ($run.ExitCode -ne $expected) { throw "$phase ended with $($run.ExitCode), not $expected" }
           }
@@ -152,6 +199,9 @@ jobs:
           $link = $shell.CreateShortcut($desktopLink)
           $link.TargetPath = Join-Path $dir 'hetu.exe'
           $link.Save()
+          # What the update's uninstall of the older version reads
+          Write-Host "InstallLocation: $((Get-ItemProperty "HKCU:\Software\$guid").InstallLocation)"
+          Write-Host "UninstallString: $((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$guid").UninstallString)"
           Invoke-Phase "update: $($setup.Name) /S" $setup.FullName @('/S') 0
           foreach ($path in $made + $desktopLink) { if (-not (Test-Path $path)) { throw "the update left no $path" } }
           Invoke-Phase 'uninstall: Uninstall hetu.exe /S' $uninstaller @('/S') 0
@@ -159,7 +209,10 @@ jobs:
           $deadline = (Get-Date).AddMinutes(1)
           while (($made + $desktopLink | Where-Object { Test-Path $_ }) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
           $left = @($made + $desktopLink | Where-Object { Test-Path $_ })
-          if ($left.Count -gt 0) { throw "the uninstall left $($left -join ', ')" }
+          if ($left.Count -gt 0) {
+            Show-Waiting
+            throw "the uninstall left $($left -join ', ')"
+          }
       # A signed record of which workflow built the setup from which commit, checked with gh attestation verify
       - name: attest the setup's build
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
