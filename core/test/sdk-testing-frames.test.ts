@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_DEPTH } from '../api/plain.ts'
 import { API_VERSION } from '../api/manifest.ts'
-import { DRAG_PREFIX, DRAG_TOKEN_MS, FRAME_MESSAGES_PER_SECOND, MAX_FRAME_MESSAGE, OPEN_GRACE_MS } from '../api/ui-limits.ts'
+import { DRAG_PREFIX, DRAG_TOKEN_MS, DRAG_TOKENS_PER_PLUGIN, FRAME_MESSAGES_PER_SECOND, MAX_FRAME_MESSAGE, OPEN_GRACE_MS } from '../api/ui-limits.ts'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, FakeDrawer } from '../sdk/testing/index.ts'
 
@@ -192,5 +192,39 @@ describe('opens and drags from a frame in the fake drawer', () => {
     await made.stop()
     await made.start(plugin)
     expect(drawer.drop(`${DRAG_PREFIX}${earlier}`)).toBeNull()
+  })
+
+  it('takes Enter in the frame and the release of a long press as the human\'s press, as hetu\'s drawer does', async () => {
+    const { drawer, frame } = await opening()
+    frame.keyed()
+    expect(drawer.isHuman(frame.open('notes/a.md')!)).toBe(true)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    frame.pressed()
+    vi.setSystemTime(Date.now() + 2000)
+    frame.released()
+    expect(drawer.isHuman(frame.open('notes/b.md')!)).toBe(true)
+  })
+
+  it('opens, mints and takes a drop for nothing once the plugin no longer holds ui.view', async () => {
+    const { drawer, frame } = await opening()
+    const token = frame.dragToken('notes/a.md')
+    drawer.connect([{ type: 'luoshu.read', paths: ['notes/**'] }], manifest.views as never, path => (path === 'notes/a.md' ? 'aye' : undefined))
+    frame.pressed()
+    expect(frame.open('notes/a.md')).toBeNull()
+    expect(frame.dragToken('notes/a.md')).toBeNull()
+    expect(drawer.drop(`${DRAG_PREFIX}${token}`)).toBeNull()
+  })
+
+  it(`holds ${DRAG_TOKENS_PER_PLUGIN} tokens, its oldest going first`, async () => {
+    const { drawer, frame } = await opening()
+    // A hundred asks a second, within what a frame may ask
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const minted = Array.from({ length: DRAG_TOKENS_PER_PLUGIN + 1 }, (_, at) => {
+      if (at % 100 === 0) vi.setSystemTime(Date.now() + 1000)
+      return frame.dragToken('notes/a.md')
+    })
+    expect(minted.every(token => token !== null)).toBe(true)
+    expect(drawer.drop(`${DRAG_PREFIX}${minted[0]}`)).toBeNull()
+    expect(drawer.drop(`${DRAG_PREFIX}${minted[1]}`)).not.toBeNull()
   })
 })
