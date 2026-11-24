@@ -1,4 +1,4 @@
-import { FrameInbox } from '../../api/ui-limits.ts'
+import { type FrameAsks, FrameInbox, frameAsks, OpenCredit } from '../../api/ui-limits.ts'
 import { lay } from './layers.ts'
 import type { CoreLink } from './link.ts'
 import type { Rect } from './drag.ts'
@@ -12,7 +12,8 @@ import type { Rect } from './drag.ts'
 // slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
 // it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
 // move ends, which leaves it a key or none of what the human types. hetu's theme is offered to every frame as the
-// page sets it, never checked or forced on one
+// page sets it, never checked or forced on one. A frame may ask hetu to open a note as the human's, which counts only
+// right after the human pressed in one of its plugin's frames, one open each press, and else opens nothing
 
 // How long after a press, or the core's own move, focus may still go into that frame
 export const FOCUS_GRACE_MS = 500
@@ -86,6 +87,7 @@ type Mounted = {
   url: string | null
   port: MessagePort | null
   inbox: FrameInbox
+  asks: FrameAsks
 }
 
 export class Frames {
@@ -96,6 +98,7 @@ export class Frames {
   private readonly mounted = new Map<string, Mounted>()
   private readonly gone: (instance: string) => boolean
   private readonly guard = new FocusGuard()
+  private readonly credit = new OpenCredit(() => performance.now())
   private checking = false
   private watch: ReturnType<typeof setInterval> | null = null
   // The frame caught taking focus and not yet out of it, told once
@@ -103,6 +106,8 @@ export class Frames {
   // Told the URL main served the frame from when it took focus on its own, so the page gives it back to the note.
   // again says the same frame still holds it from a theft already told
   onTheft: ((url: string, again: boolean) => void) | null = null
+  // Told a note a frame of owner's asked to open right after the human's press in one of them, to open as theirs
+  onOpen: ((owner: string, path: string) => void) | null = null
   // The theme's variables as last offered to the frames
   private variables: Readonly<Record<string, string>> = {}
   // The theme main last took, as JSON, so one main refused is sent again with the next offer
@@ -139,7 +144,7 @@ export class Frames {
       held = undefined
     }
     if (held === undefined) {
-      held = { owner, frame, element: null, box: null, url: null, port: null, inbox: new FrameInbox(() => performance.now()) }
+      held = { owner, frame, element: null, box: null, url: null, port: null, inbox: new FrameInbox(() => performance.now()), asks: frameAsks(() => performance.now()) }
       this.mounted.set(instance, held)
       void this.mount(instance, held)
     }
@@ -147,10 +152,25 @@ export class Frames {
     this.lay(held)
   }
 
+  // A press main pushed: down or up at its point on the page
+  pushed(press: unknown): void {
+    const { down, x, y } = (typeof press === 'object' && press !== null ? press : {}) as Record<string, unknown>
+    if (typeof x !== 'number' || typeof y !== 'number') return
+    if (down === true) this.pressed(x, y)
+    else if (down === false) this.released(x, y)
+  }
+
   // Main's word that the human pressed at this point of the page, in a frame or not. The frame drawn there may take
-  // focus from it
-  pressed(x: number, y: number): void {
-    this.guard.allow(this.at(document.elementFromPoint(x, y))?.[0] ?? null)
+  // focus from it, and its plugin's frames may open a note as the human's
+  private pressed(x: number, y: number): void {
+    const found = this.at(document.elementFromPoint(x, y))
+    this.guard.allow(found?.[0] ?? null)
+    this.credit.pressed(found?.[1].owner ?? null)
+  }
+
+  // Main's word that the human let go of a press at this point of the page
+  private released(x: number, y: number): void {
+    this.credit.released(this.at(document.elementFromPoint(x, y))?.[1].owner ?? null)
   }
 
   // Focus moved, in the page or into a frame. It is checked once the move is done, since focus pulled back while the
@@ -288,6 +308,10 @@ export class Frames {
     if (load !== 'port' || held.element?.contentWindow == null) return
     const { port1, port2 } = new MessageChannel()
     port1.onmessage = event => {
+      if (typeof event.data !== 'string') {
+        this.asked(instance, held, event.data)
+        return
+      }
       const taken = held.inbox.take(event.data)
       if (taken.ok && this.mounted.get(instance) === held) this.relay(held.owner, instance, taken.data)
     }
@@ -296,5 +320,13 @@ export class Frames {
     // on the first load of the single-use path main served, and a frame that navigates after it is removed with no port
     // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
     held.element.contentWindow.postMessage({ v: 1, kind: 'view', variables: this.variables }, '*', [port2])
+  }
+
+  // What a frame asked of hetu itself. An open goes on only on the human's press in a frame of its plugin's
+  private asked(instance: string, held: Mounted, message: unknown): void {
+    const taken = held.asks(message)
+    if (taken === null || this.mounted.get(instance) !== held) return
+    const { ask } = taken
+    if (ask.kind === 'open' && taken.ok && this.credit.use(held.owner)) this.onOpen?.(held.owner, ask.path)
   }
 }

@@ -690,8 +690,7 @@ function start(bridge: Bridge): void {
     }
     // A press main saw, a frame's own included, which the page alone never hears
     if (data?.hetu === 'press') {
-      const press = data.press
-      if (press?.down === true && typeof press.x === 'number' && typeof press.y === 'number') theFrames.pressed(press.x, press.y)
+      theFrames.pushed(data.press)
       return
     }
     if (typeof data?.plugin !== 'string' || typeof data.incarnation !== 'number') return
@@ -709,6 +708,7 @@ function start(bridge: Bridge): void {
     views.focus()
     if (!again) void link.call('editor.focusTaken', { url })
   }
+  theFrames.onOpen = (owner, path) => void openNote(path, owner)
   window.addEventListener('blur', () => theFrames.focusMoved())
   document.addEventListener('focusin', () => theFrames.focusMoved())
 

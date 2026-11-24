@@ -14,6 +14,10 @@ export type FrameView = {
   onMessage(handler: (data: unknown) => void): void
   theme(): Theme
   onTheme(handler: (theme: Theme) => void): void
+  // Opens the note in front as the human's, as a click on a note row of a tree view does. Counted only right after the
+  // human pressed in one of the plugin's frames or pressed Enter or Space in it, one open each time, so call it from
+  // that click or key. Any other open does nothing: the worker's editor.open opens a note in the background
+  open(path: string): void
 }
 
 type FrameEvent = { source: unknown, data: unknown, ports: readonly MessagePort[] }
@@ -84,6 +88,8 @@ export function connect(scope: FrameScope = globalThis as unknown as FrameScope)
         onTheme: handler => {
           onTheme = handler
         },
+        // An object, which the drawer takes as asked of hetu and never hands the worker
+        open: path => port.postMessage({ v: 1, kind: 'open', path }),
       })
     }
     scope.addEventListener('message', listener)
