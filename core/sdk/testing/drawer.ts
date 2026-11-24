@@ -50,7 +50,7 @@ export class FakeDrawer {
   private granted: readonly Capability[] = []
   private views: Record<string, ViewSpec> = {}
   // A note's text in the fake core's luoshu, which a note the plugin or a pressed node opens is read from
-  private noteText: (path: string) => string | undefined = () => undefined
+  private luoshuText: (path: string) => string | undefined = () => undefined
   private readonly trees = new Map<string, UiNode>()
   private readonly instancesOf = new Map<string, string>()
   private readonly notes = new Map<string, Note>()
@@ -79,10 +79,10 @@ export class FakeDrawer {
   }
 
   // The fake core connects it once the plugin runs, with what its manifest declares and its luoshu's notes
-  connect(granted: readonly Capability[], views: Record<string, ViewSpec>, noteText: (path: string) => string | undefined = () => undefined): void {
+  connect(granted: readonly Capability[], views: Record<string, ViewSpec>, luoshuText: (path: string) => string | undefined = () => undefined): void {
     this.granted = granted
     this.views = views
-    this.noteText = noteText
+    this.luoshuText = luoshuText
     this.asked = false
     this.sent.clear()
     this.commands = new Set()
@@ -132,29 +132,30 @@ export class FakeDrawer {
   }
 
   // Whether the human opened the note, so ui.read reaches it
-  human(instance: string): boolean {
+  isHuman(instance: string): boolean {
     return this.notes.get(instance)?.human === true
   }
 
-  // The human clicked a node of the plugin's view, or pressed Enter on it. A node carrying a note opens that note as the
-  // human's when the plugin reads or lists it, as hetu's drawer does, so a plugin can't name a note it can't reach and
-  // read it through ui.read once clicked. Answers the note's instance, null when nothing opened
+  // The human clicked a node of the plugin's view, or pressed Enter on it. A node carrying a note opens that note, and
+  // it counts as the human's only when the plugin reads or lists it, as hetu's drawer does, so a plugin can't name a
+  // note it can't reach and read it through ui.read once clicked. Answers the note's instance, null when nothing opened
   press(instance: string, node: string): string | null {
     const found = nodeIn(this.trees.get(instance) ?? null, node)
     if (found?.drag?.type !== 'note') return null
     const path = found.drag.value
     const reaches = holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })
       || holds(this.granted, { capability: 'luoshu.list', scope: { paths: [path] } })
-    if (!reaches) return null
     const open = [...this.notes].find(([, held]) => held.path === path)
     if (open === undefined) {
-      const text = this.noteText(path)
-      return text === undefined ? null : this.openNote(path, text)
+      const text = this.luoshuText(path)
+      return text === undefined ? null : this.openNote(path, text, undefined, reaches ? 'human' : 'plugin')
     }
     const [id, held] = open
-    if (held.human) return id
+    if (held.human || !reaches) return id
+    // Told once, as hetu's drawer tells each plugin of a note once
+    const told = this.reads(held)
     held.human = true
-    if (this.reads(held)) {
+    if (!told && this.reads(held)) {
       this.tell({ topic: 'editor.opened', instance: id })
       this.sendRange(id, held)
     }
@@ -348,7 +349,7 @@ export class FakeDrawer {
         if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) throw new Refusal('not-granted')
         this.opened.push(path)
         // In the background, as hetu's drawer opens a plugin's. A note the luoshu doesn't hold opens nothing
-        const text = this.noteText(path)
+        const text = this.luoshuText(path)
         if (text !== undefined && ![...this.notes.values()].some(held => held.path === path)) this.openNote(path, text, undefined, 'plugin')
         return null
       }
