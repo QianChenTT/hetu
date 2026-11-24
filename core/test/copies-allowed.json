@@ -460,18 +460,6 @@
     },
     {
       "files": [
-        "core/backend/runtime/trusted.ts",
-        "core/frontend/editor/frames.ts"
-      ],
-      "hash": "527132e7298837da",
-      "at": [
-        "core/backend/runtime/trusted.ts:18-22",
-        "core/frontend/editor/frames.ts:44-48"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
         "core/backend/runtime/windows.ts",
         "core/backend/runtime/windows.ts"
       ],

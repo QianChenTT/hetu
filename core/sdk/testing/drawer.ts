@@ -2,9 +2,8 @@ import { ChangeSet, type ChangeSpec, Text } from '@codemirror/state'
 import type { Capability } from '../../api/capabilities.ts'
 import { type BridgeEvent, linkAt, type Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
-import { plainProblem } from '../../api/plain.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
-import { MAX_FRAME_MESSAGE } from '../../api/ui-limits.ts'
+import { FrameInbox } from '../../api/ui-limits.ts'
 import { Editor } from '../editor.ts'
 import type { Transport } from '../transport.ts'
 import { holds } from './gate.ts'
@@ -120,14 +119,14 @@ export class FakeDrawer {
     if (view === undefined || this.views[view]?.frame === undefined) throw new Error(`no frame draws ${instance}`)
     const received: unknown[] = []
     this.frames.set(instance, received)
+    const inbox = new FrameInbox(Date.now)
     return {
       received,
       post: data => {
         // JSON text as the frame's SDK sends it, taken as hetu's drawer takes it
-        const text = JSON.stringify(data) as string | undefined
-        const sent = text === undefined || text.length > MAX_FRAME_MESSAGE ? undefined : JSON.parse(text) as unknown
-        if (sent === undefined || plainProblem(sent, MAX_FRAME_MESSAGE) !== null || this.frames.get(instance) !== received) return false
-        this.emit({ topic: 'view.message', instance, data: sent })
+        const taken = inbox.take(JSON.stringify(data))
+        if (!taken.ok || this.frames.get(instance) !== received) return false
+        this.emit({ topic: 'view.message', instance, data: taken.data })
         return true
       },
     }

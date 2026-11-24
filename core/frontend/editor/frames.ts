@@ -1,5 +1,4 @@
-import { plainProblem } from '../../api/plain.ts'
-import { MAX_FRAME_MESSAGE } from '../../api/ui.ts'
+import { FrameInbox } from '../../api/ui-limits.ts'
 import { lay } from './layers.ts'
 import type { CoreLink } from './link.ts'
 import type { Rect } from './drag.ts'
@@ -14,8 +13,6 @@ import type { Rect } from './drag.ts'
 // it, as main tells the page of every press. A frame that takes focus any other way is pulled back to the note once the
 // move ends, which leaves it a key or none of what the human types. hetu's theme is offered to every frame as the
 // page sets it on the frames' layer, never checked or forced on one
-
-export const FRAME_MESSAGES_PER_SECOND = 100
 
 // How long after a press, or the core's own move, focus may still go into that frame
 export const FOCUS_GRACE_MS = 500
@@ -81,31 +78,6 @@ export class FrameLoads {
   }
 }
 
-// What one frame sends: JSON text of plain data within the cap, at most so many a second. Anything else is dropped
-export class FrameInbox {
-  private readonly clock: () => number
-  private second = { start: Number.NEGATIVE_INFINITY, count: 0 }
-
-  constructor(clock: () => number = () => performance.now()) {
-    this.clock = clock
-  }
-
-  take(message: unknown): { ok: true, data: unknown } | { ok: false } {
-    const now = this.clock()
-    if (now - this.second.start >= 1000) this.second = { start: now, count: 0 }
-    if (this.second.count >= FRAME_MESSAGES_PER_SECOND) return { ok: false }
-    this.second.count++
-    if (typeof message !== 'string' || message.length > MAX_FRAME_MESSAGE) return { ok: false }
-    let data: unknown
-    try {
-      data = JSON.parse(message)
-    } catch {
-      return { ok: false }
-    }
-    return plainProblem(data, MAX_FRAME_MESSAGE) === null ? { ok: true, data } : { ok: false }
-  }
-}
-
 type Mounted = {
   owner: string
   frame: string
@@ -165,7 +137,7 @@ export class Frames {
       held = undefined
     }
     if (held === undefined) {
-      held = { owner, frame, element: null, box: null, url: null, port: null, inbox: new FrameInbox() }
+      held = { owner, frame, element: null, box: null, url: null, port: null, inbox: new FrameInbox(() => performance.now()) }
       this.mounted.set(instance, held)
       void this.mount(instance, held)
     }
