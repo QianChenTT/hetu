@@ -1,14 +1,20 @@
-// The welcome guide (D-672, D-679): four steps, one drawn at a time, on the trusted window's first tab. hetu ships no
-// plugin, so the window opens on it at start until a plugin holding ui.layout is approved. The human may close it for
-// now and pick its tab again
+// The startup flow (D-672, D-679, D-744): four steps, one drawn at a time, on the trusted window's first tab. hetu
+// ships no plugin, so every install goes through it: the notes folder, the first plugin installed with the Install
+// button's controls, one line saying where the plugin installed is approved, then what a grant is. Approving itself is
+// no step of the flow
+// TODO: end the flow, by a last step the human clicks through or by a plugin installed, and draw it with no way to
+// leave before that end
 import type { SecurityList } from '../../api/actions.ts'
-import { approvedNotRefused } from '../../api/trusted.ts'
 
 // The release the install step fills in, only as a suggestion the human edits or replaces
 export const SUGGESTED_LINK = 'https://github.com/QianChenTT/hetu-plugins'
 
-// offers is the control the step draws: the folder dialog, the Install button's controls, the plugins waiting for
-// Approve or none
+// Where the human approves the plugin installed: the install's own Confirm, or Approve in the plugin list for a plugin
+// copied into the plugin folder by hand
+export const APPROVE_LINE = 'Approve what you installed in its Confirm at the top of this window, or with Approve in the Plugins tab for a plugin copied in by hand'
+
+// offers is the control the step draws: the folder dialog, the Install button's controls or none. approve, the
+// plugins waiting for Approve, is offered by no step
 export type StartupStep = { title: string, lines: string[], done: string | null, offers: 'folder' | 'install' | 'approve' | null }
 // at is the step drawn
 export type Startup = { steps: StartupStep[], at: number, suggested: string }
@@ -25,7 +31,6 @@ export function startupScreen(list: SecurityList, at: number | null): Startup | 
 
 function stepsOf(list: SecurityList): StartupStep[] {
   const inFolder = list.plugins.filter(plugin => plugin.from === 'folder').length
-  const approvedCount = list.plugins.filter(approvedNotRefused).length
   return [
       {
         title: 'Pick the notes folder',
@@ -34,22 +39,16 @@ function stepsOf(list: SecurityList): StartupStep[] {
         offers: 'folder',
       },
       {
-        title: 'Install the plugins you want',
-        lines: [
-          'hetu comes with no plugins. Install them from a zip, a folder or a GitHub link',
-          'A layout plugin draws the editor window. Until one is approved the editor shows a plain note',
-        ],
+        title: 'Install your first plugin',
+        lines: ['hetu comes with no plugins. Install one from a zip, a folder or a GitHub link'],
         done: inFolder === 0 ? null : `${counted(inFolder, 'plugin', 'plugins')} in the plugin folder`,
         offers: 'install',
       },
       {
-        title: 'Approve them',
-        lines: [
-          'Each plugin’s Confirm lists what it may do. Install approves the ones you tick',
-          'A plugin copied into the plugin folder by hand waits here and in the plugin list for Approve',
-        ],
-        done: approvedCount === 0 ? null : `${approvedCount} approved`,
-        offers: 'approve',
+        title: 'Approve it',
+        lines: [APPROVE_LINE],
+        done: null,
+        offers: null,
       },
       {
         title: 'What a grant is',

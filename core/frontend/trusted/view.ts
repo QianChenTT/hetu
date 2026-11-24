@@ -409,7 +409,7 @@ export class TrustedPage {
   }
 
   private redraw(): void {
-    // The first tab is picked once from the first list, so approving a layout mid-guide doesn't move the human away
+    // The first tab is picked once from the first list, so an install mid-guide doesn't move the human away
     if (this.last !== null && this.tab === null) this.tab = welcomeDue(this.last) ? 'start' : 'plugins'
     if (this.last === null) return
     const shown = screen(this.last, this.installer.flow, this.tab, this.step)

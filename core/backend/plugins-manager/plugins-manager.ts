@@ -113,8 +113,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     throw { code: 'unavailable' }
   }
 
-  // Whether main opens the trusted window on its welcome guide at start: hetu runs and no approved plugin draws the
-  // editor window
+  // Whether main opens the trusted window on its startup flow at start
   welcomeDue(): boolean {
     return welcomeDue(this.securityList())
   }
