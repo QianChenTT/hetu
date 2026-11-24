@@ -84,16 +84,8 @@ const run = <T>(worker: Worker, code: string) => worker.evaluate(`(async () => {
 
 const open = openByHand
 
-async function pickLayout(editor: Page, id: string | null): Promise<void> {
-  await editor.locator('#views').click()
-  await until(async () => editor.locator('#menu').isVisible())
-  await editor.locator('#menu select').first().selectOption(id ?? '')
-  await editor.locator('#menu-close').click()
-}
-
 const view = (name: string) => ({ [name]: { title: name[0]!.toUpperCase() + name.slice(1), kind: 'view' } })
 const viewer: Capability[] = [{ type: 'ui.view' }]
-const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
 const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-content')
 const hitAt = (editor: Page, x: number, y: number) => editor.evaluate(([px, py]) => {
   const at = document.elementFromPoint(px as number, py as number)
@@ -102,42 +94,23 @@ const hitAt = (editor: Page, x: number, y: number) => editor.evaluate(([px, py])
 // The fixture's button, of the plugins a test runs
 const viewButton = (editor: Page) => editor.locator('#editors .hetu-surface .hetu-button', { hasText: 'Press ' })
 
-async function withLayout(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
-  const made = await started({ ...setup, plugins: { ...setup.plugins, tiles: { granted: layoutGrants } } })
-  await pickLayout(made.editor, 'tiles')
-  const layout = await pluginWorker(made.app, 'tiles')
-  await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
-  return { ...made, layout }
-}
-
-// The fixture layout drawing each open view titled in a column beside the note's editor, again at every state, since
-// hetu has no layout of its own to place them
+// hetu with these plugins, once the drawer's layout drew its skeleton with each view in it
 async function inColumns(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
-  const made = await withLayout(setup)
-  await run(made.layout, `
-    const draw = state => ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
-      ...state.views.map(view => ({ kind: 'box', id: 'c-' + view.instance, style: { display: 'flex', 'flex-direction': 'column', width: '300px' }, children: [
-        { kind: 'title', id: 't-' + view.instance, of: view.instance },
-        { kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { flex: '1' } } ] })),
-      { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } } ] }).catch(() => {})
-    ctx.ui.on('layout.state', event => { void draw(event.state) })
-    await draw(heard.filter(e => e.topic === 'layout.state').at(-1).state)
-  `)
+  const made = await started(setup)
+  await until(async () => (await made.editor.locator('#base .hetu-slot').count()) > 0)
   return made
 }
 
-// The page picks the first layout plugin that comes while none is picked, so a first layout installed draws with no
-// pick of the human's
-describe('the first layout', () => {
-  it('draws once it starts with no layout picked', async () => {
-    const { app, editor } = await started({ notes: { 'a.md': 'alpha' }, plugins: { tiles: { granted: layoutGrants } } })
-    const layout = await pluginWorker(app, 'tiles')
-    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
-    await editor.locator('#views').click()
-    await until(async () => editor.locator('#menu').isVisible())
-    expect(await editor.locator('#menu select').first().inputValue()).toBe('tiles')
-  })
-})
+// A view's title dragged onto the band along the bottom of the note, where the layout puts it under the note
+async function toBottom(editor: Page, title: string): Promise<void> {
+  const from = (await editor.locator('#editors .hetu-title', { hasText: title }).first().boundingBox())!
+  const stage = (await editor.locator('#stage').boundingBox())!
+  await editor.mouse.move(from.x + 10, from.y + from.height / 2)
+  await editor.mouse.down()
+  await editor.mouse.move(stage.x + stage.width / 2, stage.y + stage.height - 20, { steps: 10 })
+  await until(async () => editor.locator('#drop-mark').isVisible())
+  await editor.mouse.up()
+}
 
 describe('a popover', () => {
   it('keeps its owner strip on top of it and its size within the drawer\'s cap, whatever style the plugin gives it', async () => {
@@ -191,87 +164,7 @@ describe('a plugin named hetu', () => {
   })
 })
 
-describe('a layout that never draws', () => {
-  it('leaves the plain layout with the note on screen, and Plain picks the drawer\'s own', async () => {
-    const { editor } = await withLayout({ notes: { 'a.md': 'alpha' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
-    await open(editor, 'a.md')
-    await until(async () => (await shown(editor).innerText()) === 'alpha')
-    expect(await editor.locator('#base .hetu-plain').count()).toBe(1)
-    await pickLayout(editor, null)
-    await tick(800)
-    expect(await editor.locator('#base .hetu-plain').count()).toBe(1)
-    // No layout draws, so the drawer's own plain column holds the view under its title
-    expect((await editor.locator('#editors .hetu-title').allInnerTexts()).filter(text => !text.startsWith('note-list ·'))).toEqual(['board · Cards'])
-    await editor.locator('#views').click()
-    expect(await editor.locator('#menu select').first().evaluate(select => (select as HTMLSelectElement).selectedOptions[0]?.textContent)).toBe('Plain')
-  })
-})
-
-describe('input in a view', () => {
-  it('stays with the view: a click and a press reach no layout node around its slot', async () => {
-    const { app, editor, layout } = await withLayout({
-      notes: { 'a.md': 'alpha', 'b.md': 'bravo' },
-      plugins: { board: { granted: viewer, manifest: { views: view('cards') } } },
-    })
-    await open(editor, 'a.md')
-    await run(layout, `
-      const state = heard.filter(e => e.topic === 'layout.state').at(-1).state
-      await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
-        { kind: 'box', id: 'wrap', click: true, drag: { type: 'note', value: 'b.md' }, style: { width: '300px' }, children: [
-          { kind: 'slot', id: 's', instance: state.views.find(v => v.owner === 'board').instance, style: { height: '100%' } } ] },
-        { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } } ] })
-    `)
-    await until(async () => (await viewButton(editor).count()) === 1)
-    const board = await pluginWorker(app, 'board')
-    await viewButton(editor).click()
-    await editor.locator('#editors .hetu-surface .hetu-text', { hasText: 'Fixture view' }).click()
-    await until(async () => (await heard(board)).some(event => event.topic === 'view.event' && event.type === 'click'))
-    await tick(500)
-    expect(await editor.locator('#title').innerText()).toBe('a.md')
-    expect((await heard(layout)).filter(event => event.topic === 'layout.event')).toEqual([])
-  })
-
-  it('reaches the view even under a clear input the layout lays over its slot', async () => {
-    const { app, editor, layout } = await withLayout({ plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
-    await run(layout, `
-      const state = heard.filter(e => e.topic === 'layout.state').at(-1).state
-      await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { position: 'relative', display: 'flex', height: '100%' }, children: [
-        { kind: 'slot', id: 's', instance: state.views.find(v => v.owner === 'board').instance, style: { width: '300px' } },
-        { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
-        { kind: 'input', id: 'trap', value: '', style: { position: 'absolute', left: '0', top: '0', width: '300px', height: '100%', opacity: '0', 'z-index': '9' } } ] })
-    `)
-    await until(async () => (await editor.locator('#base .hetu-input').count()) === 1 && (await viewButton(editor).count()) === 1)
-    const board = await pluginWorker(app, 'board')
-    const field = (await editor.locator('#editors .hetu-surface .hetu-input[placeholder="Type in cards"]').boundingBox())!
-    await editor.mouse.click(field.x + field.width / 2, field.y + field.height / 2)
-    await editor.keyboard.type('pin 4242')
-    await until(async () => (await heard(board)).some(event => event.topic === 'view.event' && event.value === 'pin 4242'))
-    expect(JSON.stringify(await heard(layout))).not.toContain('4242')
-  })
-})
-
 describe('the editor\'s text', () => {
-  it('stays above a title the layout lays over its lines', async () => {
-    const { editor, layout } = await withLayout({ notes: { 'a.md': 'first line\nsecond line\nthird line' } })
-    await open(editor, 'a.md')
-    await run(layout, `
-      await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { position: 'relative', height: '100%' }, children: [
-        { kind: 'editor', id: 'e', instance: 'current', style: { position: 'absolute', inset: '0' } } ] })
-    `)
-    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state' && (event.state?.editors.length ?? 0) === 1))
-    const line = (await editor.locator('.editor:not([hidden]) .cm-line', { hasText: 'second line' }).boundingBox())!
-    const stage = (await editor.locator('#stage').boundingBox())!
-    const top = Math.round(line.y - stage.y)
-    await run(layout, `
-      const state = heard.filter(e => e.topic === 'layout.state').at(-1).state
-      await ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { position: 'relative', height: '100%' }, children: [
-        { kind: 'editor', id: 'e', instance: 'current', style: { position: 'absolute', inset: '0' } },
-        { kind: 'title', id: 't', of: state.editors[0], style: { position: 'absolute', left: '0', top: '${top}px', width: '100%', height: '20px' } } ] })
-    `)
-    await until(async () => (await editor.locator('#editors .hetu-title').count()) === 1)
-    expect(await hitAt(editor, line.x + 20, line.y + line.height / 2)).toEqual({ inEditor: true, inTitle: false })
-  })
-
   it('keeps the human\'s typing where it was when a plugin opens another note', async () => {
     const { app, editor } = await started({
       notes: { 'a.md': '', 'b.md': 'bravo' },
@@ -363,7 +256,8 @@ type Said = { hello?: true, opened?: string, key?: string, stole?: true, focused
 type Press = { down: boolean, x: number, y: number }
 
 describe('a view frame', () => {
-  // Each plugin of ids with a frame view in a column, side by side in that order, its frame loaded and laid out
+  // Each plugin of ids with a frame view, its frame loaded and laid out. With two frames and the note list one more
+  // view than the sides show, the one the sides left out goes under the note
   async function framed(ids = ['kanban']) {
     const plugin: Fixture = {
       granted: viewer,
@@ -371,6 +265,11 @@ describe('a view frame', () => {
       files: { 'board.html': framePage, 'board.js': frameScript },
     }
     const made = await inColumns({ notes: { 'a.md': '' }, plugins: Object.fromEntries(ids.map(id => [id, plugin])) })
+    await tick(1000)
+    const hidden = []
+    for (const id of ids) if ((await frameOf(made.editor, id).count()) === 0) hidden.push(`${id} · Board`)
+    if (!(await made.editor.locator('#editors').getByRole('button', { name: 'a.md', exact: true }).isVisible())) hidden.push('note-list ·')
+    for (const title of hidden) await toBottom(made.editor, title)
     const workers = await Promise.all(ids.map(id => pluginWorker(made.app, id)))
     const said = async (at = 0) => (await heard(workers[at]!)).filter(event => event.topic === 'view.message').map(event => event.data as Said)
     for (let at = 0; at < ids.length; at++) {

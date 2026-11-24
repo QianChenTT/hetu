@@ -8,7 +8,7 @@ import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { partition } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, temp, tick, until, visibleWindows, workersPage, openByHand, writeOpener } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, pageAt, setUp, temp, tick, until, visibleWindows, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -93,25 +93,21 @@ window.addEventListener('message', function (event) {
   port.postMessage(JSON.stringify({ hello: location.pathname }))
 })
 `
+// Each view shown once by a click on its tab, so each frame loads. A frame keeps running hidden while another tab of
+// its column shows
+async function showEach(editor: Page): Promise<void> {
+  const titles = editor.locator('#editors .hetu-title')
+  await until(async () => (await titles.count()) > 0)
+  const count = await titles.count()
+  for (let at = 0; at < count; at++) {
+    await titles.nth(at).click()
+    await tick(200)
+  }
+}
+
 const page = (script: string, type = '') => `<!doctype html><html><head><meta charset="utf-8"><script ${type}src="${script}"></script></head><body><p>frame</p></body></html>`
 
 type Frame = { html: string, files: Record<string, string> }
-
-// A layout drawing each open view in a column beside the note's editor, again at every state, since hetu has no layout
-// of its own to place the frame
-const columns = `
-import { definePlugin } from '${sdk}'
-export default definePlugin({
-  start(ctx) {
-    ctx.ui.on('layout.state', event => {
-      void ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
-        ...event.state.views.map(view => ({ kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { width: '300px' } })),
-        { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
-      ] }).catch(() => {})
-    })
-  },
-})
-`
 
 // What else a run holds: kanban's views and other plugins with views of their own, each drawn by the same frame but a
 // view named tree, which its worker draws, and a theme kanban declares
@@ -125,8 +121,10 @@ async function started(frame: Frame, notes: Record<string, string> = {}, more: M
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
   await writeOpener(dataDir)
+  // TODO: drop once the startup screen no longer waits on an approved ui.layout plugin to leave the welcome guide
+  await setUp(dataDir)
   const source = await temp()
-  await writeFolder(source, { 'src/worker.ts': worker, 'src/columns.ts': columns })
+  await writeFolder(source, { 'src/worker.ts': worker })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const granted: Capability[] = [{ type: 'ui.view' }]
   const plugins: [string, string[]][] = [['kanban', more.views ?? ['board']], ...Object.entries(more.others ?? {})]
@@ -141,18 +139,9 @@ async function started(frame: Frame, notes: Record<string, string> = {}, more: M
     await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'board.html': frame.html, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>', ...frame.files }))
     await writeApproved(store, id, root, { granted })
   }
-  const layout = path.join(dataDir, 'plugins', 'columns')
-  const [drawn] = await buildPlugin(source, { entries: { 'worker.js': 'src/columns.ts' }, workers: ['worker.js'], write: false })
-  const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
-  await writeFolder(layout, filesFor(workerManifest('columns', { capabilities: layoutGrants }), { 'worker.js': drawn.text }))
-  await writeApproved(store, 'columns', layout, { granted: layoutGrants })
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  for (const id of ['kanban', 'columns', ...Object.keys(more.others ?? {})]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
-  await editor.locator('#views').click()
-  await until(async () => editor.locator('#menu').isVisible())
-  await editor.locator('#menu select').first().selectOption('columns')
-  await editor.locator('#menu-close').click()
+  for (const id of ['kanban', ...Object.keys(more.others ?? {})]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   const host = await workersPage(app, 'kanban')
   await until(() => host.workers().length === 1)
   return { app, editor, dataDir, worker: host.workers()[0] as Worker }
@@ -270,6 +259,7 @@ describe('a host for each plugin\'s frames', () => {
     const { app, editor, dataDir } = await started({ html: page('board.js'), files: { 'board.js': board } }, {}, {
       views: ['board', 'list'], others: { my_board: ['board', 'tree'], [long]: ['board'] },
     })
+    await showEach(editor)
     const loaded = async () => (await framed(app)).filter(frame => /^hetu:\/\/[a-z0-9-]+\.views\/[0-9a-f]{32}\/board\.html$/.test(frame.url))
     await until(async () => (await loaded()).length === 4)
     const frames = await loaded()
@@ -363,7 +353,7 @@ describe('the theme in a frame', () => {
     expect(await sheetTheme(app)).toEqual(defaults)
     await editor.locator('#views').click()
     await until(async () => editor.locator('#menu').isVisible())
-    await editor.locator('#menu select').nth(1).selectOption('kanban')
+    await editor.locator('#menu select').first().selectOption('kanban')
     await editor.locator('#menu-close').click()
     await until(async () => (await messages(worker)).length === 2)
     const variables = await pageTheme(editor)
@@ -372,13 +362,67 @@ describe('the theme in a frame', () => {
     await until(async () => (await sheetTheme(app))['--hetu-color-bg'] === '#202020')
     expect(await sheetTheme(app)).toEqual(variables)
 
+    // The drawer's layout shows one instance of a view, so the first goes before another opens
     await worker.evaluate(async () => {
-      const scope = globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }
+      const scope = globalThis as unknown as { heard: Heard[], ctx: { ui: { views: { close(instance: string): Promise<void>, open(view: string): Promise<string> } } } }
+      await scope.ctx.ui.views.close(scope.heard.find(event => event.topic === 'view.opened')!.instance!)
       await scope.ctx.ui.views.open('board')
     })
     await until(async () => (await messages(worker)).length === 3)
     expect((await messages(worker))[2]).toEqual({ connected: variables, sheet: '#202020' })
     await tick(300)
     expect(await messages(worker)).toHaveLength(3)
+  })
+})
+
+describe('a frame over its slot', () => {
+  // The focus guard and the press mapping take the frame as laid unrotated over its slot's box
+  type Box = { x: number, y: number, width: number, height: number }
+  const near = (a: Box, b: Box) => Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1 && Math.abs(a.width - b.width) <= 1 && Math.abs(a.height - b.height) <= 1
+  const frameBox = (editor: Page) => editor.locator('#editors iframe.hetu-frame').boundingBox()
+  const over = async (editor: Page) => {
+    const frame = await frameBox(editor)
+    if (frame === null || frame.width === 0) return false
+    const slots = await editor.locator('#base .hetu-slot').evaluateAll(all => all.map(slot => {
+      const at = slot.getBoundingClientRect()
+      return { x: at.x, y: at.y, width: at.width, height: at.height }
+    }))
+    return slots.some(slot => near(frame, slot))
+  }
+  // A press dragged across the page in steps
+  const drag = async (editor: Page, from: { x: number, y: number }, to: { x: number, y: number }) => {
+    await editor.mouse.move(from.x, from.y)
+    await editor.mouse.down()
+    await editor.mouse.move(to.x, to.y, { steps: 10 })
+    await editor.mouse.up()
+  }
+
+  it('stays laid over its slot when the human resizes the slot\'s column and when the view is dragged to the other side', async () => {
+    const { editor, worker } = await started({ html: page('board.js'), files: { 'board.js': board } })
+    await until(async () => (await messages(worker)).length >= 1)
+    await until(() => over(editor))
+    const first = (await frameBox(editor))!
+    const stage = (await editor.locator('#stage').boundingBox())!
+    const onLeft = first.x + first.width / 2 < stage.x + stage.width / 2
+
+    // The divider at the frame's inner edge, dragged 120 px into main
+    const inner = onLeft ? first.x + first.width : first.x
+    const dividers = await editor.locator('#base [data-divider]').evaluateAll(all => all.map(divider => {
+      const at = divider.getBoundingClientRect()
+      return { x: at.x + at.width / 2, y: at.y + at.height / 2 }
+    }))
+    const divider = dividers.sort((one, other) => Math.abs(one.x - inner) - Math.abs(other.x - inner))[0]!
+    await drag(editor, divider, { x: divider.x + (onLeft ? 120 : -120), y: divider.y })
+    await until(async () => ((await frameBox(editor))?.width ?? 0) > first.width + 100)
+    await until(() => over(editor))
+
+    // The view's title dragged onto the other side's column
+    const title = (await editor.locator('#editors .hetu-title', { hasText: 'kanban · board' }).first().boundingBox())!
+    await drag(editor, { x: title.x + 10, y: title.y + title.height / 2 }, { x: onLeft ? stage.x + stage.width - 60 : stage.x + 60, y: stage.y + stage.height / 2 })
+    await until(async () => {
+      const now = await frameBox(editor)
+      return now !== null && (now.x + now.width / 2 < stage.x + stage.width / 2) !== onLeft
+    })
+    await until(() => over(editor))
   })
 })

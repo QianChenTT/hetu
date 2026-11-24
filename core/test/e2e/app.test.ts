@@ -24,11 +24,12 @@ describe('hetu as an Electron app', () => {
     await until(async () => (await events(dataDir)).includes('core.ready'))
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toContain('boot.default-written')
-    // hetu ships no plugin, so nothing is copied into the plugin folder and the drawer draws its plain layout. The core
+    // hetu ships no plugin, so nothing is copied into the plugin folder and the drawer draws its own layout. The core
     // modules start with the core, so no plugin record names one
     expect(all.filter(record => record.event === 'plugin.copied' || record.plugin === 'layout' || record.plugin === 'hidden-marks')).toEqual([])
     expect(all.filter(record => (coreModuleIds as readonly unknown[]).includes(record.plugin))).toEqual([])
-    expect(await window.locator('.hetu-plain').count()).toBe(1)
+    await until(async () => (await window.locator('#base .hetu-editor-place').count()) === 1)
+    expect(await window.locator('.hetu-plain').count()).toBe(0)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
       gate: 'on', 'grant-risk-classifier': 'on',
     })
