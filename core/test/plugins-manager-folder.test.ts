@@ -118,6 +118,42 @@ describe('where a plugin\'s code came from', () => {
     expect(reasonOf(made.pluginsManager, 'outline')).toBe('api')
     expect(reasonOf(made.pluginsManager, 'tagger')).toBe('dependency:outline:api')
   })
+
+  // A type a later major removed has no place in the schema. A manifest written before that major is refused api, read
+  // as written for an older hetu. A type no major ever had, or a removed one named under a range after its removal,
+  // stays invalid
+  it('refuses a manifest naming a type a later major removed with api and an unknown type with invalid', async () => {
+    const named = (api: string, ...types: string[]) => workerManifest('outline', { api, capabilities: types.map(type => ({ type })) })
+    const folders: [string, Record<string, unknown>, string][] = [
+      ['layout', named('^5', 'ui.view', 'ui.layout'), 'api'],
+      ['keys', named('^4', 'ui.keys'), 'api'],
+      ['panel', named('^1', 'ui.panel', 'ui.statusBar'), 'api'],
+      ['made-up', named('^6', 'ui.tiles'), 'invalid'],
+      ['made-up-old', named('^5', 'ui.layout', 'ui.tiles'), 'invalid'],
+      ['layout-now', named('^6', 'ui.layout'), 'invalid'],
+      ['keys-now', named('^5', 'ui.keys'), 'invalid'],
+      ['layout-broken', { ...named('^5', 'ui.layout'), version: '1.0' }, 'invalid'],
+    ]
+    const made = await harness({
+      folder: Object.fromEntries(folders.map(([id, plugin]) => [id, filesFor({ ...plugin, id })])),
+      entries: Object.fromEntries(folders.map(([id]) => [id, signed()])),
+    })
+    await made.pluginsManager.start()
+    for (const [id, , reason] of folders) {
+      expect([id, reasonOf(made.pluginsManager, id)]).toEqual([id, reason])
+      expect(made.link.events('plugin.refused')).toContainEqual({ plugin: id, reason })
+    }
+    expect(made.runtime.order().filter(id => folders.some(([folder]) => folder === id))).toEqual([])
+  })
+
+  it('refuses a manifest naming a removed type under another id with id', async () => {
+    const made = await harness({
+      folder: { outline: filesFor(workerManifest('tiles', { api: '^5', capabilities: [{ type: 'ui.layout' }] })) },
+      entries: { outline: signed() },
+    })
+    await made.pluginsManager.start()
+    expect(reasonOf(made.pluginsManager, 'outline')).toBe('id')
+  })
 })
 
 describe('reserved ids in the plugin folder', () => {

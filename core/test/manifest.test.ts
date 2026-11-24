@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { API_VERSION, apiChanges, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, supportsApi } from '../api/manifest.ts'
+import {
+  API_VERSION, apiChanges, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, removedSince, retiredGrantTypes, supportsApi,
+} from '../api/manifest.ts'
 
 const raw = (text: string) => JSON.parse(text)
 const many = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i))
@@ -229,6 +231,37 @@ describe('a manifest', () => {
     for (const value of [null, [], 'search', 5]) {
       expect(folderManifest.safeParse(value).success).toBe(false)
     }
+  })
+})
+
+// A manifest written before a major that removed a type may still name it. The schema has no place for the type, so
+// the read refuses such a manifest api by this list rather than invalid
+describe('the types removed since a range', () => {
+  it('names each type a major after the range removed, oldest first', () => {
+    expect(removedSince('^5')).toEqual(['ui.layout'])
+    expect(removedSince('^4')).toEqual(['ui.keys', 'ui.layout'])
+    expect(removedSince('^1')).toEqual(['ui.panel', 'ui.statusBar', 'ui.keys', 'ui.layout'])
+  })
+
+  it('names none for this major, a newer one, 0 or a range that does not parse', () => {
+    expect(removedSince(`^${API_VERSION}`)).toEqual([])
+    expect(removedSince(`^${API_VERSION + 1}`)).toEqual([])
+    expect(removedSince('^0')).toEqual([])
+    expect(removedSince('5')).toEqual([])
+    expect(removedSince('^5.0')).toEqual([])
+  })
+
+  it('reads the record it is given', () => {
+    const changes = { 2: { added: [], removed: ['a'], reshaped: [], actionsChanged: false }, 3: { added: [], removed: ['b'], reshaped: [], actionsChanged: false } }
+    expect(removedSince('^1', 3, changes)).toEqual(['a', 'b'])
+    expect(removedSince('^2', 3, changes)).toEqual(['b'])
+  })
+
+  // A stored grant of a retired type is dropped when the state is read. Each one is a type a major removed with nothing
+  // in its place, unlike ui.keys, which the state reads under its new name
+  it('holds every retired grant type among the removed ones', () => {
+    expect(retiredGrantTypes).toEqual(['ui.layout'])
+    for (const type of retiredGrantTypes) expect(removedSince('^1')).toContain(type)
   })
 })
 

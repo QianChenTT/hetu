@@ -70,10 +70,10 @@ const notesFolder = async (notes: Record<string, string>) => {
 // its two writes leaves it. The file explorer left the first-party ids before, layout and hidden marks left with the
 // rest. Layout's entry still owes the notice its copy at start raised
 const uiView = { type: 'ui.view' } as Capability
-// Layout's copy names ui.layout, which left the fixed list, so its manifest is refused before its signer is looked at
+// Layout's copy names ui.layout, which version 6 removed, so its ^5 manifest is refused api before its signer is looked at
 const olderCopies: [string, string, Capability[], Partial<Plugin>][] = [
   ['file-explorer', 'signer', [listAll, readAll, writeAll, uiView], { class: 4, firstUse: [writeAll] }],
-  ['layout', 'invalid', [{ type: 'ui.layout' } as unknown as Capability, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
+  ['layout', 'api', [{ type: 'ui.layout' } as unknown as Capability, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
   ['hidden-marks', 'signer', [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }, uiView], { class: 1 }],
 ]
 
