@@ -226,7 +226,7 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
 }
 
 // tab is the one the human picked, else Get started while the welcome is due and Plugins after. at is the guide's step
-// the human went to
+// the human went to or the guide was first drawn at
 export function screen(list: SecurityList, flow: InstallFlow | null = null, tab: Tab | null = null, at: number | null = null): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
@@ -413,7 +413,7 @@ export class TrustedPage {
     if (this.last !== null && this.tab === null) this.tab = welcomeDue(this.last) ? 'start' : 'plugins'
     if (this.last === null) return
     const shown = screen(this.last, this.installer.flow, this.tab, this.step)
-    // The guide stays on the step it was first drawn at, so a step done, as by an install, never moves the human on
+    // The guide stays on the step it was first drawn at, so a step done, as by an install, never moves the human on by itself
     if (shown.tab === 'start' && shown.startup !== null) this.step = shown.startup.at
     this.draw(shown, this.note)
   }
