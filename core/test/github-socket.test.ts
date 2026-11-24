@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo, Socket } from 'node:net'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FetchRefused, getFromGitHub, type Fetch } from '../backend/plugins-manager/github.ts'
+import { FetchRefused, getFromGitHub, type Fetch } from '../backend/lib/github.ts'
 
 // Node's own fetch against a server on loopback, so decoding and sockets are Node's as in main. The fetch handed in
 // sends each GitHub URL to the server instead, with the request as built
