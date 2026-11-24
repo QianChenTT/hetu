@@ -223,8 +223,6 @@ export class Frames {
     this.guard.allow(found?.[0] ?? null)
     this.credit.pressed(found?.[1].owner ?? null)
     this.reportLetIn()
-    // The press came after the move it caused, which is held for it
-    if (found !== null && found[1].element !== null && document.activeElement === found[1].element) this.check()
   }
 
   // Main's word that the human let go of a press at this point of the page
