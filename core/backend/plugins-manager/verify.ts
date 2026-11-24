@@ -1,5 +1,8 @@
 import { doorId } from '../../api/ids.ts'
-import { API_VERSION, folderManifest, installManifest, MAX_MANIFEST_BYTES, supportsApi, type InstallManifest } from '../../api/manifest.ts'
+import { z } from 'zod'
+import {
+  API_VERSION, folderManifest, installManifest, MAX_MANIFEST_BYTES, removedSince, supportsApi, type FolderManifest, type InstallManifest,
+} from '../../api/manifest.ts'
 import { hashFiles, readFiles, type PluginFile } from '../../lib/hash-files.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 
@@ -27,6 +30,25 @@ export function entryPaths(manifest: InstallManifest): string[] {
   return [worker, host, ...Object.values(frames ?? {})].filter((entry): entry is string => typeof entry === 'string')
 }
 
+// A manifest the folder schema refused, read again with the items set aside whose type a major after its api range
+// removed. Null when the rest is still outside the schema, as it is when it names no such type
+function withoutRemoved(bytes: Buffer): FolderManifest | null {
+  let value: unknown
+  try {
+    value = parseStrict(bytes, z.unknown())
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const { api, capabilities } = value as { api?: unknown, capabilities?: unknown }
+  if (typeof api !== 'string' || !Array.isArray(capabilities)) return null
+  const removed = removedSince(api)
+  const typeOf = (item: unknown) => (typeof item === 'object' && item !== null ? (item as { type?: unknown }).type : undefined)
+  const kept = capabilities.filter(item => !removed.some(type => type === typeOf(item)))
+  const parsed = folderManifest.safeParse({ ...value, capabilities: kept })
+  return parsed.success ? parsed.data : null
+}
+
 function manifestOf(files: readonly PluginFile[], id: string): Pick<Read, 'manifest' | 'problem'> {
   const file = files.find(candidate => candidate.path === MANIFEST_FILE)
   if (file === undefined || file.bytes.length > MAX_MANIFEST_BYTES) return { manifest: null, problem: 'invalid' }
@@ -42,7 +64,11 @@ function manifestOf(files: readonly PluginFile[], id: string): Pick<Read, 'manif
     } catch {
       // A manifest neither schema takes is invalid, answered below
     }
-    return { manifest: null, problem: 'invalid' }
+    // One written for an older major, naming a type a later major removed, was written for an older hetu and is refused
+    // api once the rest of it checks out. The manifest kept is the one read without those items
+    const older = withoutRemoved(file.bytes)
+    if (older === null) return { manifest: null, problem: 'invalid' }
+    return { manifest: older, problem: older.id === id ? 'api' : 'id' }
   }
   // The state's id wins, so a manifest naming another one is refused rather than believed
   if (manifest.id !== id) return { manifest, problem: 'id' }

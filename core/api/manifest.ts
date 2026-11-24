@@ -40,6 +40,22 @@ export const apiChanges: Readonly<Record<number, ApiChange>> = table({
   // layout.draw and the layout topics reached only ui.layout holders, so a plugin naming no ui.layout loses nothing
   6: { added: [], removed: ['ui.layout'], reshaped: [], actionsChanged: false },
 })
+// Grant types a major removed with nothing in their place. A stored grant of one is dropped when the state is read and
+// the entry written back without it. ui.keys is not here: the state reads it as ui.keystream
+export const retiredGrantTypes: readonly string[] = ['ui.layout']
+
+// The types each major after the range's removed, oldest first, none for a range this core doesn't read. A manifest
+// written for that range may name one, which the schema has no place for
+export function removedSince(range: string, current = API_VERSION, changes = apiChanges): string[] {
+  if (!/^\^(?:0|[1-9][0-9]*)$/.test(range)) return []
+  const major = Number(range.slice(1))
+  if (major < 1) return []
+  const removed: string[] = []
+  for (let next = major + 1; next <= current; next++) {
+    if (Object.hasOwn(changes, next)) removed.push(...(changes[next] as ApiChange).removed)
+  }
+  return removed
+}
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_MANIFEST_BYTES = 64 * 1024
 // Entries in any other list or map of a manifest
