@@ -243,6 +243,12 @@ export class Frames {
     this.watching(true)
   }
 
+  // Main dropped a key headed for the frame holding focus, which the page didn't let in. Focus is taken back at once,
+  // not once the page sees the move, so a composition that key started follows focus to the note
+  pullBack(): void {
+    if (this.at(document.activeElement) !== null) this.check()
+  }
+
   // The core moving focus into a frame itself, which the guard lets in
   focusFrame(instance: string): void {
     const element = this.mounted.get(instance)?.element

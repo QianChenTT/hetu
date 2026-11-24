@@ -165,14 +165,15 @@ export function frameTicketOf(url: string | null): string | null {
   return `${SCHEME}://${at.hostname}/${ticket}`
 }
 
-export type SentToPage = Exclude<EditorKey, { channel: null }> | { channel: 'hetu:press', sent: { key: true, url: string } }
+export type SentToPage = Exclude<EditorKey, { channel: null }> | { channel: 'hetu:press', sent: { key: true, url: string } } | { channel: 'hetu:pull-back', sent: null }
 
 // What main does with a key of the editor window's input: prevented keeps it from the page and every frame, sent goes
 // to the page. focus.focused is the URL of the frame holding focus and focus.frame the page's own frame it is in or
 // inside of, null with focus in the page. letIn is the frame the page let focus into, by a press in it or the core's
 // own move. Frames are matched on their ticket, which a frame moving within its own page keeps. A key headed for any
-// other of the page's frames stops here before the page pulls focus back, so a frame that took focus itself hears none
-// of it. Only a core key still goes on to the page
+// other of the page's frames stops here, so a frame that took focus itself hears none of it, and the page takes focus
+// back from it at once. An IME composing in the frame starts with such a key, Process, which main sees and the
+// composition it starts never does, so it follows focus to the note. Only a core key still goes on to the page
 export function guardedKeyOf(
   input: EditorInput,
   focus: { focused: string | null, frame: string | null },
@@ -184,7 +185,7 @@ export function guardedKeyOf(
   if (took !== null && took.channel !== 'hetu:view-key') return { prevented: true, sent: took.channel === null ? null : took }
   if (focus.frame !== null) {
     const ticket = frameTicketOf(focus.frame)
-    if (ticket === null || ticket !== frameTicketOf(letIn)) return { prevented: true, sent: null }
+    if (ticket === null || ticket !== frameTicketOf(letIn)) return { prevented: true, sent: { channel: 'hetu:pull-back', sent: null } }
   }
   if (took !== null) return { prevented: true, sent: took }
   const url = frameKeyOfInput(input, focus.focused)

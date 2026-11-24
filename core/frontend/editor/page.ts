@@ -689,6 +689,11 @@ function start(bridge: Bridge): void {
       if (instance !== null && typeof data.key === 'string') ui.viewKey(instance, data.key)
       return
     }
+    // A key main dropped on its way to a frame focus wasn't let into, so focus leaves that frame now
+    if (data?.hetu === 'pull-back') {
+      theFrames.pullBack()
+      return
+    }
     // A press main saw, a frame's own included, which the page alone never hears
     if (data?.hetu === 'press') {
       theFrames.pushed(data.press)
