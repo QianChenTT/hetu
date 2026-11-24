@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { appMenu, coreKeyOfInput, editorInputOf, editorKeyOfInput, frameKeyOfInput, pageFrameOf, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
+import { appMenu, coreKeyOfInput, guardedKeyOf, editorKeyOfInput, frameKeyOfInput, childFrameOf, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer, the window open handler and the WebRTC policy
 class FakeContents extends EventEmitter {
@@ -303,49 +303,63 @@ describe('a key main drops before it reaches a frame the page did not let focus 
   const inKanban = { focused: kanban, frame: kanban }
 
   it('lets a key go on to the page, to the frame let in and with no frame let in to the page', () => {
-    expect(editorInputOf(press('a'), page, null, bound, false)).toEqual({ prevented: false, sent: null })
-    expect(editorInputOf(press('a'), page, kanban, bound, false)).toEqual({ prevented: false, sent: null })
-    expect(editorInputOf(press('a'), { focused: null, frame: null }, null, bound, false)).toEqual({ prevented: false, sent: null })
-    expect(editorInputOf(press('a'), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: null })
-    expect(editorInputOf(press('a', { type: 'keyUp' }), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+    expect(guardedKeyOf(press('a'), page, null, bound, false)).toEqual({ prevented: false, sent: null })
+    expect(guardedKeyOf(press('a'), page, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+    expect(guardedKeyOf(press('a'), { focused: null, frame: null }, null, bound, false)).toEqual({ prevented: false, sent: null })
+    expect(guardedKeyOf(press('a'), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+    expect(guardedKeyOf(press('a', { type: 'keyUp' }), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: null })
   })
 
   it('drops a key down or up headed for a frame not let in, with none let in or another', () => {
-    expect(editorInputOf(press('a'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
-    expect(editorInputOf(press('a'), inKanban, board, bound, false)).toEqual({ prevented: true, sent: null })
-    expect(editorInputOf(press('a', { type: 'keyUp' }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
-    expect(editorInputOf(press('a', { isAutoRepeat: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a'), inKanban, board, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a', { type: 'keyUp' }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a', { isAutoRepeat: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
   })
 
   it('drops a key headed for a frame inside a frame not let in, whatever that inner frame is served from', () => {
-    expect(editorInputOf(press('a'), { focused: 'about:blank', frame: kanban }, null, bound, false)).toEqual({ prevented: true, sent: null })
-    expect(editorInputOf(press('a'), { focused: 'about:srcdoc', frame: kanban }, board, bound, false)).toEqual({ prevented: true, sent: null })
-    expect(editorInputOf(press('a'), { focused: 'about:blank', frame: kanban }, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: kanban }, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a'), { focused: 'about:srcdoc', frame: kanban }, board, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: kanban }, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+  })
+
+  it('lets a key go on to the frame let in after it moved within its own page by hash or history', () => {
+    expect(guardedKeyOf(press('a'), { focused: `${kanban}#x`, frame: `${kanban}#x` }, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+    const moved = 'hetu://kanban.views/0123456789abcdef0123456789abcdef/list/2?y=1'
+    expect(guardedKeyOf(press('a'), { focused: moved, frame: moved }, kanban, bound, false)).toEqual({ prevented: false, sent: null })
+  })
+
+  it('drops a key headed for another frame of the same plugin, under a ticket of its own, or a frame on no ticket', () => {
+    const other = 'hetu://kanban.views/ffffffffffffffffffffffffffffffff/board.html'
+    expect(guardedKeyOf(press('a'), { focused: other, frame: other }, kanban, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('a'), { focused: 'about:blank', frame: 'about:blank' }, kanban, bound, false)).toEqual({ prevented: true, sent: null })
+    const bare = 'hetu://kanban.views/board.html'
+    expect(guardedKeyOf(press('a'), { focused: bare, frame: bare }, bare, bound, false)).toEqual({ prevented: true, sent: null })
   })
 
   it('still hands the page a core key headed for a frame not let in', () => {
-    expect(editorInputOf(press('s', { control: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: { channel: 'hetu:key', sent: 'save' } })
-    expect(editorInputOf(press('s', { control: true, isAutoRepeat: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('s', { control: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: { channel: 'hetu:key', sent: 'save' } })
+    expect(guardedKeyOf(press('s', { control: true, isAutoRepeat: true }), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
   })
 
   it('hands the page neither a bound key nor Enter as a press headed for a frame not let in', () => {
-    expect(editorInputOf(press('j'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
-    expect(editorInputOf(press('Enter'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('j'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
+    expect(guardedKeyOf(press('Enter'), inKanban, null, bound, false)).toEqual({ prevented: true, sent: null })
   })
 
   it('hands the page a bound key and Enter as a press headed for the frame let in, as before', () => {
-    expect(editorInputOf(press('j'), inKanban, kanban, bound, false)).toEqual({ prevented: true, sent: { channel: 'hetu:view-key', sent: { url: kanban, key: 'j' } } })
-    expect(editorInputOf(press('Enter'), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: { channel: 'hetu:press', sent: { key: true, url: kanban } } })
+    expect(guardedKeyOf(press('j'), inKanban, kanban, bound, false)).toEqual({ prevented: true, sent: { channel: 'hetu:view-key', sent: { url: kanban, key: 'j' } } })
+    expect(guardedKeyOf(press('Enter'), inKanban, kanban, bound, false)).toEqual({ prevented: false, sent: { channel: 'hetu:press', sent: { key: true, url: kanban } } })
   })
 
   it("names the page's frame focus is in or inside of, and none with focus in the page or nowhere", () => {
     const top = { url: 'hetu://editor/', parent: null }
     const frame = { url: kanban, parent: top }
     const inner = { url: 'about:blank', parent: frame }
-    expect(pageFrameOf(null)).toBe(null)
-    expect(pageFrameOf(top)).toBe(null)
-    expect(pageFrameOf(frame)).toBe(kanban)
-    expect(pageFrameOf(inner)).toBe(kanban)
-    expect(pageFrameOf({ url: 'about:blank', parent: inner })).toBe(kanban)
+    expect(childFrameOf(null)).toBe(null)
+    expect(childFrameOf(top)).toBe(null)
+    expect(childFrameOf(frame)).toBe(kanban)
+    expect(childFrameOf(inner)).toBe(kanban)
+    expect(childFrameOf({ url: 'about:blank', parent: inner })).toBe(kanban)
   })
 })
