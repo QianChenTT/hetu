@@ -12,6 +12,7 @@ import { drawMenu, type MenuData } from './menu.ts'
 import { type NoteNotice, Notes } from './notes.ts'
 import { noteBar, refusalText, type NoteAction } from './note-bar.ts'
 import { Frames } from './frames.ts'
+import { onOwnMessage } from '../lib/own-messages.ts'
 import { RawSource, rawBox } from './raw.ts'
 import { Settings } from './settings.ts'
 import { type Notice, Shell } from './shell.ts'
@@ -663,9 +664,7 @@ function start(bridge: Bridge): void {
 
   // ---- each plugin's port to the bridge, from main through the preload
 
-  window.addEventListener('message', event => {
-    if (event.source !== window || event.origin !== location.origin) return
-    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown, url?: unknown, press?: { down?: unknown, x?: unknown, y?: unknown } } | null
+  onOwnMessage<{ hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown, url?: unknown, press?: { down?: unknown, x?: unknown, y?: unknown } }>((data, event) => {
     // A core key main took before any frame could, since a frame with focus would hear it first
     if (data?.hetu === 'key' && typeof data.key === 'string' && (CORE_KEY_NAMES as readonly string[]).includes(data.key)) {
       if (data.key === 'raw' && rawOpen) toggleRaw()

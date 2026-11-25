@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { onOwnMessage } from '../lib/own-messages.ts'
 
 // The shell's only way to the core: a message sent on the window's channel, and what comes back on it. Nothing else
 // crosses the bridge. Only the top frame gets a preload, so a frame in the window has no bridge
@@ -36,9 +37,7 @@ ipcRenderer.on('hetu:key-dropped', () => {
 })
 // The page's word to main of the frame it let focus into, null for none, so main drops keys headed for any other frame.
 // Only the page's own message, never a frame's
-window.addEventListener('message', event => {
-  if (event.source !== window || event.origin !== location.origin) return
-  const data = event.data as { hetu?: unknown, url?: unknown } | null
+onOwnMessage<{ hetu?: unknown, url?: unknown }>(data => {
   if (data?.hetu !== 'focus-let-in') return
   ipcRenderer.send('hetu:focus-let-in', { url: typeof data.url === 'string' ? data.url : null })
 })
