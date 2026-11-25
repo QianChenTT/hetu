@@ -18,7 +18,7 @@ const pair = (field: string, root = 'mcp-http-handler'): Pair => ({ plugin: root
 const everything: Capability[] = [
   { type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.list', paths: ['**'] },
   { type: 'ui.edit', paths: ['**'] }, { type: 'ui.read', paths: ['**'] }, { type: 'net.fetch', hosts: ['example.com'] },
-  { type: 'ui.view' }, { type: 'ui.layout' }, { type: 'ui.decoration' }, { type: 'ui.command' }, { type: 'ui.keystream' },
+  { type: 'ui.view' }, { type: 'ui.decoration' }, { type: 'ui.command' }, { type: 'ui.keystream' },
   { type: 'events.subscribe', topics: ['search.found'] }, { type: 'storage' }, { type: 'history', access: 'read', paths: ['**'] },
   { type: 'history', access: 'commit', paths: ['**'] }, { type: 'exec', commands: [['git', 'status']], env: [] },
   { type: 'plugin.call', targets: ['search'] }, { type: 'guard.hook' }, { type: 'log.read' }, { type: 'lock.set', paths: ['**'] },

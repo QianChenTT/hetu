@@ -74,9 +74,9 @@ export async function openByHand(editor: Page, name: string): Promise<void> {
   await until(async () => (await editor.locator('#title').innerText()).startsWith(name))
 }
 
-// A set-up hetu: an approved plugin holding ui.layout that answers the lifecycle and never draws, so the welcome guide
-// isn't due and the trusted window opens only when asked
-const QUIET_LAYOUT = `
+// A set-up hetu: an approved plugin holding nothing that answers the lifecycle and never draws. A plugin installed ends
+// the startup flow, so the trusted window opens only when asked
+const QUIET = `
 self.onmessage = event => {
   const port = event.ports[0]
   self.onmessage = null
@@ -90,10 +90,9 @@ self.onmessage = event => {
 }
 `
 export async function setUp(dataDir: string): Promise<void> {
-  const root = path.join(dataDir, 'plugins', 'quiet-layout')
-  const granted = [{ type: 'ui.layout' as const }]
-  await writeFolder(root, filesFor(workerManifest('quiet-layout', { capabilities: granted }), { 'worker.js': QUIET_LAYOUT }))
-  await writeApproved(new StateStore(dataDir), 'quiet-layout', root, { granted })
+  const root = path.join(dataDir, 'plugins', 'quiet')
+  await writeFolder(root, filesFor(workerManifest('quiet', { capabilities: [] }), { 'worker.js': QUIET }))
+  await writeApproved(new StateStore(dataDir), 'quiet', root, { granted: [] })
 }
 
 const running: ElectronApplication[] = []

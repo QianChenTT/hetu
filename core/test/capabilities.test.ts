@@ -3,7 +3,7 @@ import { folderManifest, installManifest, supportsApi } from '../api/manifest.ts
 import { capabilityText } from '../api/trusted.ts'
 import {
   capabilities, capability, capabilityKey, capabilityTypes, type Capability, folderCapabilities, folderCapability,
-  installOnlyTypes, isInstallOnly, MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, pairCapability, text,
+  askOnUpdateTypes, installOnlyTypes, isInstallOnly, MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, pairCapability, text,
 } from '../api/capabilities.ts'
 
 const raw = (text: string) => JSON.parse(text)
@@ -16,7 +16,6 @@ const everyType = [
   { type: 'luoshu.list', paths: ['notes/**'] },
   { type: 'net.fetch', hosts: ['example.com'] },
   { type: 'ui.view' },
-  { type: 'ui.layout' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
   { type: 'ui.keystream' },
@@ -35,12 +34,26 @@ const everyType = [
 ]
 
 describe('the fixed list', () => {
-  it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2, and ui.edit', () => {
+  it('holds ui.view in place of ui.panel and ui.statusBar, core API version 2, ui.edit and no ui.layout', () => {
     expect(capabilityTypes).toEqual([
-      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream',
+      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.decoration', 'ui.command', 'ui.keystream',
       'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
       'door.handle',
     ])
+  })
+
+  // ui.layout, the right to be picked as the layout, is a type version 6 removed once the drawer drew its own layout:
+  // a ^5 manifest naming it is refused api and a ^6 one invalid, its grant read as any unknown type
+  it('refuses a ^5 manifest naming ui.layout with api and a ^6 one as invalid, ui.layout an unknown type', () => {
+    expect(supportsApi('^5', ['ui.layout'])).toBe(false)
+    expect(supportsApi('^5', ['ui.view', 'storage'])).toBe(true)
+    expect(supportsApi('^6', ['ui.layout'])).toBe(true)
+    const named = { id: 'tiles', name: 'Tiles', version: '1.0.0', api: '^6', entries: { worker: 'worker.js' }, capabilities: [{ type: 'ui.layout' }] }
+    expect(folderManifest.safeParse(named).success).toBe(false)
+    expect(installManifest.safeParse(named).success).toBe(false)
+    expect(capability.safeParse({ type: 'ui.layout' }).success).toBe(false)
+    expect(folderCapabilities.safeParse([{ type: 'ui.view' }, { type: 'ui.layout' }]).success).toBe(false)
+    expect(askOnUpdateTypes).toEqual([])
   })
 
   // ui.keys, the old name of the key stream, is a type version 5 removed: a ^4 manifest naming it is refused api and a

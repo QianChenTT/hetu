@@ -2,10 +2,9 @@ import type { Op, UiEvent, UiNode, UiTopic } from '../api/ui.ts'
 import { MAX_OPS } from '../api/ui-limits.ts'
 import type { Editor } from './editor.ts'
 
-// ctx.ui: a plugin's views and, when the human picked it, the window's layout, drawn as trees of the drawer's building
-// blocks. A plugin draws a whole tree each time, as React does, and the SDK sends the drawer only what changed. A new
-// editor page numbers instances afresh, so a new port forgets every tree, and the plugin draws again on view.opened
-// and layout.state
+// ctx.ui: a plugin's views, drawn as trees of the drawer's building blocks. The drawer lays them out itself. A plugin
+// draws a whole tree each time, as React does, and the SDK sends the drawer only what changed. A new editor page
+// numbers instances afresh, so a new port forgets every tree, and the plugin draws again on view.opened
 
 export type UiClient = {
   readonly views: {
@@ -20,14 +19,8 @@ export type UiClient = {
     // Bindings that fire while focus is in one of the plugin's instances
     bind(bindings: { key: string, command: string }[]): Promise<void>
   }
-  readonly layout: {
-    // The skeleton, taken only from the layout the human picked
-    draw(tree: UiNode): Promise<void>
-  }
   on<T extends UiTopic>(topic: T, handler: (event: Extract<UiEvent, { topic: T }>) => void): void
 }
-
-const SKELETON = 'layout'
 
 function children(node: UiNode): UiNode[] {
   return (node as { children?: UiNode[] }).children ?? []
@@ -72,7 +65,6 @@ export class Ui implements UiClient {
   private readonly trees = new Map<string, UiNode>()
   private bindings: { key: string, command: string }[] | null = null
   readonly views: UiClient['views']
-  readonly layout: UiClient['layout']
 
   constructor(drawer: Editor) {
     this.drawer = drawer
@@ -92,7 +84,18 @@ export class Ui implements UiClient {
       title: async (instance, title) => {
         await drawer.call('view.title', { instance, title })
       },
-      draw: (instance, tree) => this.draw(instance, tree),
+      draw: async (instance, tree) => {
+        const ops = diffTree(this.trees.get(instance) ?? null, tree)
+        if (ops.length === 0) return
+        this.trees.set(instance, tree)
+        try {
+          await drawer.call('view.draw', { instance, ops })
+        } catch (err) {
+          // A refused draw leaves the drawer with the tree before it, so the next one goes whole
+          this.trees.delete(instance)
+          throw err
+        }
+      },
       post: async (instance, data) => {
         await drawer.call('view.post', { instance, data })
       },
@@ -101,24 +104,9 @@ export class Ui implements UiClient {
         await drawer.call('view.bind', { bindings: this.bindings })
       },
     }
-    this.layout = { draw: tree => this.draw(SKELETON, tree) }
   }
 
   on<T extends UiTopic>(topic: T, handler: (event: Extract<UiEvent, { topic: T }>) => void): void {
     this.drawer.listen(topic, handler)
-  }
-
-  // A refused draw leaves the drawer with the tree before it, so the next one goes whole
-  private async draw(surface: string, tree: UiNode): Promise<void> {
-    const ops = diffTree(this.trees.get(surface) ?? null, tree)
-    if (ops.length === 0) return
-    this.trees.set(surface, tree)
-    try {
-      if (surface === SKELETON) await this.drawer.call('layout.draw', { ops })
-      else await this.drawer.call('view.draw', { instance: surface, ops })
-    } catch (err) {
-      this.trees.delete(surface)
-      throw err
-    }
   }
 }

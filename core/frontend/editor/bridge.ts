@@ -61,8 +61,8 @@ export const NODES_PER_SECOND = 200_000
 // How long after the human's key a plugin's edit may still place the cursor in answer to it
 export const ANSWER_MS = 1000
 
-const noHooks: UiHooks = { drawn() {}, changed() {}, layoutConnected() {}, post: () => 'unavailable', open: async () => {} }
-const noSettings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
+const noHooks: UiHooks = { drawn() {}, changed() {}, arranged() {}, post: () => 'unavailable', open: async () => {} }
+const noSettings = (): SettingsValue => ({ theme: null, favorites: [], keyOwners: {} })
 
 type Connection = {
   readonly plugin: string
@@ -128,7 +128,6 @@ export class Drawer {
     this.ui = new UiPort({
       send: (owner, body) => this.tellOwner(owner, body),
       reach: (owner, path) => this.reachOf(owner, path),
-      settings: this.settings,
       hooks: options.ui?.hooks ?? noHooks,
       normal: key => normalKey(key, this.mac),
       reserved: key => RESERVED_KEYS.includes(key),
@@ -458,11 +457,10 @@ export class Drawer {
       if (!this.live(conn)) throw new Refusal('stopped')
       // A draw is refused before it applies once the second's nodes are spent or its operations could spend the rest:
       // each may walk the whole tree. It is charged for what it looked at after
-      if (call.verb === 'view.draw' || call.verb === 'layout.draw') {
+      if (call.verb === 'view.draw') {
         this.spend(conn, 0, 0)
-        const surface = call.verb === 'layout.draw' ? 'layout' : call.args.instance
         const others = call.args.ops.filter(each => each.op !== 'tree').length
-        if (conn.spent.nodes + others * this.ui.surfaces.size(plugin, surface) > NODES_PER_SECOND) throw new Refusal('throttled')
+        if (conn.spent.nodes + others * this.ui.surfaces.size(plugin, call.args.instance) > NODES_PER_SECOND) throw new Refusal('throttled')
       }
       return this.ui.answer(plugin, call as UiCall, nodes => {
         conn.spent.nodes += nodes

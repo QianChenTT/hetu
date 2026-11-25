@@ -26,7 +26,7 @@ export default definePlugin({
     scope.heard = heard
     const opened: string[] = []
     scope.opened = opened
-    for (const topic of ['view.opened', 'view.message', 'layout.state'] as const) ctx.ui.on(topic, event => heard.push(event))
+    for (const topic of ['view.opened', 'view.message'] as const) ctx.ui.on(topic, event => heard.push(event))
     ctx.editor.on('opened', event => opened.push((event as { instance: string }).instance))
   },
 })
@@ -95,7 +95,7 @@ const viewer = (reads: string[]): Capability[] => [{ type: 'ui.view' }, { type: 
 const notes = { 'a.md': 'alpha', 'b.md': 'beta', 'c.md': 'gamma', 'd.md': 'delta', 'e.md': 'epsilon', 'secret.md': 'hidden', 'public/p.md': 'open text', 'private/x.md': 'SECRET' }
 
 // kanban and board each draw the rows in a frame and read every note but secret.md. marks reads notes through ui.read
-// alone, so it hears only of the human's opens. tiles lays the frames out in columns beside the note's editor
+// alone, so it hears only of the human's opens. The drawer's layout puts the two frames on the two sides of the note
 async function started() {
   const folder = await temp()
   for (const [name, text] of Object.entries(notes)) {
@@ -116,7 +116,6 @@ async function started() {
     kanban: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'public/**']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
     board: { granted: viewer(['a.md', 'b.md', 'c.md', 'd.md']), manifest: framed, files: { 'board.html': framePage, 'board.js': frameScript, 'board.css': frameStyle } },
     marks: { granted: [{ type: 'ui.read', paths: ['**'] }] },
-    tiles: { granted: [{ type: 'ui.layout' }] },
   }
   for (const [id, plugin] of Object.entries(plugins)) {
     const root = path.join(dataDir, 'plugins', id)
@@ -127,19 +126,6 @@ async function started() {
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'core.ready'))
   for (const id of Object.keys(plugins)) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
-  await editor.locator('#views').click()
-  await until(async () => editor.locator('#menu').isVisible())
-  await editor.locator('#menu select').first().selectOption('tiles')
-  await editor.locator('#menu-close').click()
-  const tiles = await pluginWorker(app, 'tiles')
-  await until(async () => (await heard(tiles)).some(event => event.topic === 'layout.state'))
-  await run(tiles, `
-    const draw = state => ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
-      ...state.views.map(view => ({ kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { width: '300px' } })),
-      { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } } ] }).catch(() => {})
-    ctx.ui.on('layout.state', event => { void draw(event.state) })
-    await draw(heard.filter(e => e.topic === 'layout.state').at(-1).state)
-  `)
   const kanban = await pluginWorker(app, 'kanban')
   const board = await pluginWorker(app, 'board')
   const marks = await pluginWorker(app, 'marks')

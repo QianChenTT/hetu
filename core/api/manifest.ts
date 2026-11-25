@@ -9,8 +9,9 @@ import { themeSpec } from './ui.ts'
 // The core API's major version. A manifest whose api range leaves this version out still parses and is refused with
 // api, not invalid. Version 2 renamed the ui items to ui.view and ui.layout and added views and themes. Version 3 added
 // ui.edit, ui.read, luoshu.remove and luoshu.move. Version 4 added lock.set with the lock actions. Version 5 added
-// door.handle with the role's action and ui.keystream, and removed ui.keys, its old name
-export const API_VERSION = 5
+// door.handle with the role's action and ui.keystream, and removed ui.keys, its old name. Version 6 removed ui.layout
+// with layout.draw and the layout topics
+export const API_VERSION = 6
 
 // What each major did to the one before it: the capability types it added, removed and reshaped, and whether a core
 // action, a bridge verb or an event lost or changed a field. A narrower rule on who may call what is no change here,
@@ -36,7 +37,32 @@ export const apiChanges: Readonly<Record<number, ApiChange>> = table({
   // editor.keys became editor.keystream, which only ui.keys holders could call, so a plugin naming neither loses
   // nothing
   5: { added: ['door.handle', 'ui.keystream'], removed: ['ui.keys'], reshaped: [], actionsChanged: false },
+  // layout.draw and the layout topics reached only ui.layout holders, so a plugin naming no ui.layout loses nothing
+  6: { added: [], removed: ['ui.layout'], reshaped: [], actionsChanged: false },
 })
+// Grant types a major removed with nothing in their place. A stored grant of one is dropped when the state is read and
+// the entry written back without it. ui.keys is not here: the state reads it as ui.keystream
+export const grantTypesDroppedOnRead: readonly string[] = ['ui.layout']
+
+// The types each major after the range's removed, oldest first, none for a range this core doesn't read. A manifest
+// written for that range may name one, which the schema has no place for
+export function typesRemovedAfter(range: string, current = API_VERSION, changes = apiChanges): string[] {
+  if (!/^\^(?:0|[1-9][0-9]*)$/.test(range)) return []
+  const major = Number(range.slice(1))
+  if (major < 1) return []
+  const removed: string[] = []
+  for (let next = major + 1; next <= current; next++) {
+    if (Object.hasOwn(changes, next)) removed.push(...(changes[next] as ApiChange).removed)
+  }
+  return removed
+}
+// The side of this hetu an api range's major is on, which an api refusal names: older below this major, newer above
+// it, null for this major and a range that doesn't parse
+export function apiMadeFor(range: string, current = API_VERSION): 'older' | 'newer' | null {
+  if (!/^\^(?:0|[1-9][0-9]*)$/.test(range)) return null
+  const major = Number(range.slice(1))
+  return major < current ? 'older' : major > current ? 'newer' : null
+}
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_MANIFEST_BYTES = 64 * 1024
 // Entries in any other list or map of a manifest

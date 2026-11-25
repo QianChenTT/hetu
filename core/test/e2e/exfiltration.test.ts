@@ -40,23 +40,9 @@ export default definePlugin({
   },
 })
 `
-// A layout drawing each open view in a column beside the note's editor, again at every state
-const columns = `
-import { definePlugin } from '${sdk}'
-export default definePlugin({
-  start(ctx) {
-    ctx.ui.on('layout.state', event => {
-      void ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
-        ...event.state.views.map(view => ({ kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { width: '300px' } })),
-        { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } },
-      ] }).catch(() => {})
-    })
-  },
-})
-`
 const page = (script: string) => `<!doctype html><html><head><meta charset="utf-8"><script src="${script}"></script></head><body><p>frame</p></body></html>`
 
-// hetu with the columns layout and these plugins, each with one view drawn by its frame board.html among its files,
+// hetu with these plugins, each with one view drawn by its frame board.html among its files,
 // the notes folder holding notes and each plugin granted to read the paths reads names. Answers once each plugin's
 // frame has said hello
 async function started(plugins: Record<string, Record<string, string>>, setup: { notes?: Record<string, Buffer>, reads?: string[] } = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, workers: Record<string, Worker> }> {
@@ -70,7 +56,7 @@ async function started(plugins: Record<string, Record<string, string>>, setup: {
   }
   await store.writeLuoshu({ folder })
   const source = await temp()
-  await writeFolder(source, { 'src/worker.ts': worker, 'src/columns.ts': columns })
+  await writeFolder(source, { 'src/worker.ts': worker })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const granted: Capability[] = [{ type: 'ui.view' }, ...(setup.reads === undefined ? [] : [{ type: 'luoshu.read' as const, paths: setup.reads }])]
   for (const [id, files] of Object.entries(plugins)) {
@@ -83,18 +69,9 @@ async function started(plugins: Record<string, Record<string, string>>, setup: {
     await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', ...files }))
     await writeApproved(store, id, root, { granted })
   }
-  const layout = path.join(dataDir, 'plugins', 'columns')
-  const [drawn] = await buildPlugin(source, { entries: { 'worker.js': 'src/columns.ts' }, workers: ['worker.js'], write: false })
-  const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
-  await writeFolder(layout, filesFor(workerManifest('columns', { capabilities: layoutGrants }), { 'worker.js': drawn.text }))
-  await writeApproved(store, 'columns', layout, { granted: layoutGrants })
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  for (const id of ['columns', ...Object.keys(plugins)]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
-  await editor.locator('#views').click()
-  await until(async () => editor.locator('#menu').isVisible())
-  await editor.locator('#menu select').first().selectOption('columns')
-  await editor.locator('#menu-close').click()
+  for (const id of Object.keys(plugins)) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   const workers: Record<string, Worker> = {}
   for (const id of Object.keys(plugins)) {
     const host = await workersPage(app, id)

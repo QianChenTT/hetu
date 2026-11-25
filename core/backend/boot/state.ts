@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { classCauses, classNumber, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
+import { grantTypesDroppedOnRead } from '../../api/manifest.ts'
 import { coreModuleIds, doorId, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
@@ -131,7 +132,16 @@ const switchesFile = z.strictObject({ format, ...switchesFields })
 // lists, so what the human granted, switched off or confirmed holds as it was. The entry's next write drops the old name
 const oldKeys = (item: unknown) => typeof item === 'object' && item !== null && (item as { type?: unknown }).type === 'ui.keys'
 const keysRenamed = (items: unknown) => (Array.isArray(items) ? items.map(item => (oldKeys(item) ? { ...item, type: 'ui.keystream' } : item)) : items)
-const storedCapabilities = z.preprocess(keysRenamed, folderCapabilities)
+// grantTypesDroppedOnRead left the fixed list. An entry written while one was in it reads with the item dropped from each of
+// its lists, the rest kept, and is written back without it once. An item of the type with a field it never had stays
+// invalid
+const isRetiredGrant = (item: unknown) => typeof item === 'object' && item !== null && grantTypesDroppedOnRead.includes((item as { type?: unknown }).type as string)
+  && Object.keys(item).length === 1
+const grantLists = ['granted', 'off', 'firstUse', 'confirmed'] as const
+const withoutRetiredGrants = (items: unknown) => (Array.isArray(items) ? items.filter(item => !isRetiredGrant(item)) : items)
+const holdsRetiredGrant = (value: unknown) => typeof value === 'object' && value !== null
+  && grantLists.some(list => { const items = (value as Record<string, unknown>)[list]; return Array.isArray(items) && items.some(isRetiredGrant) })
+const storedCapabilities = z.preprocess(items => withoutRetiredGrants(keysRenamed(items)), folderCapabilities)
 const pluginFields = {
   ...plugin.shape, granted: storedCapabilities, off: storedCapabilities.optional(), firstUse: storedCapabilities.optional(), confirmed: storedCapabilities.optional(),
 }
@@ -198,13 +208,14 @@ function formatOf(value: unknown): number | null {
   return typeof found === 'number' && Number.isSafeInteger(found) ? found : null
 }
 
-// older says the file was read in format 2
-type Read<T extends z.ZodType> = { result: FileResult, value?: z.output<T>, older?: true }
+// rewrite says the file was read in format 2 or holds what this build drops, so it is written back
+type Read<T extends z.ZodType> = { result: FileResult, value?: z.output<T>, rewrite?: true }
 
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing. A later build's file
 // reads as newer. A file in format 2 is read by the older schema where the kind has one. Any other format, 1 included,
 // has no reader here and reads as invalid
-async function readChecked<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType): Promise<Read<T>> {
+// needsRewrite says a value that parses still holds what this build drops
+async function readChecked<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType, needsRewrite?: (value: unknown) => boolean): Promise<Read<T>> {
   let bytes: Buffer | null
   try {
     bytes = await readIfExists(file)
@@ -225,10 +236,11 @@ async function readChecked<T extends z.ZodType>(file: string, schema: T, older?:
   if (found !== null && found > FORMAT) return { result: 'newer' }
   if (found === OLDER) {
     const read = (older ?? schema).safeParse(value)
-    return read.success ? { result: 'ok', value: read.data as z.output<T>, older: true } : { result: 'invalid' }
+    return read.success ? { result: 'ok', value: read.data as z.output<T>, rewrite: true } : { result: 'invalid' }
   }
   const parsed = schema.safeParse(value)
-  return parsed.success ? { result: 'ok', value: parsed.data } : { result: 'invalid' }
+  if (!parsed.success) return { result: 'invalid' }
+  return needsRewrite?.(value) === true ? { result: 'ok', value: parsed.data, rewrite: true } : { result: 'ok', value: parsed.data }
 }
 
 // The format number belongs to the file, not to what runs
@@ -275,7 +287,7 @@ export class StateStore {
   // state
   private readonly newer = new Set<string>()
   // The kinds of file the last load read in format 2 and that checked out, each written back in this format by upgrade
-  private older: { check: Check['check'], id?: string }[] = []
+  private rewrite: { check: Check['check'], id?: string }[] = []
   private tail: Promise<unknown> = Promise.resolve()
 
   // platform gives the rules the luoshu folder must be absolute by
@@ -364,7 +376,7 @@ export class StateStore {
   // error code of a write that failed
   async upgrade(state: SecurityState): Promise<{ check: Check['check'], id?: string, error?: string }[]> {
     const done: { check: Check['check'], id?: string, error?: string }[] = []
-    for (const one of this.older.splice(0)) {
+    for (const one of this.rewrite.splice(0)) {
       try {
         if (one.check === 'switches') await this.writeSwitches(state.switches)
         else if (one.check === 'luoshu' && state.luoshu !== null) await this.writeLuoshu(state.luoshu)
@@ -378,8 +390,8 @@ export class StateStore {
     return done
   }
 
-  private async checkFile<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType): Promise<Read<T>> {
-    const read = await readChecked(file, schema, older)
+  private async checkFile<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType, needsRewrite?: (value: unknown) => boolean): Promise<Read<T>> {
+    const read = await readChecked(file, schema, older, needsRewrite)
     if (read.result === 'newer') this.newer.add(file)
     return read
   }
@@ -387,19 +399,19 @@ export class StateStore {
   private async read(): Promise<Loaded> {
     const state = defaultState()
     const checks: Check[] = []
-    this.older = []
+    this.rewrite = []
 
     // A bad or missing switches file never touches the luoshu and a bad luoshu file never touches the switches
     const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile, switchesOlder)
     checks.push({ check: 'switches', result: switchesRead.result })
     let dropped: string[] = []
     if (switchesRead.value) ({ switches: state.switches, dropped } = switchesOf(withoutFormat(switchesRead.value)))
-    if (switchesRead.older === true || dropped.length > 0 || switchesRead.value?.removed !== undefined) this.older.push({ check: 'switches' })
+    if (switchesRead.rewrite === true || dropped.length > 0 || switchesRead.value?.removed !== undefined) this.rewrite.push({ check: 'switches' })
 
     // Absent is a luoshu not picked yet
     const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile, this.luoshuOlder)
     checks.push({ check: 'luoshu', result: luoshuRead.result })
-    if (luoshuRead.older === true) this.older.push({ check: 'luoshu' })
+    if (luoshuRead.rewrite === true) this.rewrite.push({ check: 'luoshu' })
     if (luoshuRead.value) state.luoshu = withoutFormat(luoshuRead.value)
 
     await this.readPlugins(state, checks)
@@ -421,9 +433,9 @@ export class StateStore {
     const { ids, invalid } = sortEntryNames(names)
     for (const id of invalid) checks.push({ check: 'plugin-entry', id, result: 'invalid' })
     for (const id of ids) {
-      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile, pluginOlder)
+      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile, pluginOlder, holdsRetiredGrant)
       checks.push({ check: 'plugin-entry', id, result: read.result })
-      if (read.older === true) this.older.push({ check: 'plugin-entry', id })
+      if (read.rewrite === true) this.rewrite.push({ check: 'plugin-entry', id })
       // With no valid entry there is no hash to check the code against, so the plugin is left out
       if (read.value) state.plugins[id] = withoutFormat(read.value)
     }

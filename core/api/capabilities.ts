@@ -41,16 +41,17 @@ function scopes<T extends z.ZodType>(item: T) {
 // is the right to change an open note through the editor, which the human then saves, and ui.read its twin, the right
 // to read through the editor a note the human opened. Version 4 added lock.set, the right to lock notes. Version 5
 // added door.handle, the role of serving what comes through the door, which one plugin at a time holds, and
-// ui.keystream, the right to see each key pressed in an open note, which removed ui.keys, its old name
+// ui.keystream, the right to see each key pressed in an open note, which removed ui.keys, its old name. Version 6
+// removed ui.layout once the drawer drew its own layout
 export const capabilityTypes = frozen([
-  'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream',
+  'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.decoration', 'ui.command', 'ui.keystream',
   'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
   'door.handle',
 ] as const)
 
-// An update of a plugin holding one of these waits for the human's Confirm whatever its class: a layout draws the whole
-// window, so a new one never takes the old one's place unasked
-export const askOnUpdateTypes = frozen(['ui.layout'] as const)
+// An update of a plugin holding one of these waits for the human's Confirm whatever its class. None since ui.layout
+// left the list
+export const askOnUpdateTypes = frozen([] as const)
 
 // The ui items scoped by paths, which reach only the notes they name and so are never a verb held whole
 export const scopedUiTypes = frozen(['ui.edit', 'ui.read'] as const)
@@ -66,7 +67,7 @@ export const capability = z.discriminatedUnion('type', [
   // reaches the luoshu on either
   z.strictObject({ type: z.literal(['ui.edit', 'ui.read']), paths: scopes(scope) }),
   z.strictObject({ type: z.literal('net.fetch'), hosts: scopes(text) }),
-  z.strictObject({ type: z.literal(['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keystream']) }),
+  z.strictObject({ type: z.literal(['ui.view', 'ui.decoration', 'ui.command', 'ui.keystream']) }),
   z.strictObject({ type: z.literal('events.subscribe'), topics: scopes(qualifiedName) }),
   z.strictObject({ type: z.literal('storage') }),
   // Paths too, so history reaches no note the plugin can't name

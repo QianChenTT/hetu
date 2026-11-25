@@ -14,7 +14,6 @@ export const windowGrants: Readonly<Record<WindowRole, readonly Capability[]>> =
     { type: 'history', access: 'read', paths: ['**'] },
     { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
     { type: 'ui.view' },
-    { type: 'ui.layout' },
     { type: 'ui.decoration' },
     { type: 'ui.command' },
     { type: 'ui.keystream' },

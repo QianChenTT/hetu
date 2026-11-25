@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { API_VERSION, apiChanges, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, supportsApi } from '../api/manifest.ts'
+import {
+  API_VERSION, apiChanges, apiMadeFor, folderManifest, grantTypesDroppedOnRead, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, supportsApi,
+  typesRemovedAfter,
+} from '../api/manifest.ts'
 
 const raw = (text: string) => JSON.parse(text)
 const many = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i))
@@ -52,12 +55,13 @@ describe('a manifest', () => {
   })
 
   it('parses an api range outside this core, which the plugins manager refuses with api', () => {
-    expect(API_VERSION).toBe(5)
+    expect(API_VERSION).toBe(6)
+    expect(supportsApi('^6')).toBe(true)
     expect(supportsApi('^5')).toBe(true)
     expect(supportsApi('^4')).toBe(true)
     expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
-    expect(supportsApi('^6')).toBe(false)
+    expect(supportsApi('^7')).toBe(false)
     expect(supportsApi('^0')).toBe(false)
     // A prefix of this version is another version
     expect(supportsApi('^10')).toBe(false)
@@ -136,6 +140,15 @@ describe('a manifest', () => {
       expect(supportsApi('^4', ['ui.keystream'])).toBe(false)
       expect(supportsApi('^4', ['ui.view', 'ui.keys'])).toBe(false)
       expect(supportsApi('^5', ['door.handle', 'ui.keystream'])).toBe(true)
+    })
+
+    // ui.layout went with layout.draw and the layout topics, which reached only ui.layout holders, so a plugin naming
+    // no ui.layout loses nothing
+    it('keeps version 5 under version 6 unless the manifest names ui.layout', () => {
+      expect(apiChanges[6]).toEqual({ added: [], removed: ['ui.layout'], reshaped: [], actionsChanged: false })
+      expect(supportsApi('^5', ['ui.view', 'ui.keystream', 'door.handle'])).toBe(true)
+      expect(supportsApi('^5', ['ui.view', 'ui.layout'])).toBe(false)
+      expect(supportsApi('^4', ['ui.layout'])).toBe(false)
     })
   })
 
@@ -219,6 +232,54 @@ describe('a manifest', () => {
     for (const value of [null, [], 'search', 5]) {
       expect(folderManifest.safeParse(value).success).toBe(false)
     }
+  })
+})
+
+// A manifest written before a major that removed a type may still name it. The schema has no place for the type, so
+// the read sets such items aside and refuses the manifest api rather than invalid
+describe('the types removed since a range', () => {
+  it('names each type a major after the range removed, oldest first', () => {
+    expect(typesRemovedAfter('^5')).toEqual(['ui.layout'])
+    expect(typesRemovedAfter('^4')).toEqual(['ui.keys', 'ui.layout'])
+    expect(typesRemovedAfter('^1')).toEqual(['ui.panel', 'ui.statusBar', 'ui.keys', 'ui.layout'])
+  })
+
+  it('names none for this major, a newer one, 0 or a range that does not parse', () => {
+    expect(typesRemovedAfter(`^${API_VERSION}`)).toEqual([])
+    expect(typesRemovedAfter(`^${API_VERSION + 1}`)).toEqual([])
+    expect(typesRemovedAfter('^0')).toEqual([])
+    expect(typesRemovedAfter('5')).toEqual([])
+    expect(typesRemovedAfter('^5.0')).toEqual([])
+  })
+
+  it('reads the record it is given', () => {
+    const changes = { 2: { added: [], removed: ['a'], reshaped: [], actionsChanged: false }, 3: { added: [], removed: ['b'], reshaped: [], actionsChanged: false } }
+    expect(typesRemovedAfter('^1', 3, changes)).toEqual(['a', 'b'])
+    expect(typesRemovedAfter('^2', 3, changes)).toEqual(['b'])
+  })
+
+  // A stored grant of a retired type is dropped when the state is read. Each one is a type a major removed with nothing
+  // in its place, unlike ui.keys, which the state reads under its new name
+  it('holds every grant type dropped on read among the removed ones', () => {
+    expect(grantTypesDroppedOnRead).toEqual(['ui.layout'])
+    for (const type of grantTypesDroppedOnRead) expect(typesRemovedAfter('^1')).toContain(type)
+  })
+})
+
+// An api refusal says which side of this hetu the manifest's major is on
+describe('the hetu a range was made for', () => {
+  it('is older below this major, 0 included, and newer above it', () => {
+    expect(apiMadeFor(`^${API_VERSION - 1}`)).toBe('older')
+    expect(apiMadeFor('^1')).toBe('older')
+    expect(apiMadeFor('^0')).toBe('older')
+    expect(apiMadeFor(`^${API_VERSION + 1}`)).toBe('newer')
+    expect(apiMadeFor('^5', 4)).toBe('newer')
+  })
+
+  it('is neither for this major or a range that does not parse', () => {
+    expect(apiMadeFor(`^${API_VERSION}`)).toBe(null)
+    expect(apiMadeFor('5')).toBe(null)
+    expect(apiMadeFor('^5.0')).toBe(null)
   })
 })
 

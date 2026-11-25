@@ -9,7 +9,7 @@ import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
   id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, on: true, items: [], class: 1,
-  ...over,
+  madeFor: null, ...over,
 })
 
 const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
@@ -20,6 +20,8 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   requests: [],
   identities: [],
   stopped: null,
+  // As the core decides it at start: due with no plugin in the plugin folder and hetu not stopped
+  startupDue: over.stopped == null && !(over.plugins ?? []).some(one => one.from === 'folder'),
   ...over,
 })
 
@@ -54,6 +56,23 @@ describe('what the trusted window draws', () => {
       'history · ships with hetu · core · failed (start-failed)',
       'search · plugin folder · sandboxed · crashed (flood) · class 1',
       'tool · plugin folder · sandboxed · ready · class unknown, counted as 4',
+    ])
+  })
+
+  // An api refusal says which side of this hetu the plugin was made for, so an older one reads as needing its author
+  // and a newer one as needing an update of hetu
+  it('names an api refusal by the hetu the plugin was made for', () => {
+    const drawn = screen(calm({
+      plugins: [
+        plugin({ id: 'later', state: 'refused', reason: 'api', madeFor: 'newer' }),
+        plugin({ id: 'odd', state: 'refused', reason: 'api' }),
+        plugin({ id: 'tiles', state: 'refused', reason: 'api', madeFor: 'older' }),
+      ],
+    }))
+    expect(drawn.plugins.map(row => row.line)).toEqual([
+      'later · plugin folder · sandboxed · refused (made for a newer hetu) · class 1',
+      'odd · plugin folder · sandboxed · refused (api) · class 1',
+      'tiles · plugin folder · sandboxed · refused (made for an older hetu) · class 1',
     ])
   })
 
@@ -467,8 +486,8 @@ describe('the trusted page', () => {
     }
   })
 
-  it('draws one tab at a time, Plugins first, and keeps the tab picked across answers', () => {
-    const { page, hears, sent, drawn } = started(calm({ plugins: [plugin({ id: 'layout', items: [{ capability: { type: 'ui.layout' }, off: false, firstUse: false }] })] }))
+  it('draws one tab at a time, Plugins first once a plugin is installed, and keeps the tab picked across answers', () => {
+    const { page, hears, sent, drawn } = started(calm({ plugins: [plugin({ id: 'search' })] }))
     expect(drawn.at(-1)?.screen.tab).toBe('plugins')
     expect(drawn.at(-1)?.screen.tabs.map(tab => tab.label)).toEqual(['Get started', 'Plugins', 'Switches', 'Notes folder', 'Identities', 'Limits'])
     const before = sent.length
@@ -477,7 +496,7 @@ describe('the trusted page', () => {
     // Picking a tab asks the core for nothing
     expect(sent.length).toBe(before)
     hears({ v: 1, kind: 'event', topic: 'core.security', seq: 4 })
-    hears(replyTo(sent.at(-1)!, calm({ plugins: [plugin({ id: 'layout', items: [{ capability: { type: 'ui.layout' }, off: false, firstUse: false }] })] })))
+    hears(replyTo(sent.at(-1)!, calm({ plugins: [plugin({ id: 'search' })] })))
     expect(drawn.at(-1)?.screen.tab).toBe('limits')
   })
 

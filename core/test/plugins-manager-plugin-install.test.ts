@@ -29,6 +29,7 @@ function staged(id: string, extra: Partial<StagedRead> & { asks?: Capability[], 
     digest: DIGEST,
     manifest: folderManifest.parse(workerManifest(id, { ...(name === undefined ? {} : { name }), ...(version === undefined ? {} : { version }), ...(asks === undefined ? {} : { capabilities: asks }) })),
     problem: null,
+    removedTypes: [],
     ...rest,
   }
 }
@@ -36,7 +37,7 @@ function staged(id: string, extra: Partial<StagedRead> & { asks?: Capability[], 
 // One staged plugin's bytes as main reads them again for the install: its manifest and worker as written
 function bytesOf(plugin: StagedRead): Read {
   const files = Object.entries(filesFor({ ...plugin.manifest })).map(([name, text]) => ({ path: name, bytes: Buffer.from(text) }))
-  return { files, hash: hashFiles(files), manifest: plugin.manifest, problem: null }
+  return { files, hash: hashFiles(files), manifest: plugin.manifest, problem: null, removedTypes: [] }
 }
 
 // The stagings as main holds them: each by its handle, the plugins read again for an install and the stagings dropped
@@ -467,5 +468,33 @@ describe('an install confirmed', () => {
     expect(await code(made.pluginsManager.apply(install([{ id: 'search', digest: DIGEST }])))).toBe('stopped')
     expect(await entries(made)).toEqual([])
     expect(made.fake.unstaged).toEqual(['s1'])
+  })
+})
+
+// The startup flow is decided at start from the plugin folder and ends once a plugin is installed. A folder emptied
+// later in the run leaves it ended until the next start
+describe('the startup flow', () => {
+  it('is due at a start with no plugin in the plugin folder, in the list and for main alike', async () => {
+    const made = await started([staged('search')])
+    expect(made.pluginsManager.startupDue()).toBe(true)
+    expect((await made.list()).startupDue).toBe(true)
+  })
+
+  it('is not due at a start with a plugin in the plugin folder', async () => {
+    const made = await started([], { folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: root => entryFor(root) } })
+    expect(made.pluginsManager.startupDue()).toBe(false)
+    expect((await made.list()).startupDue).toBe(false)
+  })
+
+  it('ends once a plugin is installed and stays ended when every plugin is removed again', async () => {
+    const made = await started([staged('search')])
+    const id = heldId(await made.pluginsManager.request(install([{ id: 'search', digest: DIGEST }]), trusted))
+    await made.pluginsManager.confirm(id, {})
+    expect(made.pluginsManager.startupDue()).toBe(false)
+    expect((await made.list()).startupDue).toBe(false)
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'search' })
+    expect((await made.list()).plugins.filter(plugin => plugin.from === 'folder')).toEqual([])
+    expect(made.pluginsManager.startupDue()).toBe(false)
+    expect((await made.list()).startupDue).toBe(false)
   })
 })
