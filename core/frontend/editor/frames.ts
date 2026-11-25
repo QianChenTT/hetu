@@ -4,21 +4,21 @@ import { lay } from './layers.ts'
 import type { CoreLink } from './link.ts'
 import type { Rect } from './drag.ts'
 
-// View frames: a view whose plugin draws it in a frame of its own files, for a canvas or its own framework. Main mints a
-// single-use URL on the plugin's own host for each mount, served from the bytes the plugin started with, and the
-// frame's src is that URL as main answered it, so each plugin's frames get a renderer of their own. The frame is sandboxed
-// with scripts only, so its origin is opaque. It gets a port on its first load and on any later one it is removed and
-// main records frame.navigated, so a navigated frame never gets a port. A frame talks only to its own plugin's worker
-// through the drawer, plain data as JSON text within the cap at a rate. Frames sit in the lifted layer over their
-// slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human presses in
-// it, as main tells the page of every press. A frame's own focus does nothing without the human's activation in it, by
-// the focus-without-user-activation policy. A frame that takes focus any other way, within the 5 s an activation lasts,
-// is pulled back to the note once the move ends. Main drops each key headed for a frame other than the one the page told it it let in, so the frame hears
-// none of what the human types meanwhile. hetu's theme is offered to every frame as the
-// page sets it, never checked or forced on one. A frame may ask hetu to open a note, which is the human's only right
-// after the human pressed in one of its plugin's frames, one open each press, and else the plugin's own. A note
-// dragged out of a frame carries a token main minted for its plugin and note, and dropped on the editor it opens as the
-// human's once main answers the token
+// View frames: a view whose plugin draws it in a frame of its own files, for a canvas or its own framework. Main mints
+// a single-use URL on the plugin's own host for each mount, served from the bytes the plugin started with, and the
+// frame's src is that URL as main answered it, so each plugin's frames get a renderer of their own. The frame is
+// sandboxed with scripts only, so its origin is opaque. It gets a port on its first load and on any later one it is
+// removed and main records frame.navigated, so a navigated frame never gets a port. A frame talks only to its own
+// plugin's worker through the drawer, plain data as JSON text within the cap at a rate. Frames sit in the lifted layer
+// over their slots and are never moved in the DOM, which would load them again. Focus goes into a frame when the human
+// presses in it, as main tells the page of every press. A frame's own focus does nothing without the human's activation
+// in it, by the focus-without-user-activation policy. A frame that takes focus any other way, within the 5 s an
+// activation lasts, is pulled back to the note once the move ends. Main drops each key headed for a frame other than
+// the one the page told it it let in, so the frame hears none of what the human types meanwhile. hetu's theme is
+// offered to every frame as the page sets it, never checked or forced on one. A frame may ask hetu to open a note,
+// which is the human's only right after the human pressed in one of its plugin's frames, one open each press, and else
+// the plugin's own. A note dragged out of a frame carries a token main minted for its plugin and note, and dropped on
+// the editor it opens as the human's once main answers the token
 
 // How long after a press, or the core's own move, focus may still go into that frame
 export const FOCUS_GRACE_MS = 500
@@ -119,7 +119,7 @@ export class FrameLoads {
 
 // A view frame's element, hidden until laid out. The source is set last, after every attribute the frame's first load
 // reads and before the frame joins the page, so its first load is its own page and never about:blank
-export function frameElement(page: Document, url: string): HTMLIFrameElement {
+export function createFrameElement(page: Document, url: string): HTMLIFrameElement {
   const element = page.createElement('iframe')
   element.className = 'hetu-frame'
   // Scripts only: no same origin, no top navigation, no forms, no popups
@@ -397,7 +397,7 @@ export class Frames {
     if (!got.ok || this.mounted.get(instance) !== held) return
     const url = (got.result as { url: string }).url
     held.url = url
-    const element = frameElement(document, url)
+    const element = createFrameElement(document, url)
     element.addEventListener('load', () => this.loaded(instance, held))
     held.element = element
     this.loads.started(instance)
