@@ -1,17 +1,21 @@
-// The welcome guide (D-672, D-679): four steps, one drawn at a time, on the trusted window's first tab. hetu ships no
-// plugin, so the window opens on it at start until a plugin holding ui.layout is approved. The human may close it for
-// now and pick its tab again
+// The startup flow (D-672, D-679, D-744, D-750): four steps, one drawn at a time, on the trusted window's first tab.
+// hetu ships no plugin, so every install goes through it: the notes folder, the first plugin installed with the Install
+// button's controls, one line saying where the plugin installed is approved, then what a grant is. Approving itself is
+// no step of the flow. While it is due it has no way out. Once a plugin is installed it ends and stays on its tab
 import type { SecurityList } from '../../api/actions.ts'
-import { approvedNotRefused } from '../../api/trusted.ts'
+import { pluginsInFolder } from '../../api/trusted.ts'
 
 // The release the install step fills in, only as a suggestion the human edits or replaces
 export const SUGGESTED_LINK = 'https://github.com/QianChenTT/hetu-plugins'
 
-// offers is the control the step draws: the folder dialog, the Install button's controls, the plugins waiting for
-// Approve or none
-export type StartupStep = { title: string, lines: string[], done: string | null, offers: 'folder' | 'install' | 'approve' | null }
-// at is the step drawn
-export type Startup = { steps: StartupStep[], at: number, suggested: string }
+// Where the human approves the plugin installed: the install's own Confirm, or Approve in the plugin list for a plugin
+// copied into the plugin folder by hand
+export const APPROVE_LINE = 'Approve what you installed in its Confirm at the top of this window, or with Approve in the Plugins tab for a plugin copied in by hand'
+
+// offers is the control the step draws: the folder dialog, the Install button's controls or none
+export type StartupStep = { title: string, lines: string[], done: string | null, offers: 'folder' | 'install' | null }
+// at is the step drawn. due says the flow has not ended, so the guide draws no way out
+export type Startup = { steps: StartupStep[], at: number, suggested: string, due: boolean }
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -20,12 +24,11 @@ export function startupScreen(list: SecurityList, at: number | null): Startup | 
   if (list.stopped !== null) return null
   const steps = stepsOf(list)
   const first = steps.findIndex(step => step.done === null)
-  return { steps, at: at ?? (first === -1 ? 0 : first), suggested: SUGGESTED_LINK }
+  return { steps, at: at ?? (first === -1 ? 0 : first), suggested: SUGGESTED_LINK, due: list.startupDue }
 }
 
 function stepsOf(list: SecurityList): StartupStep[] {
-  const inFolder = list.plugins.filter(plugin => plugin.from === 'folder').length
-  const approvedCount = list.plugins.filter(approvedNotRefused).length
+  const inFolder = pluginsInFolder(list)
   return [
       {
         title: 'Pick the notes folder',
@@ -34,22 +37,16 @@ function stepsOf(list: SecurityList): StartupStep[] {
         offers: 'folder',
       },
       {
-        title: 'Install the plugins you want',
-        lines: [
-          'hetu comes with no plugins. Install them from a zip, a folder or a GitHub link',
-          'A layout plugin draws the editor window. Until one is approved the editor shows a plain note',
-        ],
+        title: 'Install your first plugin',
+        lines: ['hetu comes with no plugins. Install one from a zip, a folder or a GitHub link'],
         done: inFolder === 0 ? null : `${counted(inFolder, 'plugin', 'plugins')} in the plugin folder`,
         offers: 'install',
       },
       {
-        title: 'Approve them',
-        lines: [
-          'Each plugin’s Confirm lists what it may do. Install approves the ones you tick',
-          'A plugin copied into the plugin folder by hand waits here and in the plugin list for Approve',
-        ],
-        done: approvedCount === 0 ? null : `${approvedCount} approved`,
-        offers: 'approve',
+        title: 'Approve it',
+        lines: [APPROVE_LINE],
+        done: null,
+        offers: null,
       },
       {
         title: 'What a grant is',

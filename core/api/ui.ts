@@ -493,7 +493,6 @@ export const uiCall = z.discriminatedUnion('verb', [
     verb: z.literal('view.bind'),
     args: z.strictObject({ bindings: z.array(z.strictObject({ key, command: localName })).max(MAX_VIEW_BINDINGS) }),
   }),
-  z.strictObject({ ...head, verb: z.literal('layout.draw'), args: z.strictObject({ ops }) }),
   // Opens a note in the editor, only inside the plugin's luoshu.read scope. A drawer verb, since the drawer holds the
   // open notes and the plugin's port names its owner
   z.strictObject({ ...head, verb: z.literal('editor.open'), args: z.strictObject({ path: note }) }),
@@ -502,14 +501,13 @@ export type UiCall = z.infer<typeof uiCall>
 export type UiVerb = UiCall['verb']
 
 // The item each ui verb needs. editor.open needs the note inside the luoshu.read scope too
-export const uiNeeds: Readonly<Record<UiVerb, 'ui.view' | 'ui.layout'>> = Object.freeze({
+export const uiNeeds: Readonly<Record<UiVerb, 'ui.view'>> = Object.freeze({
   'view.open': 'ui.view',
   'view.close': 'ui.view',
   'view.title': 'ui.view',
   'view.draw': 'ui.view',
   'view.post': 'ui.view',
   'view.bind': 'ui.view',
-  'layout.draw': 'ui.layout',
   'editor.open': 'ui.view',
 })
 
@@ -559,17 +557,6 @@ export type LayoutState = {
 // What the human did to a node. drop carries the payload the human dragged onto it
 export type NodeEventType = 'click' | 'input' | 'change' | 'submit' | 'drop'
 
-// The topics the drawer tells the layout, a list check 3 reads as core's own names. A topic off the list has no shape
-export const layoutTopics = Object.freeze(['layout.state', 'layout.event', 'layout.resized', 'layout.drop', 'layout.open', 'layout.close'] as const)
-type LayoutEvent = { [T in (typeof layoutTopics)[number]]: { topic: T } & {
-  'layout.state': { state: LayoutState }
-  'layout.event': { node: string, type: NodeEventType, value?: string | boolean, payload?: Payload }
-  'layout.resized': { node: string, sizes: number[] }
-  'layout.drop': { instance: string, zone: string, x: number, y: number }
-  'layout.open': { instance: string }
-  'layout.close': { instance: string }
-}[T] }[(typeof layoutTopics)[number]]
-
 export type UiEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'view.opened', instance: string, view: string }
   | { topic: 'view.closed', instance: string }
@@ -579,7 +566,6 @@ export type UiEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'view.message', instance: string, data: unknown }
   | { topic: 'view.command', instance: string, command: string }
   | { topic: 'view.resized', instance: string, node: string, sizes: number[] }
-  | LayoutEvent
 )
 export type UiTopic = UiEvent['topic']
 
@@ -591,6 +577,5 @@ export type UiResults = {
   'view.draw': null
   'view.post': null
   'view.bind': null
-  'layout.draw': null
   'editor.open': null
 }

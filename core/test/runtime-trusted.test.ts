@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
-import { type FolderDialog, INPUT_DELAY_MS, InputDelay, pickFolder, pickPlugins, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
+import { type FolderDialog, INPUT_DELAY_MS, InputDelay, keepsOpen, pickFolder, pickPlugins, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
 
 const key = (type: 'keyDown' | 'keyUp', code: string, isAutoRepeat = false) => ({ type, code, isAutoRepeat })
 const mouse = (type: string, button: 'left' | 'right' | 'middle' = 'left') => ({ type, button })
@@ -239,5 +239,24 @@ describe('picking plugins to install', () => {
       return { canceled: false, filePaths: ['/p.zip'] }
     }, 'zip')).toBeNull()
     expect(asked).toBe(0)
+  })
+})
+
+// A shutdown or a logoff closes the windows with no quit, so a close refused then would hold the session up
+describe('closing the trusted window while the startup flow is due', () => {
+  it('is refused while the startup flow is due and nothing ends hetu', () => {
+    expect(keepsOpen({ due: true, quitting: false, sessionEnding: false })).toBe(true)
+  })
+
+  it('goes through once the startup flow ended', () => {
+    expect(keepsOpen({ due: false, quitting: false, sessionEnding: false })).toBe(false)
+  })
+
+  it('goes through while hetu quits', () => {
+    expect(keepsOpen({ due: true, quitting: true, sessionEnding: false })).toBe(false)
+  })
+
+  it('goes through once the system said its session ends, for a shutdown, a restart or a logoff', () => {
+    expect(keepsOpen({ due: true, quitting: false, sessionEnding: true })).toBe(false)
   })
 })

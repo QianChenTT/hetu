@@ -45,7 +45,6 @@ function classOf(granted: Capability): number {
     case 'ui.view':
     case 'ui.decoration':
     case 'ui.command':
-    case 'ui.layout':
     case 'storage':
     case 'events.subscribe':
     case 'plugin.call':

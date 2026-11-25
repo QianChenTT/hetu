@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CoreLink } from '../frontend/editor/link.ts'
-import { Settings } from '../frontend/editor/settings.ts'
+import { ARRANGEMENT_WRITE_MS, Settings } from '../frontend/editor/settings.ts'
 import { fakeCore, settle } from './editor-fakes.ts'
 
-function made(stored: unknown = null) {
-  const space = new Map<string, unknown>(stored === null ? [] : [['settings', stored]])
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+function made(stored: unknown = null, arrangement: unknown = null) {
+  const space = new Map<string, unknown>([...(stored === null ? [] : [['settings', stored] as const]), ...(arrangement === null ? [] : [['arrangement', arrangement] as const])])
   const core = fakeCore({
     'storage.get': args => ({ ok: true, result: space.get((args as { key: string }).key) ?? null }),
     'storage.set': args => {
@@ -19,87 +23,30 @@ function made(stored: unknown = null) {
 }
 
 describe('the window\'s settings', () => {
-  it('starts with no layout or theme picked, no favorites and no key owners', async () => {
+  it('starts with no theme picked, no favorites and no key owners', async () => {
     const { settings } = made()
     await settings.load()
-    expect(settings.value).toEqual({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
+    expect(settings.value).toEqual({ theme: null, favorites: [], keyOwners: {} })
   })
 
-  it("takes the drawer's plain layout as a pick of its own, apart from hetu's layout", async () => {
-    const { settings, space } = made()
-    await settings.load()
-    await settings.pickLayout(null)
-    expect(settings.value).toMatchObject({ layout: null, plain: true })
-    await settings.pickLayout('layout')
-    expect(settings.value).toMatchObject({ layout: 'layout', plain: false })
-    expect(space.get('settings')).toMatchObject({ layout: 'layout', plain: false })
-  })
-
-  // Installing a first layout draws with it. A later layout, the human's own pick and the plain layout picked stay
-  it('picks the first layout that comes while none is picked, and no later one', async () => {
-    const { settings, space } = made()
-    await settings.load()
-    await settings.pickIfNone('tiles')
-    expect(settings.value).toMatchObject({ layout: 'tiles', plain: false })
-    expect(space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
-    await settings.pickIfNone('columns')
-    expect(settings.value).toMatchObject({ layout: 'tiles', plain: false })
-  })
-
-  it('leaves the layout the human picked and the plain layout picked as they are', async () => {
-    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keyOwners: {} })
-    await picked.settings.load()
-    await picked.settings.pickIfNone('tiles')
-    expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
-    const plain = made()
-    await plain.settings.load()
-    await plain.settings.pickLayout(null)
-    await plain.settings.pickIfNone('tiles')
-    expect(plain.settings.value).toMatchObject({ layout: null, plain: true })
-  })
-
-  it('holds a layout that came before the settings loaded until they show whether one is picked', async () => {
-    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keyOwners: {} })
-    await picked.settings.pickIfNone('tiles')
-    await picked.settings.load()
-    expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
-    expect(picked.space.get('settings')).toMatchObject({ layout: 'other' })
-    const none = made()
-    await none.settings.pickIfNone('tiles')
-    await none.settings.pickIfNone('columns')
-    expect(none.space.get('settings')).toBe(undefined)
-    await none.settings.load()
-    expect(none.settings.value).toMatchObject({ layout: 'tiles', plain: false })
-    expect(none.space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
-  })
-
-  // A layout whose port ended before the settings loaded is gone, so the next that came and is still there is picked
-  it('picks no layout that came before the settings loaded and left before they did', async () => {
-    const { settings, space } = made()
-    let here = true
-    await settings.pickIfNone('gone', () => false)
-    await settings.pickIfNone('tiles', () => here)
-    here = false
-    await settings.load()
-    expect(settings.value).toMatchObject({ layout: null, plain: false })
-    expect(space.get('settings')).toBe(undefined)
-    const other = made()
-    await other.settings.pickIfNone('gone', () => false)
-    await other.settings.pickIfNone('tiles', () => true)
-    await other.settings.load()
-    expect(other.settings.value).toMatchObject({ layout: 'tiles', plain: false })
+  // The layout is the drawer's own, so a layout picked before is no setting any more
+  it('reads settings stored with a layout picked, or the plain layout, keeping the rest and dropping the pick', async () => {
+    for (const pick of [{ layout: 'layout', plain: false }, { layout: null, plain: true }, { layout: 'tiles' }]) {
+      const { settings } = made({ ...pick, theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
+      await settings.load()
+      expect(settings.value, JSON.stringify(pick)).toEqual({ theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
+    }
   })
 
   it('keeps each change under settings in the window\'s storage and reads it back', async () => {
     const { settings, space, core } = made()
     await settings.load()
-    await settings.pickLayout('layout')
     await settings.pickTheme('dusk')
     await settings.favorite('tree/files', true)
     await settings.favorite('kanban/board', true)
     await settings.favorite('tree/files', false)
     await settings.ownKey('Mod-k', 'kanban')
-    expect(space.get('settings')).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
+    expect(space.get('settings')).toEqual({ theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
     await settings.ownKey('Mod-k', null)
     expect(settings.value.keyOwners).toEqual({})
     // A page loaded again reads what the last one kept. The fake bridge has one listener, so the old link is done
@@ -107,26 +54,26 @@ describe('the window\'s settings', () => {
     link.start()
     const again = new Settings(link)
     await again.load()
-    expect(again.value).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keyOwners: {} })
+    expect(again.value).toEqual({ theme: 'dusk', favorites: ['kanban/board'], keyOwners: {} })
   })
 
-  it('reads settings stored with key owners under keys as keyOwners, the layout, theme and favorites kept', async () => {
+  it('reads settings stored with key owners under keys as keyOwners, the theme and favorites kept', async () => {
     const { settings } = made({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keys: { 'Mod-k': 'kanban' } })
     await settings.load()
-    expect(settings.value).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
+    expect(settings.value).toEqual({ theme: 'dusk', favorites: ['kanban/board'], keyOwners: { 'Mod-k': 'kanban' } })
   })
 
   it('reads a value holding both keys and keyOwners as the defaults, the old name taken only alone', async () => {
     const { settings } = made({ layout: 'layout', plain: false, theme: null, favorites: [], keys: {}, keyOwners: {} })
     await settings.load()
-    expect(settings.value).toEqual({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
+    expect(settings.value).toEqual({ theme: null, favorites: [], keyOwners: {} })
   })
 
   it('reads a stored value of the wrong shape as the defaults', async () => {
-    for (const stored of [{ layout: 7 }, 'x', { layout: null, theme: null, favorites: ['a b'], keyOwners: {} }, { layout: 'Bad Id', theme: null, favorites: [], keyOwners: {} }]) {
+    for (const stored of [{ theme: 7 }, 'x', { theme: null, favorites: ['a b'], keyOwners: {} }, { theme: 'Bad Id', favorites: [], keyOwners: {} }, { theme: null, favorites: [], keyOwners: {}, other: 1 }]) {
       const { settings } = made(stored)
       await settings.load()
-      expect(settings.value, JSON.stringify(stored)).toEqual({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
+      expect(settings.value, JSON.stringify(stored)).toEqual({ theme: null, favorites: [], keyOwners: {} })
     }
   })
 
@@ -138,5 +85,53 @@ describe('the window\'s settings', () => {
     await settings.favorite('tree/files', true)
     await settle()
     expect(told).toBe(2)
+  })
+
+  it("reads the layout's arrangement kept under arrangement apart from the settings, null with none kept", async () => {
+    const kept = { places: { 'p/board': { column: 'left', order: 0, byHand: true } } }
+    const { settings } = made(null, kept)
+    await settings.load()
+    expect(settings.arrangement).toEqual(kept)
+    const none = made()
+    await none.settings.load()
+    expect(none.settings.arrangement).toBeNull()
+  })
+
+  it("keeps the layout's arrangement under arrangement without telling the settings' listener", async () => {
+    const { settings, space } = made()
+    let told = 0
+    await settings.load()
+    settings.onChange = () => void told++
+    settings.keepArrangement({ widths: { left: 300, right: 240 } })
+    expect(settings.arrangement).toEqual({ widths: { left: 300, right: 240 } })
+    await settings.writeArrangement()
+    expect(space.get('arrangement')).toEqual({ widths: { left: 300, right: 240 } })
+    expect(space.has('settings')).toBe(false)
+    expect(settings.arrangement).toEqual({ widths: { left: 300, right: 240 } })
+    expect(told).toBe(0)
+  })
+
+  // A plugin opening and closing a view in a loop moves the layout each time, which writes nothing each time
+  it(`writes a burst of arrangements once, the latest, ${ARRANGEMENT_WRITE_MS} ms after the first, and none with nothing new`, async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { settings, space, core } = made()
+    const load = settings.load()
+    await vi.advanceTimersByTimeAsync(0)
+    await load
+    const writes = () => core.calls('storage.set').length
+    for (let at = 0; at < 50; at++) settings.keepArrangement({ at })
+    await vi.advanceTimersByTimeAsync(ARRANGEMENT_WRITE_MS - 1)
+    expect(writes()).toBe(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(writes()).toBe(1)
+    expect(space.get('arrangement')).toEqual({ at: 49 })
+    await vi.advanceTimersByTimeAsync(ARRANGEMENT_WRITE_MS * 3)
+    await settings.writeArrangement()
+    expect(writes()).toBe(1)
+    settings.keepArrangement({ at: 50 })
+    await settings.writeArrangement()
+    expect(writes()).toBe(2)
+    await vi.advanceTimersByTimeAsync(ARRANGEMENT_WRITE_MS * 3)
+    expect(writes()).toBe(2)
   })
 })

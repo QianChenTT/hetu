@@ -1,12 +1,14 @@
 import type { RefusalCode } from '../../api/envelope.ts'
-import type { LayoutState, NodeEventType, Payload, UiCall } from '../../api/ui.ts'
+import type { LayoutState, NodeEventType, Payload, UiCall, UiNode } from '../../api/ui.ts'
+import type { Arrangement } from './layout/arrange.ts'
+import { type Layout, startLayout } from './layout/layout.ts'
 import { Surfaces } from './surfaces.ts'
-import type { SettingsValue } from './settings.ts'
 import { type ViewBody, ViewList } from './views.ts'
 
-// The ui half of each plugin's port to the drawer: views drawn by their owners and the skeleton of the layout the human
-// picked. The Drawer reads every message, checks the plugin holds the item the verb needs and hands the call here with
-// the owner main named. Every event the human makes goes to the owner of the surface it happened in and no other
+// The ui half of each plugin's port to the drawer: views drawn by their owners, placed by the drawer's own layout. The
+// Drawer reads every message, checks the plugin holds the item the verb needs and hands the call here with the owner
+// main named. Every event the human makes goes to the owner of the surface it happened in and no other, the
+// skeleton's to the layout
 
 export class UiRefusal {
   readonly code: RefusalCode
@@ -22,8 +24,8 @@ export type UiHooks = {
   drawn(owner: string, surface: string): void
   // Views came or went, or the layout drawing the window changed
   changed(): void
-  // A plugin holding ui.layout came, or came to hold it
-  layoutConnected(owner: string): void
+  // The layout's arrangement changed, to keep in the window's settings
+  arranged(arrangement: Arrangement): void
   // A frame view's message from its owner's worker
   post(owner: string, instance: string, data: unknown): RefusalCode | null
   // Opens a note in the editor with the window's own read, once the plugin's reach was checked on the path it named.
@@ -35,11 +37,12 @@ export type UiReach = { read: boolean, list: boolean, verbs: readonly string[] }
 
 // The surface a layout draws its skeleton on
 export const SKELETON = 'layout'
+// The owner the drawer's own layout draws its skeleton under: hetu, which no plugin id can be
+export const LAYOUT_OWNER = 'hetu'
 
 type Options = {
   send(owner: string, body: ViewBody): void
   reach(owner: string, path: string): Promise<UiReach>
-  settings(): SettingsValue
   hooks: UiHooks
   // A binding's key as the page names keys, and whether the drawer keeps it for itself
   normal(key: string): string
@@ -50,11 +53,10 @@ export class UiPort {
   readonly surfaces = new Surfaces()
   readonly views: ViewList
   private readonly options: Options
-  // Owners connected holding ui.view, holding ui.layout
+  private readonly layout: Layout
+  // Owners connected holding ui.view
   private readonly viewers = new Set<string>()
-  private readonly layouts = new Set<string>()
   private readonly bindings = new Map<string, Map<string, string>>()
-  private current: string | null = null
   private lastState = ''
   // Told the keys an owner's views bound, named the page's way, each time they change
   onBindings: ((owner: string, keys: string[]) => void) | null = null
@@ -62,23 +64,18 @@ export class UiPort {
   constructor(options: Options) {
     this.options = options
     this.views = new ViewList((owner, body) => options.send(owner, body))
+    this.layout = startLayout({ draw: tree => this.drawSkeleton(tree), save: arrangement => options.hooks.arranged(arrangement) })
   }
 
-  // The layout drawing the window: the picked one while it is connected holding ui.layout. Null means the drawer's
-  // plain layout
-  layout(): string | null {
-    return this.current
-  }
-
-  // The layout whose skeleton draws the window: the picked one once it sent a skeleton. Until then, and when it can't,
-  // the drawer draws its plain layout, so a layout that hangs or whose skeleton is refused never leaves a blank window
+  // The owner of the skeleton drawing the window, once the layout drew one. Until then, and when it can't, the drawer
+  // draws its plain layout, so a layout that throws or whose skeleton is refused never leaves a blank window
   drawing(): string | null {
-    return this.current !== null && this.surfaces.tree(this.current, SKELETON) !== null ? this.current : null
+    return this.surfaces.tree(LAYOUT_OWNER, SKELETON) !== null ? LAYOUT_OWNER : null
   }
 
-  // The connected plugins the human can pick as the layout
-  layoutChoices(): string[] {
-    return [...this.layouts].sort()
+  // The arrangement the window's settings held, which the layout draws from
+  arrangementLoaded(saved: unknown): void {
+    this.arrange(layout => layout.loaded(saved))
   }
 
   // The owner's port came, or what it holds changed. What it no longer holds is taken back
@@ -92,43 +89,20 @@ export class UiPort {
       this.viewers.delete(owner)
       this.dropViews(owner)
     }
-    const came = verbs.includes('ui.layout') && !this.layouts.has(owner)
-    if (verbs.includes('ui.layout')) this.layouts.add(owner)
-    else {
-      this.layouts.delete(owner)
-      this.surfaces.dropSurface(owner, SKELETON)
-    }
-    this.settingsChanged()
-    if (came) this.options.hooks.layoutConnected(owner)
   }
 
   ended(owner: string): void {
     this.viewers.delete(owner)
-    this.layouts.delete(owner)
     this.dropViews(owner)
     this.surfaces.drop(owner)
-    this.settingsChanged()
   }
 
-  // The human picked another layout, or none. hetu has no layout of its own, so with none picked the drawer draws its
-  // plain layout
-  settingsChanged(): void {
-    const settings = this.options.settings()
-    const wanted = settings.layout
-    const next = !settings.plain && wanted !== null && this.layouts.has(wanted) ? wanted : null
-    if (next === this.current) return
-    this.current = next
-    this.lastState = ''
-    this.options.hooks.changed()
-  }
-
-  // What the layout plans from. Sent only when it changed since the last
+  // What the layout plans from. Handed on only when it changed since the last
   state(state: LayoutState): void {
-    if (this.current === null) return
     const text = JSON.stringify(state)
     if (text === this.lastState) return
     this.lastState = text
-    this.options.send(this.current, { topic: 'layout.state', state })
+    this.arrange(layout => layout.state(state))
   }
 
   // A call the Drawer read and checked the item of. spend charges the nodes a draw looked at to the plugin's second
@@ -176,14 +150,6 @@ export class UiPort {
         this.onBindings?.(owner, bound.map(([key]) => key))
         return null
       }
-      case 'layout.draw': {
-        if (this.current !== owner) throw new UiRefusal('not-granted')
-        const applied = this.surfaces.apply(owner, SKELETON, call.args.ops, true)
-        if ('refusal' in applied) throw new UiRefusal(applied.refusal)
-        spend(applied.visited)
-        this.options.hooks.drawn(owner, SKELETON)
-        return null
-      }
       case 'editor.open':
         await this.pluginOpen(owner, call.args.path)
         return null
@@ -220,7 +186,7 @@ export class UiPort {
   nodeEvent(owner: string, surface: string, node: string, type: NodeEventType, value?: string | boolean, payload?: Payload): void {
     const extra = { ...(value === undefined ? {} : { value }), ...(payload === undefined ? {} : { payload }) }
     if (surface === SKELETON) {
-      if (owner === this.current) this.options.send(owner, { topic: 'layout.event', node, type, ...extra })
+      if (owner === LAYOUT_OWNER) this.arrange(layout => layout.event(node, type))
       return
     }
     if (this.views.owner(surface) === owner && this.viewers.has(owner)) this.options.send(owner, { topic: 'view.event', instance: surface, node, type, ...extra })
@@ -229,7 +195,7 @@ export class UiPort {
   // A split the human resized, to its owner
   resized(owner: string, surface: string, node: string, sizes: number[]): void {
     if (surface === SKELETON) {
-      if (owner === this.current) this.options.send(owner, { topic: 'layout.resized', node, sizes })
+      if (owner === LAYOUT_OWNER) this.arrange(layout => layout.resized(node, sizes))
       return
     }
     if (this.views.owner(surface) === owner) this.options.send(owner, { topic: 'view.resized', instance: surface, node, sizes })
@@ -242,16 +208,35 @@ export class UiPort {
 
   // A view the human dragged onto one of the layout's zones, x and y where in the zone from 0 to 1
   viewDropped(instance: string, zone: string, x: number, y: number): void {
-    if (this.current !== null && this.views.get(instance) !== null) this.options.send(this.current, { topic: 'layout.drop', instance, zone, x, y })
+    if (this.views.get(instance) !== null) this.arrange(layout => layout.drop(instance, zone, x, y))
   }
 
   // The human asked from the views menu for a view to show, or to go
   openView(instance: string): void {
-    if (this.current !== null && this.views.get(instance) !== null) this.options.send(this.current, { topic: 'layout.open', instance })
+    if (this.views.get(instance) !== null) this.arrange(layout => layout.open(instance))
   }
 
   closeView(instance: string): void {
-    if (this.current !== null && this.views.get(instance) !== null) this.options.send(this.current, { topic: 'layout.close', instance })
+    if (this.views.get(instance) !== null) this.arrange(layout => layout.close(instance))
+  }
+
+  // A call into the layout. One that throws, or draws a skeleton the tree's check refuses, is logged as the page logs a
+  // failed handler and leaves the plain layout drawing until the layout draws again
+  private arrange(act: (layout: Layout) => void): void {
+    try {
+      act(this.layout)
+    } catch (err) {
+      console.error('the layout failed, the plain layout draws until it draws again', err)
+      this.surfaces.dropSurface(LAYOUT_OWNER, SKELETON)
+      this.options.hooks.changed()
+    }
+  }
+
+  // The skeleton under the drawer's own owner, checked as a layout's tree is
+  private drawSkeleton(tree: UiNode): void {
+    const applied = this.surfaces.apply(LAYOUT_OWNER, SKELETON, [{ op: 'tree', root: tree }], true)
+    if ('refusal' in applied) throw new Error(applied.problem)
+    this.options.hooks.drawn(LAYOUT_OWNER, SKELETON)
   }
 
   private own(owner: string, instance: string): void {

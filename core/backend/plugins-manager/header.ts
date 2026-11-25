@@ -19,8 +19,9 @@ export type PluginsRecording = Pick<Recording, 'drain' | 'resume' | 'coalesced'>
 }
 
 // One plugin of a staging as the core read it when it staged it: its id, the SHA-256 of its manifest's bytes, the
-// manifest when it parsed as a plugin folder's and why it can't be installed, null when it can
-export type StagedRead = { id: string, digest: string, manifest: FolderManifest | null, problem: StagedProblem | null }
+// manifest when it parsed as a plugin folder's and why it can't be installed, null when it can. removedTypes is the types
+// a later major removed that the manifest names, left out of the manifest kept
+export type StagedRead = { id: string, digest: string, manifest: FolderManifest | null, problem: StagedProblem | null, removedTypes: readonly string[] }
 export type Staging = { source: StagedSource, plugins: readonly StagedRead[] }
 
 // A staging made under its handle, or why nothing was staged

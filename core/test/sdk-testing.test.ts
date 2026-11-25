@@ -419,7 +419,7 @@ describe('the fake core\'s gate', () => {
 
 describe('the fake drawer', () => {
   const drawn = (over: object = {}) => manifest({
-    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.view' }, { type: 'ui.layout' }],
+    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.view' }],
     views: { board: { title: 'Board', kind: 'view' } },
     ...over,
   })
@@ -435,7 +435,7 @@ describe('the fake drawer', () => {
     expect(opened[0]).toMatchObject({ topic: 'view.opened', instance: 'v1', view: 'board' })
   })
 
-  it('draws through ctx.ui and refuses a skeleton without ui.layout', async () => {
+  it('draws through ctx.ui, which holds no skeleton to draw', async () => {
     const drawer = new FakeDrawer()
     const made = fakeCore({ manifest: drawn(), drawer })
     cores.push(made)
@@ -443,21 +443,14 @@ describe('the fake drawer', () => {
     await made.start(definePlugin({ start(ctx) { given = ctx } }))
     const ctx = given as unknown as PluginContext
     await ctx.ui.views.draw('v1', { kind: 'text', id: 'a', text: 'cards' })
-    await ctx.ui.layout.draw({ kind: 'box', id: 'root', children: [{ kind: 'slot', id: 's', instance: 'v1' }] })
+    expect('layout' in ctx.ui).toBe(false)
     expect(drawer.tree('v1')).toEqual({ kind: 'text', id: 'a', text: 'cards' })
-    expect(drawer.tree('layout')).toMatchObject({ kind: 'box', id: 'root' })
+    expect(drawer.tree('layout')).toBe(null)
     // An image node takes core/api's checks, a dot path or a file of another kind refused as hetu's drawer refuses them
     await ctx.ui.views.draw('v1', { kind: 'image', id: 'a', path: 'pics/cat.png', alt: 'A cat' })
     expect(drawer.tree('v1')).toEqual({ kind: 'image', id: 'a', path: 'pics/cat.png', alt: 'A cat' })
     await expect(ctx.ui.views.draw('v1', { kind: 'image', id: 'a', path: '.obsidian/cat.png' })).rejects.toMatchObject({ code: 'invalid' })
     await expect(ctx.ui.views.draw('v1', { kind: 'image', id: 'a', path: 'pics/cat.txt' })).rejects.toMatchObject({ code: 'invalid' })
-
-    const plain = new FakeDrawer()
-    const other = fakeCore({ manifest: drawn({ id: 'other', capabilities: [{ type: 'ui.view' }] }), drawer: plain })
-    cores.push(other)
-    let second: PluginContext | null = null
-    await other.start(definePlugin({ start(ctx2) { second = ctx2 } }))
-    await expect((second as unknown as PluginContext).ui.layout.draw({ kind: 'box', id: 'root' })).rejects.toMatchObject({ code: 'not-granted' })
   })
 
   it('serves editor.read and editor.edit on a note it holds, at its version, and editor.open inside the read scope', async () => {
@@ -609,10 +602,10 @@ describe('the fake drawer', () => {
     const made = fakeCore({ manifest: drawn(), drawer })
     cores.push(made)
     const heard: unknown[] = []
-    await made.start(definePlugin({ start(ctx) { ctx.ui.on('layout.drop', event => heard.push(event)) } }))
-    drawer.emit({ topic: 'layout.drop', instance: 'v1', zone: 'left', x: 0, y: 0.5 })
+    await made.start(definePlugin({ start(ctx) { ctx.ui.on('view.resized', event => heard.push(event)) } }))
+    drawer.emit({ topic: 'view.resized', instance: 'v1', node: 'split', sizes: [200, 300] })
     await until(() => heard.length === 1)
-    expect(heard[0]).toMatchObject({ topic: 'layout.drop', zone: 'left' })
+    expect(heard[0]).toMatchObject({ topic: 'view.resized', node: 'split', sizes: [200, 300] })
   })
 })
 

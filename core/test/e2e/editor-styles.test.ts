@@ -173,7 +173,7 @@ describe('the editor\'s own styles', () => {
 
     await editor.locator('#views').click()
     await until(async () => editor.locator('#menu').isVisible())
-    await editor.locator('#menu select').nth(1).selectOption('dusk')
+    await editor.locator('#menu select').first().selectOption('dusk')
     await until(async () => (await looks(editor)).background === 'rgb(16, 16, 16)')
     await editor.locator('#menu-close').click()
     const dark = await focused(editor)

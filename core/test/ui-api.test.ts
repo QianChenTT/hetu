@@ -279,7 +279,6 @@ describe('the ui verbs on a plugin\'s port', () => {
     ['view.draw', { instance: 'v1', ops: [{ op: 'tree', root: tree }] }],
     ['view.post', { instance: 'v1', data: { cards: [1, 2] } }],
     ['view.bind', { bindings: [{ key: 'j', command: 'down' }, { key: 'Mod-Enter', command: 'open' }] }],
-    ['layout.draw', { ops: [{ op: 'tree', root: tree }] }],
     ['editor.open', { path: 'notes/a.md' }],
     ['editor.read', { instance: 'n1' }],
   ])('reads %s', (verb, args) => {
@@ -294,7 +293,7 @@ describe('the ui verbs on a plugin\'s port', () => {
     ['view.post', { instance: 'v1', data: 'x'.repeat(64 * 1024 + 1) }],
     ['view.bind', { bindings: [{ key: 'Hyper-x', command: 'raw' }] }],
     ['view.bind', { bindings: [{ key: 'Mod-', command: 'x' }] }],
-    ['layout.draw', { ops: [{ op: 'tree', root: { kind: 'frame', id: 'a' } }] }],
+    ['layout.draw', { ops: [{ op: 'tree', root: tree }] }],
     ['editor.open', { path: '../secret.md' }],
     ['view.unknown', {}],
   ])('refuses %s with %j', (verb, args) => {
@@ -306,9 +305,10 @@ describe('the ui verbs on a plugin\'s port', () => {
     expect(parseDrawerCall('{"v":1,"kind":"call","id":1,"verb":"view.open","args":{"view":"a","__proto__":{}}}')).toBe(null)
   })
 
-  it('names the item each verb needs', () => {
+  it('names the item each verb needs, ui.view for every one', () => {
     expect(uiNeeds['view.draw']).toBe('ui.view')
-    expect(uiNeeds['layout.draw']).toBe('ui.layout')
     expect(uiNeeds['editor.open']).toBe('ui.view')
+    expect(Object.hasOwn(uiNeeds, 'layout.draw')).toBe(false)
+    expect(new Set(Object.values(uiNeeds))).toEqual(new Set(['ui.view']))
   })
 })

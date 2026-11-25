@@ -136,10 +136,10 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   return section
 }
 
-// The welcome guide: where it stands, each step's name a button going to it, then one step with what it has done and
-// the control it offers, then Back, Next and Go to Plugins. Approving stays a request here, so its Confirm is drawn
-// above and waits out the delay
-function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLElement {
+// The startup flow: where it stands, each step's name a button going to it, then one step with what it has done and
+// the control it offers, then Back and Next, and Done and Go to Plugins only once the flow ended. An install stays a
+// request here, so its Confirm is drawn above and waits out the delay
+function guideSection(page: TrustedPage, startup: Startup): HTMLElement {
   const section = element('section')
   section.className = 'startup'
   const heading = element('h2', 'Get started with hetu')
@@ -168,16 +168,6 @@ function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLE
   }
   if (step.offers === 'folder') body.append(button('Pick a folder', () => page.pickFolder()))
   if (step.offers === 'install') body.append(installControls(page, 'startup', 'or from a GitHub link, a suggestion to edit or replace', startup.suggested))
-  if (step.offers === 'approve') {
-    for (const plugin of shown.plugins.filter(row => row.actions.includes('approve'))) {
-      const row = element('div')
-      row.className = 'plugin'
-      const approve = button('Approve', () => act(page, plugin.id, 'approve'))
-      approve.dataset.key = `guide-approve:${plugin.id}`
-      row.append(element('p', plugin.line), approve)
-      body.append(row)
-    }
-  }
   const moves = element('p')
   moves.className = 'guide-moves'
   // Keyed so focus stays on the move pressed when Back goes on the first step or Next turns into Done
@@ -187,8 +177,8 @@ function guideSection(page: TrustedPage, shown: Screen, startup: Startup): HTMLE
   }
   if (startup.at > 0) moves.append(keyed(button('Back', () => page.guideTo(startup.at - 1)), 'guide-back'))
   if (startup.at < startup.steps.length - 1) moves.append(keyed(button('Next', () => page.guideTo(startup.at + 1)), 'guide-next'))
-  else moves.append(keyed(button('Done', () => page.leaveGuide()), 'guide-next'))
-  moves.append(button('Go to Plugins', () => page.leaveGuide()))
+  else if (!startup.due) moves.append(keyed(button('Done', () => page.leaveGuide()), 'guide-next'))
+  if (!startup.due) moves.append(button('Go to Plugins', () => page.leaveGuide()))
   section.append(heading, where, body, moves)
   return section
 }
@@ -241,7 +231,7 @@ function sideBar(page: TrustedPage, shown: Screen): HTMLElement {
 
 // What the picked tab holds
 function tabContent(page: TrustedPage, shown: Screen, tab: Tab): HTMLElement[] {
-  if (tab === 'start') return shown.startup === null ? [] : [guideSection(page, shown, shown.startup)]
+  if (tab === 'start') return shown.startup === null ? [] : [guideSection(page, shown.startup)]
   if (tab === 'plugins') {
     const list = element('section')
     list.className = 'plugins'

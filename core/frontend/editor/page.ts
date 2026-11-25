@@ -125,7 +125,7 @@ function start(bridge: Bridge): void {
           layers?.changed()
           drawMenuSoon()
         },
-        layoutConnected: owner => void settings.pickIfNone(owner, () => drawer?.ui.layoutChoices().includes(owner) ?? false),
+        arranged: arrangement => settings.keepArrangement(arrangement),
         // A post that lands answers null, so a missing Frames has to be told apart from it
         post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
         // A plugin's open adds the note without taking the human's focus or the current note from them
@@ -227,7 +227,7 @@ function start(bridge: Bridge): void {
   // and only the drop goes to the layout
   function viewDrag(instance: string, start: PointerEvent): void {
     const held = ui.views.get(instance)
-    if (held === null || ui.layout() === null) return
+    if (held === null || ui.drawing() === null) return
     const text = `${ui.views.name(held.owner)} · ${held.spec.title}`
     let zones = theLayers.zones()
     let outlined = ''
@@ -381,7 +381,6 @@ function start(bridge: Bridge): void {
   }
 
   settings.onChange = () => {
-    ui.settingsChanged()
     applyTheme()
     theLayers.favorites = settings.value.favorites
     theLayers.changed()
@@ -396,9 +395,6 @@ function start(bridge: Bridge): void {
     const name = (id: string) => declared.find(plugin => plugin.plugin === id)?.name ?? id
     const shown = theLayers.shownViews()
     return {
-      layouts: ui.layoutChoices().map(id => ({ id, name: `${name(id)} (${id})` })),
-      // Plain is the empty choice, which no pick at all draws too
-      layout: settings.value.plain ? null : settings.value.layout,
       themes: declared.filter(plugin => plugin.theme !== null).map(plugin => ({ id: plugin.plugin, name: plugin.name })),
       theme: settings.value.theme,
       themeFallback,
@@ -429,7 +425,6 @@ function start(bridge: Bridge): void {
 
   function drawTheMenu(): void {
     drawMenu(element('menu-body'), menuData(), {
-      pickLayout: id => void settings.pickLayout(id),
       pickTheme: id => void settings.pickTheme(id),
       favorite: (key, on) => void settings.favorite(key, on),
       show: instance => ui.openView(instance),
@@ -724,7 +719,12 @@ function start(bridge: Bridge): void {
   theNotes.start()
   theDrawer.start()
   raw.start()
-  void settings.load().then(readViews)
+  // A change made in the last moments is written as the page goes
+  window.addEventListener('pagehide', () => void settings.writeArrangement())
+  void settings.load().then(() => {
+    ui.arrangementLoaded(settings.arrangement)
+    return readViews()
+  })
   theLayers.place()
 }
 

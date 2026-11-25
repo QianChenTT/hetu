@@ -105,13 +105,14 @@ describe('before ready', () => {
     expect(calls).not.toContain('exit 1')
   })
 
-  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found, blocks a frame\'s focus with no activation and registers hetu', async () => {
+  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found, turns WebRTC\'s mDNS off, blocks a frame\'s focus with no activation and registers hetu', async () => {
     const dataDir = await temp()
     const { app, protocol, calls, seen } = fakes()
     beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron'] })
     expect(calls).toEqual([
       'setPath userData', 'requestSingleInstanceLock', 'enableSandbox', 'appendSwitch host-resolver-rules MAP * ~NOTFOUND',
-      'appendSwitch enable-blink-features BlockingFocusWithoutUserActivation', 'registerSchemesAsPrivileged',
+      'appendSwitch disable-features WebRtcHideLocalIpsWithMdns', 'appendSwitch enable-blink-features BlockingFocusWithoutUserActivation',
+      'registerSchemesAsPrivileged',
     ])
     expect(seen.userData).toBe(path.join(dataDir, 'electron'))
     expect(seen.userDataExisted).toBe(true)
@@ -126,6 +127,14 @@ describe('before ready', () => {
     expect(early?.dev).toBe(false)
     expect(seen.userData?.startsWith(base)).toBe(true)
     expect(seen.userData?.endsWith(path.join('hetu', 'electron'))).toBe(true)
+  })
+
+  // Chromium reads only the last --disable-features, so the one appended carries those already there
+  it('keeps the features a run from the source was started with off beside WebRTC\'s mDNS', async () => {
+    const dataDir = await temp()
+    const { app, protocol, calls } = fakes({ values: { 'disable-features': 'SomeFeature,OtherFeature' } })
+    beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron', '--disable-features=SomeFeature,OtherFeature'] })
+    expect(calls).toContain('appendSwitch disable-features SomeFeature,OtherFeature,WebRtcHideLocalIpsWithMdns')
   })
 
   // Chromium reads only the last --enable-blink-features, so the one appended carries those already there

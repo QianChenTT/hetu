@@ -70,6 +70,12 @@ export function beforeReady(
   // not on the command line, so app.relaunch, which starts the first argv again, doesn't hand it to a locked build
   // https://www.electronjs.org/docs/latest/api/command-line-switches#--host-resolver-rulesrules
   app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND')
+  // With WebRTC's mDNS hiding on, a frame's peer connection has the network service answer mDNS on UDP 5353 on every
+  // address and a remote candidate on <name>.local has it send a query onto every interface when the frame says. No
+  // host candidate is gathered under disable_non_proxied_udp, so turning it off hides nothing. Chromium reads only the
+  // last --disable-features, so this one carries any already there
+  const disabled = app.commandLine.getSwitchValue('disable-features')
+  app.commandLine.appendSwitch('disable-features', [disabled, 'WebRtcHideLocalIpsWithMdns'].filter(name => name !== '').join(','))
   // Turns on the focus-without-user-activation policy, which Chromium 156 leaves experimental and ignores otherwise. A
   // view frame's focus(), window.focus(), showModal(), select() or any other focus it makes with no user activation of
   // its own then does nothing, so it never takes focus, or an IME composition, from the note. It can go once Electron is

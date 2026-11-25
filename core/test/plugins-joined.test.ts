@@ -70,18 +70,21 @@ const notesFolder = async (notes: Record<string, string>) => {
 // its two writes leaves it. The file explorer left the first-party ids before, layout and hidden marks left with the
 // rest. Layout's entry still owes the notice its copy at start raised
 const uiView = { type: 'ui.view' } as Capability
-const olderCopies: [string, Capability[], Partial<Plugin>][] = [
-  ['file-explorer', [listAll, readAll, writeAll, uiView], { class: 4, firstUse: [writeAll] }],
-  ['layout', [{ type: 'ui.layout' }, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
-  ['hidden-marks', [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }, uiView], { class: 1 }],
+// Layout's copy names ui.layout, which version 6 removed, so its ^5 manifest is refused api before its signer is looked at
+const olderCopies: [string, string, Capability[], Partial<Plugin>][] = [
+  ['file-explorer', 'signer', [listAll, readAll, writeAll, uiView], { class: 4, firstUse: [writeAll] }],
+  ['layout', 'api', [{ type: 'ui.layout' } as unknown as Capability, { type: 'storage' }], { class: 0, owed: { from: null, cause: 'copy', by: 'layout' } }],
+  ['hidden-marks', 'signer', [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }, uiView], { class: 1 }],
 ]
 
 describe('an old data folder holding a first-party copy', () => {
-  it.each(olderCopies)('starts hetu, refuses %s with signer, runs no worker for it and reads the switches with removed dropped', async (id, granted, stored) => {
+  it.each(olderCopies)('starts hetu, refuses %s with %s, runs no worker for it and reads the switches with removed dropped', async (id, reason, granted, stored) => {
     const { booted, pluginsManager, runtime, records } = await joined(async (dataDir, store) => {
       const root = path.join(dataDir, 'plugins', id)
-      await writeFolder(root, filesFor(workerManifest(id, { version: '0.1.0', capabilities: granted })))
-      await store.writePlugin(id, oldFirstPartyEntry(await hashOf(root), { version: '0.1.0', granted, ...stored }))
+      // An older build's copy, written for the API of its day
+      await writeFolder(root, filesFor(workerManifest(id, { version: '0.1.0', api: '^5', capabilities: granted })))
+      // As the older build wrote it, which may hold a type this build no longer writes
+      await plant(path.join(dataDir, 'state', 'plugins', `${id}.json`), JSON.stringify({ format: 3, ...oldFirstPartyEntry(await hashOf(root), { version: '0.1.0', granted, ...stored }) }))
       await plant(path.join(dataDir, 'state', 'switches.json'), JSON.stringify({ format: 3, ...defaultSwitches(), removed: [id, 'search'] }))
     }, await notesFolder({ 'a.md': 'alpha' }))
 
@@ -90,12 +93,14 @@ describe('an old data folder holding a first-party copy', () => {
     expect(booted.checks).toContainEqual({ check: 'plugin-entry', id, result: 'ok' })
     expect(booted.state.switches).toEqual(defaultSwitches())
     expect(booted.state.plugins[id]).toMatchObject({ signer: 'hetu first-party' })
+    // ui.layout left the fixed list, so layout's entry reads without it and the rest of what it held
+    expect(booted.state.plugins[id]?.granted).toEqual(granted.filter(item => (item.type as string) !== 'ui.layout'))
     const all = await records()
     expect(all.some(record => record.event === 'core.ready')).toBe(true)
 
-    // The entry is refused with signer, never migrated, and no worker runs for it
-    expect(pluginsManager.list().find(row => row.id === id)).toMatchObject({ from: 'folder', state: 'refused', reason: 'signer' })
-    expect(all).toContainEqual(expect.objectContaining({ event: 'plugin.refused', plugin: id, reason: 'signer' }))
+    // The plugin is refused and no worker runs for it
+    expect(pluginsManager.list().find(row => row.id === id)).toMatchObject({ from: 'folder', state: 'refused', reason })
+    expect(all).toContainEqual(expect.objectContaining({ event: 'plugin.refused', plugin: id, reason }))
     expect(runtime.order()).not.toContain(id)
     expect(all.some(record => record.event === 'plugin.started' && record.plugin === id)).toBe(false)
   })

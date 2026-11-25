@@ -8,7 +8,6 @@ import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { grantSentence } from '../../api/trusted.ts'
 import { watchingModuleIds } from '../../api/ids.ts'
 import { installBox, Installer, type InstallBox, type InstallFlow } from './install.ts'
-import { welcomeDue } from '../../api/trusted.ts'
 import { startupScreen, type Startup } from './startup.ts'
 
 export type Bridge = {
@@ -56,7 +55,7 @@ export type Screen = {
   identities: { rows: IdentityRow[], about: string }
   // The Install button's box, null while nothing is being installed
   installing: InstallBox | null
-  // The welcome guide's steps and the one drawn, null in the stopped mode
+  // The startup flow's steps and the one drawn, null in the stopped mode
   startup: Startup | null
   // The tab drawn and every tab with its name. mark says what on a tab waits for the human, drawn beside its name so
   // nothing waits unseen on a tab not shown
@@ -125,10 +124,12 @@ export function choiceChange(control: string, choice: Choice): Change | null {
 }
 
 // A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier
-// policy job. One it couldn't give counts as 4. A security control is locked on while the security view is off
+// policy job. One it couldn't give counts as 4. A security control is locked on while the security view is off. An api
+// refusal names the side of this hetu the plugin was made for
 function pluginLine(plugin: ListedPlugin, locked: boolean): string {
   const from = plugin.from === 'folder' ? 'plugin folder' : 'ships with hetu'
-  const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state
+  const reason = plugin.reason === 'api' && plugin.madeFor !== null ? `made for ${plugin.madeFor === 'older' ? 'an older' : 'a newer'} hetu` : plugin.reason
+  const state = reason !== null ? `${plugin.state} (${reason})` : plugin.state
   const known = plugin.from === 'folder' ? [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`] : []
   return [
     plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known, ...(locked ? ['locked while the security view is off'] : []),
@@ -225,7 +226,7 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
   return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
 }
 
-// tab is the one the human picked, else Get started while the welcome is due and Plugins after. at is the guide's step
+// tab is the one the human picked, else Get started while the startup flow is due and Plugins after. at is the guide's step
 // the human went to or the guide was first drawn at
 export function screen(list: SecurityList, flow: InstallFlow | null = null, tab: Tab | null = null, at: number | null = null): Screen {
   const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
@@ -247,7 +248,7 @@ export function screen(list: SecurityList, flow: InstallFlow | null = null, tab:
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
     installing: installBox(flow),
     startup: startupScreen(list, at),
-    tab: tab ?? (welcomeDue(list) ? 'start' : 'plugins'),
+    tab: tab ?? (list.startupDue ? 'start' : 'plugins'),
     tabs: tabs.map(id => ({ id, label: tabLabels[id], mark: id === 'plugins' ? waitingMark(list) : null })),
   }
 }
@@ -360,8 +361,9 @@ export class TrustedPage {
     this.redraw()
   }
 
-  // Away from the guide to the plugin list. Its tab shows it again
+  // Away from the guide to the plugin list once the flow ended. Its tab shows it again. While it is due there is no way out
   leaveGuide(): void {
+    if (this.last !== null && this.last.startupDue) return
     this.tab = 'plugins'
     this.redraw()
   }
@@ -409,8 +411,8 @@ export class TrustedPage {
   }
 
   private redraw(): void {
-    // The first tab is picked once from the first list, so approving a layout mid-guide doesn't move the human away
-    if (this.last !== null && this.tab === null) this.tab = welcomeDue(this.last) ? 'start' : 'plugins'
+    // The first tab is picked once from the first list, so an install mid-guide doesn't move the human away
+    if (this.last !== null && this.tab === null) this.tab = this.last.startupDue ? 'start' : 'plugins'
     if (this.last === null) return
     const shown = screen(this.last, this.installer.flow, this.tab, this.step)
     // The guide stays on the step it was first drawn at, so a step done, as by an install, never moves the human on by itself

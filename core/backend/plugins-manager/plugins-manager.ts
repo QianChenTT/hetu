@@ -1,11 +1,12 @@
 import { START_HUNG, type CoreStatus, type HeldRequest, type ListedPlugin, type SecurityList, type Staged, type StagedPlugin } from '../../api/actions.ts'
 import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { grantClause, grantSentence, sourceLine, UNSIGNED, welcomeDue } from '../../api/trusted.ts'
+import { grantClause, grantSentence, sourceLine, UNSIGNED } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, failSafeControls, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
+import { apiMadeFor } from '../../api/manifest.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
 import type { Made, StagedRead, Staging, Stagings } from './header.ts'
@@ -113,10 +114,16 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     throw { code: 'unavailable' }
   }
 
-  // Whether main opens the trusted window on its welcome guide at start: hetu runs and no approved plugin draws the
-  // editor window
-  welcomeDue(): boolean {
-    return welcomeDue(this.securityList())
+  // The startup flow, decided once the start scanned the plugin folder: due while it held no plugin. Every install goes
+  // through it and nothing cancels it, so main opens the trusted window on it at start and keeps the window open. It
+  // ends once a plugin is installed and stays ended for the run, so a folder emptied later brings it back only at the
+  // next start
+  private startup = false
+
+  // Whether the startup flow is due, for main and for the trusted window's list
+  startupDue(): boolean {
+    if (this.startup && this.list().some(row => row.from === 'folder')) this.startup = false
+    return this.startup && this.stoppedMode === null
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core
@@ -127,7 +134,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { state, reason } = this.moduleRow(id)
       return {
         id, from: 'core', place: 'core', state, reason,
-        security: isSecurityControl(id), on: !isOne(switches.off, id), items: [], class: null,
+        security: isSecurityControl(id), on: !isOne(switches.off, id), items: [], class: null, madeFor: null,
       }
     })
     const listed: ListedPlugin[] = this.list().map(row => {
@@ -143,6 +150,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
         })),
         class: entry?.class ?? null,
+        madeFor: row.reason === 'api' && k?.read.manifest != null ? apiMadeFor(k.read.manifest.api) : null,
       }
     })
     const plugins = [...modules, ...listed].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : a.from < b.from ? -1 : 1))
@@ -169,6 +177,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       requests,
       identities: this.listedIdentities(),
       stopped: this.stoppedMode,
+      startupDue: this.startupDue(),
     }
   }
 
@@ -256,12 +265,15 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     this.installs()
   }
 
-  protected stagedRow({ id, digest, manifest, problem }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
+  // A manifest naming a type a later major removed was read without it, so its list goes out empty rather than as
+  // what it asked for
+  protected stagedRow({ id, digest, manifest, problem, removedTypes }: StagedRead, asks: ReadonlyMap<string, readonly Capability[]>): StagedPlugin {
     const classed = problem === null && manifest !== null ? this.installClassed(id, manifest, digest, asks, true) : null
     return {
-      id, name: manifest?.name ?? null, version: manifest?.version ?? null, capabilities: [...(manifest?.capabilities ?? [])],
+      id, name: manifest?.name ?? null, version: manifest?.version ?? null,
+      capabilities: removedTypes.length > 0 ? [] : [...(manifest?.capabilities ?? [])],
       class: classed?.own?.entry?.class ?? null, lines: [...(classed?.lines ?? [])], replaces: this.installedEntry(id)?.version ?? null,
-      digest, problem,
+      digest, problem, madeFor: problem === 'api' && manifest !== null ? apiMadeFor(manifest.api) : null, removedTypes: [...removedTypes],
     }
   }
 
@@ -352,6 +364,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     await this.serial(() => this.classAll('start'))
     this.classedAtStart = true
     await this.scan()
+    this.startup = !this.list().some(row => row.from === 'folder')
     this.replan()
     await this.settled()
     if (!this.closing) this.note('core.ready', { ...this.policyJobs() })

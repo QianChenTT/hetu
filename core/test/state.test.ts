@@ -69,7 +69,6 @@ const everyCapability = [
   { type: 'ui.view' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
-  { type: 'ui.layout' },
   { type: 'ui.keystream' },
   { type: 'events.subscribe', topics: ['note.written'] },
   { type: 'storage' },
@@ -1075,6 +1074,52 @@ describe('the key stream under its old name', () => {
   it('writes no item under the old name', async () => {
     await expect(store.writePlugin('alpha', pluginIn({ granted: [old] }))).rejects.toThrow()
     await expect(store.writePlugin('alpha', pluginIn({ off: [old] }))).rejects.toThrow()
+  })
+})
+
+// ui.layout left the fixed list with the layout plugin: an entry holding it reads with the item dropped from each list
+// and the rest kept, nothing suspect, and is written back without it once at the upgrade after the read
+describe('a ui.layout grant an older hetu stored', () => {
+  const layout = { type: 'ui.layout' }
+  const storage = { type: 'storage' }
+  const fetch = { type: 'net.fetch', hosts: ['example.com'] }
+
+  it('reads an entry holding ui.layout in each list with it dropped and the other grants kept, nothing suspect', async () => {
+    await plant(pluginPath('alpha'), JSON.stringify({ format: 3, ...pluginIn({ granted: [layout, storage, fetch], off: [layout, storage], firstUse: [fetch, layout], confirmed: [layout] }) }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(result(loaded, 'plugin-entry', 'alpha')).toBe('ok')
+    expect(loaded.state.plugins.alpha).toEqual(pluginIn({ granted: [storage, fetch], off: [storage], firstUse: [fetch], confirmed: [] }))
+  })
+
+  it('writes the entry back without ui.layout once, at the upgrade after the read', async () => {
+    await plant(pluginPath('alpha'), JSON.stringify({ format: 3, ...pluginIn({ granted: [layout, storage] }) }))
+    await plant(pluginPath('beta'), JSON.stringify({ format: 3, ...pluginIn({ granted: [storage] }) }))
+    const loaded = await store.load()
+    expect(await store.upgrade(loaded.state)).toEqual([{ check: 'plugin-entry', id: 'alpha' }])
+    expect(await readFile(pluginPath('alpha'), 'utf8')).not.toContain('ui.layout')
+    const again = await store.load()
+    expect(again.suspect).toBe(false)
+    expect(again.state.plugins.alpha).toEqual(pluginIn({ granted: [storage] }))
+    expect(await store.upgrade(again.state)).toEqual([])
+  })
+
+  it('reads an entry in format 2 holding ui.layout with it dropped too', async () => {
+    await plant(pluginPath('alpha'), JSON.stringify({ format: 2, ...pluginIn({ granted: [layout, storage] }) }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.plugins.alpha).toEqual(pluginIn({ granted: [storage] }))
+  })
+
+  it('leaves an item named ui.layout with a field it never had invalid', async () => {
+    await plant(pluginPath('alpha'), JSON.stringify({ format: 3, ...pluginIn({ granted: [{ type: 'ui.layout', paths: ['**'] }, storage] }) }))
+    const loaded = await store.load()
+    expect(result(loaded, 'plugin-entry', 'alpha')).toBe('invalid')
+    expect(loaded.suspect).toBe(true)
+  })
+
+  it('writes no ui.layout item', async () => {
+    await expect(store.writePlugin('alpha', pluginIn({ granted: [layout] }))).rejects.toThrow()
   })
 })
 

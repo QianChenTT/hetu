@@ -233,11 +233,9 @@ describe('the notice a move owes', () => {
   })
 })
 
-// Only a class 0 plugin whose new version asks for nothing it doesn't hold loads unasked. One holding a type that asks
-// on every update never does, as ui.layout asks since a layout draws the whole window
+// Only a class 0 plugin whose new version asks for nothing it doesn't hold loads unasked
 describe('whether an update loads unasked', () => {
   const view: Capability = { type: 'ui.view' }
-  const layout: Capability = { type: 'ui.layout' }
   const update = (granted: Capability[], n: number | null, requested: Capability[], others: ClassRow[] = []): ClassTable =>
     ({ cause: 'update', change: { id: 'calc', granted }, confirm: false, requested, plugins: [{ id: 'calc', granted, stored: stored(n) }, ...others] })
 
@@ -250,7 +248,6 @@ describe('whether an update loads unasked', () => {
     ['a class above 0', [read], 1, [read]],
     ['a class not known', [], null, []],
     ['a new version asking for a grant it does not hold', [], 0, [storage]],
-    ['a plugin holding ui.layout', [layout], 0, [layout]],
     ['a plugin holding door.handle', [{ type: 'door.handle' }], 3, [{ type: 'door.handle' }]],
   ] as [string, Capability[], number | null, Capability[]][])('is no for %s', (_name, granted, n, requested) => {
     expect(classes(update(granted, n, requested)).unasked).toBe(false)

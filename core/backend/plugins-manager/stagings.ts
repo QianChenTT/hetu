@@ -216,7 +216,7 @@ export class InstallStagings implements Stagings {
       const problem = problemOf(read, id)
       // A manifest only the install's schema takes is kept out, as is one that didn't parse
       const manifest = read.problem === 'install-only' ? null : read.manifest as FolderManifest | null
-      plugins.push({ id, digest: digestOf(read), manifest, problem })
+      plugins.push({ id, digest: digestOf(read), manifest, problem, removedTypes: read.removedTypes })
       if (problem === null && read.hash !== null) places.set(id, { folder, hash: read.hash })
     }
     if (new Set(plugins.map(plugin => plugin.id)).size < plugins.length) return { problem: 'same-id' }

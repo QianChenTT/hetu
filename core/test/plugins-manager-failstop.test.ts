@@ -219,6 +219,21 @@ describe('the restart marker, after the review', () => {
     expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: false }])
   })
 
+  // The stopped mode leaves only the trusted window, which then closes as any other window does
+  it('ends the startup flow that was due once hetu stopped while it ran', async () => {
+    const failures: Failure[] = []
+    const made = await harness({
+      pluginsManager: { onFailure: failure => { failures.push(failure) } },
+      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'gate'),
+    })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.startupDue()).toBe(true)
+    made.pluginsManager.controlFailed('log', 'log-failing')
+    await until(() => failures.length > 0)
+    expect(made.pluginsManager.startupDue()).toBe(false)
+    expect(((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).startupDue).toBe(false)
+  })
+
   it('stops hetu instead of starting it again when the marker can\u2019t be written', async () => {
     const failures: Failure[] = []
     const made = await harness({ pluginsManager: { onFailure: failure => { failures.push(failure) } } })

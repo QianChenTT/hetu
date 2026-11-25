@@ -93,6 +93,13 @@ export function pickPlugins(trusted: TrustedWindow, dialog: FolderDialog, source
     : { properties: ['openDirectory'], title: 'Pick a plugin folder or a folder of plugins' })
 }
 
+// Whether the trusted window refuses a close: only while the startup flow is due. A quit goes through. So does the
+// system's session ending, since a shutdown, a restart or a logoff closes the windows with no quit and a close refused
+// then holds the session up
+export function keepsOpen(state: { due: boolean, quitting: boolean, sessionEnding: boolean }): boolean {
+  return state.due && !state.quitting && !state.sessionEnding
+}
+
 // The one trusted window: opened by a human's click on a core control, focused when one is open, its input held back by
 // the delay in main where no page code can skip it. A Confirm counts only from it once armed
 export class TrustedWindow {

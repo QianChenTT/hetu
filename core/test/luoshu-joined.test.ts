@@ -286,11 +286,11 @@ describe('an open note judged on where it is, never on the spelling it was opene
     const hooks: UiHooks = {
       drawn() {},
       changed() {},
-      layoutConnected() {},
+      arranged() {},
       post: () => 'unavailable',
       open: (at, reads) => opened.open(at, reads).then(() => {}, () => {}),
     }
-    const settings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keyOwners: {} })
+    const settings = (): SettingsValue => ({ theme: null, favorites: [], keyOwners: {} })
     const drawer = new Drawer(link, () => texts.values(), () => {}, { ui: { settings, hooks } })
     drawer.start()
     const ports = new Map<string, ReturnType<typeof bridgePort>>()
@@ -479,7 +479,8 @@ describe('indexing a vault through the router with the log on', () => {
   }, 60_000)
 })
 
-// About 205 ms and 13 ms on the PC this was built on. The whole run within 2 s is past the 250 calls a second the case
-// against feared, with room for a slower CI runner. A save within half a second while an index reads stays unnoticed
-const BUDGET_TOTAL_MS = 2_000
+// About 205 ms and 13 ms on the PC this was built on, alone. Under the full suite's load the run took 2.35 s there, so
+// the whole run gets 3 s, still past the 250 calls a second the case against feared. A save within half a second while
+// an index reads stays unnoticed
+const BUDGET_TOTAL_MS = 3_000
 const BUDGET_SAVE_MS = 500
