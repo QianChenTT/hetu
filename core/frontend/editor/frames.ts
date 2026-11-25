@@ -118,7 +118,7 @@ export class FrameLoads {
 }
 
 // A view frame's element, hidden until laid out. The source is set last, after every attribute the frame's first load
-// reads, and before the frame joins the page, so its first load is its own page and never about:blank
+// reads and before the frame joins the page, so its first load is its own page and never about:blank
 export function frameElement(page: Document, url: string): HTMLIFrameElement {
   const element = page.createElement('iframe')
   element.className = 'hetu-frame'

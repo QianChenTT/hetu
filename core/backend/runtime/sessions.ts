@@ -65,7 +65,7 @@ const WORKERS_CSP = [
 ].join('; ')
 
 // A view frame's own policy beside the frame element's allow: its focus does nothing without the human's activation in
-// it, and no frame it nests can be let do more. Chromium heeds it only with the Blink feature main turns on
+// it and no frame it nests can be let do more. Chromium heeds it only with the Blink feature main turns on
 const FRAME_PERMISSIONS = 'focus-without-user-activation=()'
 
 // Whether a request may leave a role's session: only to hetu on the role's own hosts, with no user or port. Whether a

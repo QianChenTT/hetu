@@ -125,7 +125,7 @@ describe('the sessions', () => {
     expect(await page.text()).toBe('<p>a</p>')
     expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; frame-ancestors hetu://editor")
     expect(page.headers.get('x-content-type-options')).toBe('nosniff')
-    // Its own focus does nothing without the human's activation in it, and nothing it nests can be let do more
+    // Its own focus does nothing without the human's activation in it and nothing it nests can be let do more
     expect(page.headers.get('permissions-policy')).toBe('focus-without-user-activation=()')
     expect((await serve('editor', get('hetu://kanban.views/t/b.html'), root, views)).status).toBe(404)
     expect((await serve('editor', get('hetu://kanban.views/t/a.html', 'HEAD'), root, views)).status).toBe(200)
