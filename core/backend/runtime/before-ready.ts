@@ -20,7 +20,7 @@ export const SCHEME = 'hetu'
 // What before ready needs from Electron's app, faked in the tests. commandLine is Chromium's own parse of the
 // arguments, so a switch spelled with another prefix or case is found as Chromium would find it
 export type EarlyApp = {
-  readonly commandLine: { hasSwitch(name: string): boolean, appendSwitch(name: string, value: string): void }
+  readonly commandLine: { hasSwitch(name: string): boolean, getSwitchValue(name: string): string, appendSwitch(name: string, value: string): void }
   setPath(name: 'userData', value: string): void
   requestSingleInstanceLock(): boolean
   enableSandbox(): void
@@ -70,6 +70,12 @@ export function beforeReady(
   // not on the command line, so app.relaunch, which starts the first argv again, doesn't hand it to a locked build
   // https://www.electronjs.org/docs/latest/api/command-line-switches#--host-resolver-rulesrules
   app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND')
+  // With WebRTC's mDNS hiding on, a frame's peer connection has the network service answer mDNS on UDP 5353 on every
+  // address and a remote candidate on <name>.local has it send a query onto every interface when the frame says. No
+  // host candidate is gathered under disable_non_proxied_udp, so turning it off hides nothing. Chromium reads only the
+  // last --disable-features, so this one carries any already there
+  const disabled = app.commandLine.getSwitchValue('disable-features')
+  app.commandLine.appendSwitch('disable-features', [disabled, 'WebRtcHideLocalIpsWithMdns'].filter(name => name !== '').join(','))
   // A second call replaces the first list rather than failing, so this is the only one
   protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true } }])
   return found
