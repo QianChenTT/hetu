@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   coreModuleIds, coreNamespaces, guardableActions, guards, doorId, doorNode, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
-  failSafeControls, serverOf,
+  failSafeControls, serverOf, ticketUrlOf,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -206,5 +206,27 @@ describe('the tables', () => {
       delete shared.search
       delete shared['luoshu.read']
     }
+  })
+})
+
+describe('the ticket a frame was served under', () => {
+  const kanban = 'hetu://kanban.views/0123456789abcdef0123456789abcdef/board.html'
+  const ticket = 'hetu://kanban.views/0123456789abcdef0123456789abcdef'
+
+  it('stays the same when the frame moves within its own page by hash or history', () => {
+    expect(ticketUrlOf(kanban)).toBe(ticket)
+    expect(ticketUrlOf(`${kanban}#route-2`)).toBe(ticket)
+    expect(ticketUrlOf('hetu://kanban.views/0123456789abcdef0123456789abcdef/list/2?y=1')).toBe(ticket)
+  })
+
+  it('is none for a URL on no ticket, another scheme, a host no plugin owns or no URL', () => {
+    expect(ticketUrlOf('hetu://kanban.views/board.html')).toBe(null)
+    expect(ticketUrlOf('hetu://kanban.views/0123456789ABCDEF0123456789abcdef/board.html')).toBe(null)
+    expect(ticketUrlOf('https://kanban.views/0123456789abcdef0123456789abcdef/board.html')).toBe(null)
+    expect(ticketUrlOf('hetu://x.kanban.views/0123456789abcdef0123456789abcdef/board.html')).toBe(null)
+    expect(ticketUrlOf('hetu://editor/')).toBe(null)
+    expect(ticketUrlOf('about:blank')).toBe(null)
+    expect(ticketUrlOf('not a url')).toBe(null)
+    expect(ticketUrlOf(null)).toBe(null)
   })
 })

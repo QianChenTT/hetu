@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { onOwnMessage } from '../lib/own-messages.ts'
 
 // The shell's only way to the core: a message sent on the window's channel, and what comes back on it. Nothing else
 // crosses the bridge. Only the top frame gets a preload, so a frame in the window has no bridge
@@ -29,6 +30,16 @@ ipcRenderer.on('hetu:focus-frame', (_event, asked: { url?: unknown }) => {
 // Each press and release in the window, a frame's included, at its point on the page, as main saw it
 ipcRenderer.on('hetu:press', (_event, press: unknown) => {
   window.postMessage({ hetu: 'press', press }, location.origin)
+})
+// Main's word that it dropped a key headed for a frame the page didn't let focus into, so the page takes focus back
+ipcRenderer.on('hetu:key-dropped', () => {
+  window.postMessage({ hetu: 'key-dropped' }, location.origin)
+})
+// The page's word to main of the frame it let focus into, null for none, so main drops keys headed for any other frame.
+// Only the page's own message, never a frame's
+onOwnMessage<{ hetu?: unknown, url?: unknown }>(data => {
+  if (data?.hetu !== 'focus-let-in') return
+  ipcRenderer.send('hetu:focus-let-in', { url: typeof data.url === 'string' ? data.url : null })
 })
 ipcRenderer.on('hetu:drawer-end', (_event, named: { plugin?: unknown, incarnation?: unknown }) => {
   window.postMessage({ hetu: 'drawer-end', plugin: named.plugin, incarnation: named.incarnation }, location.origin)

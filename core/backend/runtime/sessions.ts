@@ -64,6 +64,10 @@ const WORKERS_CSP = [
   "frame-ancestors 'none'",
 ].join('; ')
 
+// A view frame's own policy beside the frame element's allow: its focus does nothing without the human's activation in
+// it and no frame it nests can be let do more. Chromium heeds it only with the Blink feature main turns on
+const FRAME_FOCUS_POLICY = 'focus-without-user-activation=()'
+
 // Whether a request may leave a role's session: only to hetu on the role's own hosts, with no user or port. Whether a
 // plugin's frames run is for their handler to answer
 export function allowed(role: Role, url: string): boolean {
@@ -84,7 +88,8 @@ export async function serve(role: Role, request: { url: string, method: string }
   if (ofFrames || at.hostname === 'images') {
     const found = (await (ofFrames ? frames : images)?.serve(request.url)) ?? null
     if (found === null) return answer(404)
-    const headers = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
+    const headers: Record<string, string> = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
+    if (ofFrames) headers['permissions-policy'] = FRAME_FOCUS_POLICY
     // The bytes main holds go out as they are, with no copy of a note's image beside the one read
     return new Response(request.method === 'HEAD' ? null : found.bytes as Uint8Array<ArrayBuffer>, { status: 200, headers })
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit, DRAG_PREFIX, dragTokenOf } from '../api/ui-limits.ts'
-import { FOCUS_GRACE_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
+import { createFrameElement, FOCUS_GRACE_MS, FOCUS_HOLD_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
 import type { CoreLink } from '../frontend/editor/link.ts'
 
 describe('a frame\'s loads', () => {
@@ -12,7 +12,7 @@ describe('a frame\'s loads', () => {
     expect(loads.loaded('v1')).toBe('navigated')
   })
 
-  it('reads a load of a frame it no longer holds as gone, and a frame started again afresh', () => {
+  it('reads a load of a frame it no longer holds as gone and a frame started again afresh', () => {
     const loads = new FrameLoads()
     expect(loads.loaded('v1')).toBe('gone')
     loads.started('v1')
@@ -56,6 +56,96 @@ describe('focus going into a frame', () => {
     expect(guard.entered('v1')).toBe(true)
     guard.left()
     expect(guard.entered('v1')).toBe(false)
+  })
+
+  it('lets a frame in when the press that put focus there reaches the page after the move, within the hold', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = FOCUS_HOLD_MS - 1
+    guard.allow('v1')
+    expect(guard.judge('v1')).toBe('in')
+    expect(guard.letIn()).toBe('v1')
+    expect(guard.judge('v1')).toBe('in')
+  })
+
+  it('takes a move with no press behind it as the frame\'s own once the hold ends and holds it no second time', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = FOCUS_HOLD_MS - 1
+    expect(guard.judge('v1')).toBe('wait')
+    now = FOCUS_HOLD_MS
+    expect(guard.judge('v1')).toBe('taken')
+    expect(guard.letIn()).toBe(null)
+    expect(guard.judge('v1')).toBe('taken')
+    // A press arriving after the hold is a press of its own, which lets the frame in
+    guard.allow('v1')
+    expect(guard.judge('v1')).toBe('in')
+    guard.left()
+    expect(guard.judge('v2')).toBe('wait')
+  })
+
+  it('keeps the hold\'s start as focus moves from one frame on hold to another, so frames taking turns are taken once it ends', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = 45
+    expect(guard.judge('v2')).toBe('wait')
+    now = FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('taken')
+    now = FOCUS_HOLD_MS + 45
+    expect(guard.judge('v1')).toBe('taken')
+  })
+
+  it('holds afresh once focus left every frame or a frame was let in', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = 45
+    guard.left()
+    expect(guard.judge('v2')).toBe('wait')
+    now = FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('wait')
+    guard.allow('v1')
+    expect(guard.judge('v1')).toBe('in')
+    now = 2 * FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('wait')
+    now = 3 * FOCUS_HOLD_MS - 1
+    expect(guard.judge('v2')).toBe('wait')
+    now = 3 * FOCUS_HOLD_MS
+    expect(guard.judge('v2')).toBe('taken')
+  })
+
+  it('keeps a press in another frame for that frame while a frame on hold is judged before focus reaches it', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    expect(guard.judge('v1')).toBe('wait')
+    now = 10
+    guard.allow('v3')
+    expect(guard.judge('v1')).toBe('wait')
+    expect(guard.entered('v1')).toBe(false)
+    now = 20
+    expect(guard.judge('v3')).toBe('in')
+  })
+
+  it('judges a frame taking focus again each time it was pulled back, holding it each time', () => {
+    let now = 0
+    const guard = new FocusGuard(() => now)
+    for (let round = 0; round < 3; round++) {
+      expect(guard.judge('v1')).toBe('wait')
+      now += FOCUS_HOLD_MS
+      expect(guard.judge('v1')).toBe('taken')
+      guard.left()
+      now += 10
+    }
+  })
+
+  it('takes a move at once with no hold when main dropped a key headed for it, which comes after any press main pushed', () => {
+    const guard = new FocusGuard(() => 0)
+    expect(guard.judge('v1', true)).toBe('taken')
+    guard.allow('v1')
+    expect(guard.judge('v1', true)).toBe('in')
   })
 
   it('takes a move into a frame with no press, or after a press elsewhere, as the frame\'s own', () => {
@@ -119,6 +209,28 @@ describe('focus going into a frame', () => {
   })
 })
 
+describe('a view frame\'s element', () => {
+  // A document making one element that writes down each attribute and its src in the order they are set
+  function made() {
+    const steps: string[] = []
+    const element = {
+      setAttribute: (name: string, value: string) => steps.push(`${name}=${value}`),
+      set src(url: string) { steps.push(`src=${url}`) },
+    } as unknown as HTMLIFrameElement
+    const page = { createElement: (tag: string) => (steps.push(`<${tag}>`), element) } as unknown as Document
+    return { page, steps }
+  }
+
+  it('is sandboxed to scripts with no referrer and denied focus with no activation before its src is set', () => {
+    const { page, steps } = made()
+    createFrameElement(page, 'hetu://kanban.views/t/board.html')
+    expect(steps).toEqual([
+      '<iframe>', 'sandbox=allow-scripts', 'referrerpolicy=no-referrer', "allow=focus-without-user-activation 'none'",
+      'src=hetu://kanban.views/t/board.html',
+    ])
+  })
+})
+
 describe('the theme the frames are offered', () => {
   // A link that answers each editor.theme with the next answer given, ok when none is left
   function linked(answers: boolean[]) {
@@ -167,6 +279,27 @@ describe('the frame focus is in', () => {
     guard.entered('v1')
     guard.left()
     expect(guard.holding('v1')).toBe(false)
+  })
+
+  it('names the frame it let in for main, none before it entered and none once a press lands elsewhere or focus left', () => {
+    const guard = new FocusGuard(() => 0)
+    expect(guard.letIn()).toBe(null)
+    guard.allow('v1')
+    expect(guard.letIn()).toBe(null)
+    guard.entered('v1')
+    expect(guard.letIn()).toBe('v1')
+    guard.allow('v1')
+    expect(guard.letIn()).toBe('v1')
+    guard.allow('v2')
+    expect(guard.letIn()).toBe(null)
+    guard.entered('v2')
+    expect(guard.letIn()).toBe('v2')
+    guard.entered('v1')
+    expect(guard.letIn()).toBe(null)
+    guard.allow('v1')
+    guard.entered('v1')
+    guard.left()
+    expect(guard.letIn()).toBe(null)
   })
 })
 
@@ -219,7 +352,7 @@ describe("an open from a frame counted as the human's", () => {
     expect(credit.use('kanban')).toBe(false)
   })
 
-  it('takes no open of a plugin once a frame of its went, as on a stop or restart, and leaves another plugin\'s', () => {
+  it('takes no open of a plugin once a frame of its went, as on a stop or restart, but leaves another plugin\'s', () => {
     const credit = new OpenCredit(() => 0)
     credit.pressed('kanban')
     credit.forget('kanban')

@@ -24,10 +24,10 @@ import { ViewFiles } from './runtime/views.ts'
 import { DragTokens } from './runtime/drag-tokens.ts'
 import { ViewImages } from './runtime/images.ts'
 import { bytesReader } from './providers/luoshu/bytes.ts'
-import { WindowWay, type WindowContents } from './runtime/window-way.ts'
+import { checkSender, type SenderFrame, WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { keepsOpen, pickFolder, pickPlugins, TrustedWindow } from './runtime/trusted.ts'
 import { InstallStagings } from './plugins-manager/stagings.ts'
-import { appMenu, editorKeyOfInput, frameKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
+import { appMenu, guardedKeyOf, guardContents, openEditor, openTrusted, childFrameOf, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import type { Updater } from './updater/header.ts'
 import { createUpdater } from './updater/updater.ts'
@@ -352,7 +352,15 @@ async function start(): Promise<void> {
       const contents = window.webContents
       new WindowWay(contents as unknown as WindowContents, 'editor', wired.router)
       // A frame's token ends with the page that framed it
+      // The frame the page let focus into last, by a press in it or the core's own move, as the page told it. null for
+      // none, so a key headed for any frame before the page's word is dropped
+      let letIn: string | null = null
+      contents.ipc.on('hetu:focus-let-in', (event, told: { url?: unknown } | null) => {
+        if (!checkSender(event.senderFrame as SenderFrame | null, contents.mainFrame, 'editor')) return
+        letIn = typeof told?.url === 'string' ? told.url : null
+      })
       const unloaded = () => {
+        letIn = null
         drawers.unloaded(contents)
         views.unloaded()
         viewKeys.clear()
@@ -363,16 +371,15 @@ async function start(): Promise<void> {
       contents.on('render-process-gone', unloaded)
       contents.on('destroyed', unloaded)
       contents.on('dom-ready', () => drawers.loaded(contents))
-      // The core keys reach the page whatever has focus, a frame included, and so do the keys a plugin's views bound
-      // while focus is in one of its frames. Enter going on to a plugin's frame is pushed as a press there
+      // The core keys reach the page whatever has focus, a frame included. So do the keys a plugin's views bound
+      // while focus is in one of its frames. Enter going on to a plugin's frame is pushed as a press there. A key headed
+      // for a frame the page didn't let focus into stops here, before the frame hears it and the page takes focus back
       contents.on('before-input-event', (event, input) => {
-        const focused = contents.focusedFrame?.url ?? null
-        const took = editorKeyOfInput(input, focused, viewKeys, process.platform === 'darwin')
-        const url = took === null ? frameKeyOfInput(input, focused) : null
-        if (url !== null && !contents.isDestroyed()) contents.send('hetu:press', { key: true, url })
-        if (took === null) return
-        event.preventDefault()
-        if (took.channel !== null && !contents.isDestroyed()) contents.send(took.channel, took.sent)
+        const focused = contents.focusedFrame
+        const focus = { focused: focused?.url ?? null, frame: childFrameOf(focused) }
+        const { prevented, sent } = guardedKeyOf(input, focus, letIn, viewKeys, process.platform === 'darwin')
+        if (prevented) event.preventDefault()
+        if (sent !== null && !contents.isDestroyed()) contents.send(sent.channel, sent.sent)
       })
       // Each press and release to the page at once, a frame's included, which the page alone never hears. A press in a
       // frame comes with the frame's own x and y, so the point on the page is taken from the screen

@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import { onOwnMessage } from '../lib/own-messages.ts'
 
 // The only way between the worker host page and main. A port can't cross the context bridge, so main's starts reach the
 // page by window.postMessage, Electron's own pattern for ports with context isolation. What the page sends back is
@@ -9,9 +10,7 @@ ipcRenderer.on('hetu:limits', (_event, limits: object) => window.postMessage({ .
 // A port to the editor page's drawer for one worker
 ipcRenderer.on('hetu:drawer', (event, named: object) => window.postMessage({ ...named, hetu: 'drawer' }, location.origin, event.ports))
 
-window.addEventListener('message', event => {
-  if (event.source !== window || event.origin !== location.origin) return
-  const data = event.data as Record<string, unknown> | null
+onOwnMessage(data => {
   if (data?.hetu !== 'to-main') return
   ipcRenderer.send('hetu:page', { kind: data.kind, id: data.id, incarnation: data.incarnation, count: data.count, reason: data.reason })
 })

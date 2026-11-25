@@ -628,30 +628,6 @@
     },
     {
       "files": [
-        "core/frontend/editor/page.ts",
-        "core/frontend/workers/page.ts"
-      ],
-      "hash": "2bd770ef0f36c627",
-      "at": [
-        "core/frontend/editor/page.ts:677-683",
-        "core/frontend/workers/page.ts:19-25"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/frontend/editor/page.ts",
-        "core/frontend/workers/preload.ts"
-      ],
-      "hash": "79f7f7ba160279fe",
-      "at": [
-        "core/frontend/editor/page.ts:741-747",
-        "core/frontend/workers/preload.ts:10-14"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
         "core/frontend/editor/ui-port.ts",
         "core/frontend/editor/ui-port.ts"
       ],

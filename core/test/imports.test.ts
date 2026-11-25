@@ -40,6 +40,7 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'sdk', under: 'core/sdk/' },
   { part: 'tooling', under: 'core/build/' },
   { part: 'tooling', under: 'core/test/' },
+  { part: 'page-lib', under: 'core/frontend/lib/' },
   { part: 'page:editor', under: 'core/frontend/editor/' },
   { part: 'page:trusted', under: 'core/frontend/trusted/' },
   { part: 'page:workers', under: 'core/frontend/workers/' },
@@ -67,8 +68,8 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'tooling', under: 'scripts/' },
 ]
 
-// What each part may import besides itself. The contract imports nothing but zod. lib, the SDK and the pages
-// only the contract, the backend's lib the contract and lib. The router the contract, the libs and the doors of flood
+// What each part may import besides itself. The contract imports nothing but zod. lib, the SDK and the pages' lib
+// only the contract, the pages the contract and the pages' lib, the backend's lib the contract and lib. The router the contract, the libs and the doors of flood
 // control and recording, boot only the contract and the libs.
 // The plugins manager the router, boot, the runtime, the core modules, the heartbeat, recording and the security view,
 // each through its door. The runtime the
@@ -80,9 +81,10 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   contract: [],
   lib: ['contract'],
   sdk: ['contract'],
-  'page:editor': ['contract'],
-  'page:trusted': ['contract'],
-  'page:workers': ['contract'],
+  'page-lib': ['contract'],
+  'page:editor': ['contract', 'page-lib'],
+  'page:trusted': ['contract', 'page-lib'],
+  'page:workers': ['contract', 'page-lib'],
   'backend-lib': ['contract', 'lib'],
   router: ['contract', 'lib', 'backend-lib', 'flood-control', 'recording'],
   boot: ['contract', 'lib', 'backend-lib'],

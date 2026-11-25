@@ -35,6 +35,15 @@ export function frameOwner(hostname: string): string | null {
   return pluginId.safeParse(plugin).success && viewsHost(plugin) === hostname ? plugin : null
 }
 
+// The plugin's host and the single-use ticket main served a frame under, which the frame can't change by moving within its
+// own page by hash or history. null for any URL not served on a ticket. Read from the text as the browser gives a frame's
+// URL, so a host with a port, user or capitals names no plugin
+export function ticketUrlOf(url: string | null): string | null {
+  const at = url === null ? null : /^hetu:\/\/([^/?#]+)\/([0-9a-f]{32})(?:[/?#]|$)/.exec(url)
+  if (at === null || frameOwner(at[1]!) === null) return null
+  return `hetu://${at[1]!}/${at[2]!}`
+}
+
 // The name a plugin gives one of the plugin's own actions, topics or frames
 export const localName = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(new RegExp(`^${name}$`))
 

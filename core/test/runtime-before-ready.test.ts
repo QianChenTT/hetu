@@ -105,13 +105,14 @@ describe('before ready', () => {
     expect(calls).not.toContain('exit 1')
   })
 
-  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found, turns WebRTC\'s mDNS off and registers hetu', async () => {
+  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found, turns WebRTC\'s mDNS off, blocks a frame\'s focus with no activation and registers hetu', async () => {
     const dataDir = await temp()
     const { app, protocol, calls, seen } = fakes()
     beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron'] })
     expect(calls).toEqual([
       'setPath userData', 'requestSingleInstanceLock', 'enableSandbox', 'appendSwitch host-resolver-rules MAP * ~NOTFOUND',
-      'appendSwitch disable-features WebRtcHideLocalIpsWithMdns', 'registerSchemesAsPrivileged',
+      'appendSwitch disable-features WebRtcHideLocalIpsWithMdns', 'appendSwitch enable-blink-features BlockingFocusWithoutUserActivation',
+      'registerSchemesAsPrivileged',
     ])
     expect(seen.userData).toBe(path.join(dataDir, 'electron'))
     expect(seen.userDataExisted).toBe(true)
@@ -134,6 +135,14 @@ describe('before ready', () => {
     const { app, protocol, calls } = fakes({ values: { 'disable-features': 'SomeFeature,OtherFeature' } })
     beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron', '--disable-features=SomeFeature,OtherFeature'] })
     expect(calls).toContain('appendSwitch disable-features SomeFeature,OtherFeature,WebRtcHideLocalIpsWithMdns')
+  })
+
+  // Chromium reads only the last --enable-blink-features, so the one appended carries those already there
+  it('keeps the Blink features a run from the source was started with on beside the focus block', async () => {
+    const dataDir = await temp()
+    const { app, protocol, calls } = fakes({ values: { 'enable-blink-features': 'SomeFeature,OtherFeature' } })
+    beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron', '--enable-blink-features=SomeFeature,OtherFeature'] })
+    expect(calls).toContain('appendSwitch enable-blink-features SomeFeature,OtherFeature,BlockingFocusWithoutUserActivation')
   })
 
   it('quits a second instance on the same data folder before it turns anything on', async () => {

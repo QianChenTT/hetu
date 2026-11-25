@@ -1,7 +1,7 @@
 import type { BrowserWindow, Session, WebContents, WebPreferences } from 'electron'
 import { type CoreKey, coreKeyOf, keyName } from '../../api/keys.ts'
 import { SCHEME } from './before-ready.ts'
-import { frameOwner } from '../../api/ids.ts'
+import { frameOwner, ticketUrlOf } from '../../api/ids.ts'
 
 export const EDITOR_URL = `${SCHEME}://editor/`
 
@@ -142,5 +142,43 @@ export function frameKeyOfInput(input: EditorInput, focused: string | null): str
   if (input.key !== 'Enter' || focused === null || !URL.canParse(focused)) return null
   const at = new URL(focused)
   return at.protocol === `${SCHEME}:` && frameOwner(at.hostname) !== null ? focused : null
+}
+
+// A frame as main reads it from the focused frame up, Electron's WebFrameMain
+type FrameChain = { readonly url: string, readonly parent: FrameChain | null }
+
+// The URL of the editor page's own frame that focus is in or inside of, null with focus in the page itself or nowhere
+export function childFrameOf(focused: FrameChain | null): string | null {
+  if (focused === null || focused.parent === null) return null
+  let frame = focused
+  while (frame.parent !== null && frame.parent.parent !== null) frame = frame.parent
+  return frame.url
+}
+
+export type SentToPage = Exclude<EditorKey, { channel: null }> | { channel: 'hetu:press', sent: { key: true, url: string } } | { channel: 'hetu:key-dropped', sent: null }
+
+// What main does with a key of the editor window's input: prevented keeps it from the page and every frame, sent goes
+// to the page. focus.focused is the URL of the frame holding focus and focus.frame the page's own frame it is in or
+// inside of, null with focus in the page. letIn is the frame the page let focus into, by a press in it or the core's
+// own move. Frames are matched on their ticket, which a frame moving within its own page keeps. A key headed for any
+// other of the page's frames stops here, so a frame that took focus itself hears none of it and the page takes focus
+// back from it at once. An IME composing in the frame starts with such a key, Process, which main sees and the
+// composition it starts never does, so it follows focus to the note. Only a core key still goes on to the page
+export function guardedKeyOf(
+  input: EditorInput,
+  focus: { focused: string | null, frame: string | null },
+  letIn: string | null,
+  bound: ReadonlyMap<string, ReadonlySet<string>>,
+  mac: boolean,
+): { prevented: boolean, sent: SentToPage | null } {
+  const took = editorKeyOfInput(input, focus.focused, bound, mac)
+  if (took !== null && took.channel !== 'hetu:view-key') return { prevented: true, sent: took.channel === null ? null : took }
+  if (focus.frame !== null) {
+    const ticket = ticketUrlOf(focus.frame)
+    if (ticket === null || ticket !== ticketUrlOf(letIn)) return { prevented: true, sent: { channel: 'hetu:key-dropped', sent: null } }
+  }
+  if (took !== null) return { prevented: true, sent: took }
+  const url = frameKeyOfInput(input, focus.focused)
+  return { prevented: false, sent: url === null ? null : { channel: 'hetu:press', sent: { key: true, url } } }
 }
 
