@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME_ASKS_PER_SECOND, FRAME_MESSAGES_PER_SECOND, FrameInbox, frameAsks, MAX_FRAME_MESSAGE, OPEN_GRACE_MS, OpenCredit, DRAG_PREFIX, dragTokenOf } from '../api/ui-limits.ts'
-import { FOCUS_GRACE_MS, FOCUS_HOLD_MS, FocusGuard, frameElement, FrameLoads, Frames } from '../frontend/editor/frames.ts'
+import { createFrameElement, FOCUS_GRACE_MS, FOCUS_HOLD_MS, FocusGuard, FrameLoads, Frames } from '../frontend/editor/frames.ts'
 import type { CoreLink } from '../frontend/editor/link.ts'
 
 describe('a frame\'s loads', () => {
@@ -223,7 +223,7 @@ describe('a view frame\'s element', () => {
 
   it('is sandboxed to scripts with no referrer and denied focus with no activation before its src is set', () => {
     const { page, steps } = made()
-    frameElement(page, 'hetu://kanban.views/t/board.html')
+    createFrameElement(page, 'hetu://kanban.views/t/board.html')
     expect(steps).toEqual([
       '<iframe>', 'sandbox=allow-scripts', 'referrerpolicy=no-referrer', "allow=focus-without-user-activation 'none'",
       'src=hetu://kanban.views/t/board.html',
