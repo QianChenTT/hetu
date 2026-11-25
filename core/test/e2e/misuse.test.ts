@@ -315,16 +315,18 @@ window.addEventListener('message', function (event) {
   port = event.ports[0]
   port.onmessage = function (message) {
     var data = JSON.parse(message.data)
-    if (data && typeof data.steal === 'number') setTimeout(function () { rows[0].focus(); say({ stole: true }) }, data.steal)
-    if (data && typeof data.field === 'number') setTimeout(function () { field.focus(); say({ stole: true }) }, data.field)
-    if (data && data.sticky === true) window.addEventListener('blur', function () { setTimeout(function () { rows[0].focus(); say({ stole: true }) }, 0) })
+    if (data && typeof data.steal === 'number') setTimeout(function () { rows[0].focus(); say({ tried: true }) }, data.steal)
+    if (data && typeof data.field === 'number') setTimeout(function () { field.focus(); say({ tried: true }) }, data.field)
+    if (data && data.sticky === true) window.addEventListener('blur', function () { setTimeout(function () { rows[0].focus(); say({ tried: true }) }, 0) })
     if (data && data.turns) for (var turn = 0; turn < data.turns.times; turn++) {
-      setTimeout(function () { rows[0].focus(); say({ stole: true, at: Date.now() }) }, data.turns.start + data.turns.offset + turn * data.turns.every - Date.now())
+      setTimeout(function () { rows[0].focus(); say({ tried: true, at: Date.now() }) }, data.turns.start + data.turns.offset + turn * data.turns.every - Date.now())
     }
     if (data && typeof data.route === 'string') {
       if (data.route === 'focus') rows[0].focus()
       if (data.route === 'windowFocus') window.focus()
       if (data.route === 'select') field.select()
+      if (data.route === 'hash') location.hash = '#field'
+      if (data.route === 'tabindex') document.getElementById('tab').focus()
       if (data.route === 'showModal') document.getElementById('modal').showModal()
       say({ tried: data.route })
     }
@@ -337,18 +339,19 @@ window.addEventListener('message', function (event) {
 })
 `
 const row = (name: string) => `<button style="display:block;width:200px;height:30px;margin:0">${name}</button>`
-const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<input id="field" style="display:block;width:200px;height:30px;margin:0"><dialog id="modal">Modal</dialog><script src="board.js"></script></body></html>`
+const framePage = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${['row-1', 'row-2', 'row-3'].map(row).join('')}<input id="field" style="display:block;width:200px;height:30px;margin:0"><div id="tab" tabindex="0">Tab</div><dialog id="modal">Modal</dialog><script src="board.js"></script></body></html>`
 
-type Said = { hello?: true, opened?: string, key?: string, stole?: true, at?: number, focused?: true, moved?: string, refused?: string, composed?: string, text?: string | null, tried?: string }
+type Said = { hello?: true, opened?: string, key?: string, at?: number, focused?: true, moved?: string, refused?: string, composed?: string, text?: string | null, tried?: true | string }
 type Press = { down: boolean, x: number, y: number }
 
 describe('a view frame', () => {
   // Each plugin of ids with a frame view, its frame loaded and laid out. With two frames and the note list one more
   // view than the sides show, the one the sides left out goes under the note
-  async function framed(ids = ['kanban']) {
+  async function framed(ids = ['kanban'], list = false) {
+    const views = { board: { title: 'Board', kind: 'view', frame: 'board' }, ...list ? { list: { title: 'List', kind: 'view', frame: 'board' } } : {} }
     const plugin: Fixture = {
       granted: viewer,
-      manifest: { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views: { board: { title: 'Board', kind: 'view', frame: 'board' } } },
+      manifest: { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views },
       files: { 'board.html': framePage, 'board.js': frameScript },
     }
     const made = await inColumns({ notes: { 'a.md': '' }, plugins: Object.fromEntries(ids.map(id => [id, plugin])) })
@@ -361,7 +364,7 @@ describe('a view frame', () => {
     const said = async (at = 0) => (await heard(workers[at]!)).filter(event => event.topic === 'view.message').map(event => event.data as Said)
     for (let at = 0; at < ids.length; at++) {
       await until(async () => (await said(at)).length >= 1)
-      await until(async () => ((await frameOf(made.editor, ids[at]!).boundingBox())?.width ?? 0) > 0)
+      await until(async () => ((await frameOf(made.editor, ids[at]!).first().boundingBox())?.width ?? 0) > 0)
     }
     return { ...made, workers, said }
   }
@@ -398,8 +401,16 @@ describe('a view frame', () => {
     }
   })
 
-  it('takes focus on a press in it, then works its own rows with arrow keys and Enter', async () => {
-    const { editor, said } = await framed()
+  it('takes focus on a press in it, then works its own rows with arrow keys and Enter, its own focus without activation denied', async () => {
+    const { app, editor, said } = await framed()
+    // Denied by the frame element and by the policy its files are served with
+    expect(await frameOf(editor, 'kanban').getAttribute('allow')).toBe("focus-without-user-activation 'none'")
+    const script = (await frameOf(editor, 'kanban').getAttribute('src'))!.replace(/[^/]*$/, 'board.js')
+    const policy = await app.evaluate(async ({ webContents }, url) => {
+      const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
+      return (await contents.session.fetch(url)).headers.get('permissions-policy')
+    }, script)
+    expect(policy).toBe('focus-without-user-activation=()')
     await open(editor, 'a.md')
     const at = await inRow(editor, 'kanban')
     await editor.mouse.click(at.x, at.y)
@@ -460,7 +471,7 @@ describe('a view frame', () => {
   // A press in the first row of the nth frame of plugin id, the at-th of the test's plugins, waited for until the frame
   // heard it. Chromium then lets that frame take focus on its own for the 5 s the press's activation lasts, wherever the
   // human pressed next, which only the guard stands against
-  const pressIn = async (editor: Page, said: (at?: number) => Promise<Said[]>, id = 'kanban', at = 0, nth = 0) => {
+  const pressInFrame = async (editor: Page, said: (at?: number) => Promise<Said[]>, id = 'kanban', at = 0, nth = 0) => {
     const box = (await frameOf(editor, id).nth(nth).boundingBox())!
     const before = (await said(at)).filter(data => data.opened !== undefined).length
     await editor.mouse.click(box.x + 20, box.y + 12)
@@ -468,7 +479,7 @@ describe('a view frame', () => {
   }
 
   // With no press in it the frame's own focus does nothing, so there is nothing to pull back or record
-  it('leaves focus in the note when it calls focus(), window.focus(), select() or showModal() on its own with no press', async () => {
+  it('leaves focus in the note when it calls focus(), window.focus(), select(), showModal(), jumps to a hash or focuses an element by tabindex on its own with no press', async () => {
     const { editor, workers, said, dataDir } = await framed()
     await open(editor, 'a.md')
     await shown(editor).click()
@@ -480,7 +491,7 @@ describe('a view frame', () => {
       })
     })
     // A modal dialog makes the rest of the frame's page inert, so it goes last
-    for (const route of ['focus', 'windowFocus', 'select', 'showModal']) {
+    for (const route of ['focus', 'windowFocus', 'select', 'hash', 'tabindex', 'showModal']) {
       await tell(workers[0]!, { route })
       await until(async () => (await said()).some(data => data.tried === route))
       await tick(200)
@@ -500,7 +511,7 @@ describe('a view frame', () => {
     await holdPage(editor, from, 600)
     const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
-    expect((await said()).some(data => data.stole === true)).toBe(true)
+    expect((await said()).some(data => data.tried === true)).toBe(true)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped).toEqual([])
     await until(async () => (await shown(editor).innerText()) === text)
@@ -511,13 +522,13 @@ describe('a view frame', () => {
   it.each(typingPaces)('gets none of the typing at a key each $gap ms when it focuses itself after the human pressed in it and then back in the note, which the core records', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said, dataDir } = await framed()
     await open(editor, 'a.md')
-    await pressIn(editor, said)
+    await pressInFrame(editor, said)
     await shown(editor).click()
     await tell(workers[0]!, { steal })
     await holdPage(editor, from, 600)
     const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
-    expect((await said()).some(data => data.stole === true)).toBe(true)
+    expect((await said()).some(data => data.tried === true)).toBe(true)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
     await until(async () => (await shown(editor).innerText()) === minusDropped(text, dropped))
@@ -535,7 +546,7 @@ describe('a view frame', () => {
     await editor.mouse.click(at.x, at.y)
     await until(async () => (await said()).some(data => data.opened === 'row-1'))
     await shown(editor).click()
-    await until(async () => (await said()).some(data => data.stole === true))
+    await until(async () => (await said()).some(data => data.tried === true))
     await tick(300)
     await holdPage(editor, 0, 600)
     const dropped = await typeThroughMain(app, text, gap)
@@ -544,17 +555,17 @@ describe('a view frame', () => {
     expect(dropped.length).toBeGreaterThan(0)
   })
 
-  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus from another frame the human pressed in after it, which the core records for its plugin', async ({ gap, text, steal, from }) => {
+  it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus from another frame the human pressed in later, which the core records for its plugin', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said, dataDir } = await framed(['kanban', 'board'])
     await open(editor, 'a.md')
-    await pressIn(editor, said, 'board', 1)
-    await pressIn(editor, said, 'kanban', 0)
+    await pressInFrame(editor, said, 'board', 1)
+    await pressInFrame(editor, said, 'kanban', 0)
     await tick(300)
     await tell(workers[1]!, { steal })
     await holdPage(editor, from, 600)
     const dropped = await typeThroughMain(app, text, gap)
     await tick(300)
-    expect((await said(1)).some(data => data.stole === true)).toBe(true)
+    expect((await said(1)).some(data => data.tried === true)).toBe(true)
     expect((await said(1)).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
     await until(() => focusIsInNote(editor))
@@ -606,18 +617,18 @@ describe('a view frame', () => {
 
   // The page hears nothing when focus moves from one frame to another, so only main stands between the frame and an
   // IME's text until the page looks again
-  it('gets none of an IME composition started by a key main drops when it takes focus from another frame the human pressed in after it, which commits in the note', async () => {
+  it('gets none of an IME composition started by a key main drops when it takes focus from another frame the human pressed in later, which commits in the note', async () => {
     const { app, editor, workers, said } = await framed(['kanban', 'board'])
     await open(editor, 'a.md')
-    await pressIn(editor, said, 'board', 1)
-    await pressIn(editor, said, 'kanban', 0)
+    await pressInFrame(editor, said, 'board', 1)
+    await pressInFrame(editor, said, 'kanban', 0)
     await tick(300)
     await countPullBacks(editor)
     await tell(workers[1]!, { field: 0 })
     expect(await composeThroughMain(app, 'board.views')).toEqual({ dropped: true, left: true })
     await until(async () => (await shown(editor).innerText()) === '你好')
     await tick(300)
-    expect((await said(1)).some(data => data.stole === true)).toBe(true)
+    expect((await said(1)).some(data => data.tried === true)).toBe(true)
     expect((await said(1)).filter(data => data.composed !== undefined || data.key !== undefined)).toEqual([])
     expect(await editor.evaluate('window.pulled')).toBeGreaterThan(0)
     expect(await focusIsInNote(editor)).toBe(true)
@@ -735,10 +746,10 @@ describe('a view frame', () => {
   it('is pulled back with no key typed once the hold for a late press ends after the human pressed in it and then in the note, which the core records', async () => {
     const { editor, workers, said, dataDir } = await framed()
     await open(editor, 'a.md')
-    await pressIn(editor, said)
+    await pressInFrame(editor, said)
     await shown(editor).click()
     await tell(workers[0]!, { field: 0 })
-    await until(async () => (await said()).some(data => data.stole === true))
+    await until(async () => (await said()).some(data => data.tried === true))
     await until(() => focusIsInNote(editor), 2000)
     await until(() => logged(dataDir, 'frame.focus-taken', { plugin: 'kanban' }))
   })
@@ -746,13 +757,19 @@ describe('a view frame', () => {
   // The page hears nothing when focus moves from one frame to another, so a hold started afresh on each move would
   // see the other frame each time it ends and never end
   it('is pulled back once the hold ends when two frames of its plugin the human pressed in take focus from each other in turns, which the core records', async () => {
-    const { editor, workers, said, dataDir } = await framed()
-    await workers[0]!.evaluate(() => (globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }).ctx.ui.views.open('board'))
+    const { editor, workers, said, dataDir } = await framed(['kanban'], true)
+    // A second view on the same frame page, since the layout moves the instances of one view together as tabs, one
+    // shown at a time. Put under the note when the sides show it as a tab beside the first
+    const listTitle = editor.locator('#editors .hetu-title', { hasText: 'kanban · List' })
+    if (await listTitle.count() === 0) await workers[0]!.evaluate(() => (globalThis as unknown as { ctx: { ui: { views: { open(view: string): Promise<string> } } } }).ctx.ui.views.open('list'))
+    await until(async () => (await listTitle.count()) === 1)
+    await tick(500)
+    if ((await frameOf(editor, 'kanban').count()) < 2) await toBottom(editor, 'kanban · List')
     await until(async () => (await said()).filter(data => data.hello === true).length === 2)
     await until(async () => ((await frameOf(editor, 'kanban').nth(1).boundingBox())?.width ?? 0) > 0)
     await open(editor, 'a.md')
-    await pressIn(editor, said, 'kanban', 0, 0)
-    await pressIn(editor, said, 'kanban', 0, 1)
+    await pressInFrame(editor, said, 'kanban', 0, 0)
+    await pressInFrame(editor, said, 'kanban', 0, 1)
     await shown(editor).click()
     await tick(300)
     await editor.evaluate(() => {
@@ -795,13 +812,13 @@ describe('a view frame', () => {
 
   it.each(typingPaces)('gets none of the typing at a key each $gap ms when it takes focus with no note shown after the human pressed in it and then on the empty stage, recorded once', async ({ gap, text, steal, from }) => {
     const { app, editor, workers, said, dataDir } = await framed()
-    await pressIn(editor, said)
+    await pressInFrame(editor, said)
     await editor.locator('#empty').click()
     await tell(workers[0]!, { steal })
     await holdPage(editor, from, 600)
     const dropped = await typeThroughMain(app, text, gap)
     await tick(1500)
-    expect((await said()).some(data => data.stole === true)).toBe(true)
+    expect((await said()).some(data => data.tried === true)).toBe(true)
     expect((await said()).filter(data => data.key !== undefined)).toEqual([])
     expect(dropped.length).toBeGreaterThan(0)
     expect((await records(dataDir)).filter(record => record.event === 'frame.focus-taken').map(record => record.count)).toEqual([1])
