@@ -175,6 +175,17 @@ describe('moving', () => {
     expect(made.heard).toEqual([['changed', 'a.md'], ['changed', 'old/2026/a.md']])
   })
 
+  it('names the end it left on the new end\'s change, published after the end it left', async () => {
+    const told: unknown[][] = []
+    const made = opened({ publish: (...said) => told.push(said) })
+    expect(await ask(made, 'luoshu.move', { from: 'a.md', to: 'journal/a.md' })).toBeNull()
+    expect(await ask(made, 'luoshu.move', { from: 'journal/a.md', to: 'journal/A.md' })).toBeNull()
+    expect(told).toEqual([
+      ['changed', 'a.md'], ['changed', 'journal/a.md', { from: 'a.md' }],
+      ['changed', 'journal/a.md'], ['changed', 'journal/A.md', { from: 'journal/a.md' }],
+    ])
+  })
+
   it('never moves onto a note that exists, leaving both as they were', async () => {
     const made = opened()
     expect(await ask(made, 'luoshu.move', { from: 'a.md', to: 'journal/b.md' })).toEqual({ refused: { code: 'stale' } })
