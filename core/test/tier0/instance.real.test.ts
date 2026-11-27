@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
+import { ROUTES } from './input.ts'
 import { drivenApp, drivenOut, isSerial, pluginsZip, profiles, repo, start, until, watchFrontmost } from './instance.ts'
 import { readBuildStamp, treeState } from './provenance.ts'
 
@@ -54,7 +55,7 @@ describe('a tier 0 instance', () => {
     expect(record.build.commit).toBe(tree.commit)
     expect(record.build.dirty).toBe(tree.dirty)
     expect(record.os).toEqual({ platform: process.platform, release: os.release(), arch: process.arch })
-    expect(record.input).toEqual(['playwright'])
+    expect(record.input).toEqual([ROUTES.mouse])
     expect(record.harness).toEqual([])
     expect(record.focus).toBe('emulated')
     expect(record.quiet).toEqual({ activation: process.platform === 'darwin' ? 'prohibited' : 'not set off macOS', mouse: 'ignored' })
@@ -78,7 +79,7 @@ describe('a tier 0 instance', () => {
     const profileZip = path.join(instance.folder, 'profile.zip')
     const installed = await sha256(profileZip)
     const record = await instance.quit()
-    expect(record).toMatchObject({ profile: 'explorer', serial: false, exitCode: 0, input: ['playwright'] })
+    expect(record).toMatchObject({ profile: 'explorer', serial: false, exitCode: 0, input: [ROUTES.mouse] })
     expect(record.plugins.installed).toEqual({ route: 'install', zip: profileZip, sha256: installed })
     expect(installed).not.toBe(record.plugins.sha256)
     expect(record.plugins.folders).toEqual(['file-explorer'])
