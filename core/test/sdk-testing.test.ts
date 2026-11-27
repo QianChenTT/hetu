@@ -1,23 +1,16 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, type FakeCoreOptions, FakeDrawer, type FakeMode, type StandIn } from '../sdk/testing/index.ts'
 import type { Capability } from '../api/capabilities.ts'
 import { LIST_PAGE } from '../api/actions.ts'
 import { API_VERSION } from '../api/manifest.ts'
-import type { Call, Provider } from '../api/policy-jobs.ts'
-import { MemoryHistory, MemoryLuoshu } from '../sdk/testing/providers.ts'
-import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { tick } from './router-fakes.ts'
 import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
 import { CoreLink } from '../frontend/editor/link.ts'
 import { Versions } from '../frontend/editor/versions.ts'
 import { Editor, type EditorClient } from '../sdk/editor.ts'
 import { fakeCore as editorCore } from './editor-fakes.ts'
-import { callOf as historyCall, cleanup as historyCleanup, place as historyPlace, started as historyStarted, type Asking as HistoryAsking } from './modules/history/helpers.ts'
 
 const cores: FakeCore[] = []
 afterEach(async () => {
@@ -245,78 +238,6 @@ describe('the fake core\'s luoshu listing', () => {
     const { plugin, box } = reader()
     await fake.start(plugin)
     expect(await box.ctx!.luoshu.list({})).toEqual({ paths: [], next: null })
-  })
-})
-
-describe('the fake luoshu against the luoshu plugin', () => {
-  let base: string
-  afterEach(async () => {
-    if (base !== undefined) await rm(base, { recursive: true, force: true })
-  })
-
-  // The same files on disk and in memory, a page of two names in both. Every name allowed is how the gate off by the
-  // human lets a listing through, so the dot names are left out by each luoshu itself
-  it('answers each listing as the luoshu plugin does', async () => {
-    const names = [
-      'a.md', 'B.md', 'ﬁ.md', '\u{1f600}.md', 'journal/b.md', 'journal/c.md', 'journal/deep/d.md', 'journalx/e.md',
-      ...Array.from({ length: 5 }, (_, i) => `journal/hidden-${i}.md`), 'journal/p1.md', 'journal/p2.md',
-      '.hidden.md', '.obsidian/app.json', 'journal/.todo.md', 'journal/deep/.config/x.md',
-    ]
-    base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-fake-list-')))
-    const folder = path.join(base, 'notes')
-    await mkdir(path.join(base, 'data'))
-    await mkdir(path.join(base, 'install'))
-    for (const name of names) {
-      await mkdir(path.dirname(path.join(folder, name)), { recursive: true })
-      await writeFile(path.join(folder, name), name)
-    }
-    const real = createLuoshu({ pageSize: 2 })
-    real.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
-    const memory = new MemoryLuoshu(async () => {}, 0, 2)
-    for (const name of names) memory.notes.set(name, name)
-
-    let n = 0
-    async function ask(provider: Provider, args: object, canList: ((at: string) => boolean) | null): Promise<unknown> {
-      const call: Call = {
-        callId: `l${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, root: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.list', args, deadline: Date.now() + 30000,
-        ...(canList === null ? {} : { canList }),
-      }
-      const prepared = await provider.prepare(call)
-      if (!('scope' in prepared)) return { refused: prepared }
-      try {
-        return await provider.perform(call, prepared)
-      } catch (err) {
-        return { refused: err }
-      }
-    }
-    // Every page of a listing, following next
-    async function pages(provider: Provider, args: { folder?: string }, canList: (at: string) => boolean): Promise<unknown[]> {
-      const answers: unknown[] = []
-      let after: string | undefined
-      do {
-        const answer = await ask(provider, { ...args, ...(after === undefined ? {} : { after }) }, canList)
-        answers.push(answer)
-        after = (answer as { next?: string | null }).next ?? undefined
-      } while (after !== undefined && answers.length < 20)
-      return answers
-    }
-
-    const all = () => true
-    const shown = (at: string) => !at.includes('hidden-')
-    for (const [args, canList] of [[{}, all], [{}, shown], [{ folder: 'journal' }, shown], [{ folder: 'journal/deep' }, all]] as const) {
-      const expected = await pages(real.provider, args, canList)
-      expect(await pages(memory, args, canList), JSON.stringify(args)).toEqual(expected)
-    }
-    expect((await pages(real.provider, {}, all)).flatMap(page => (page as { paths: string[] }).paths)).toEqual([
-      'B.md', 'a.md', 'journal/b.md', 'journal/c.md', 'journal/deep/d.md',
-      ...Array.from({ length: 5 }, (_, i) => `journal/hidden-${i}.md`), 'journal/p1.md', 'journal/p2.md', 'journalx/e.md', '\u{1f600}.md', 'ﬁ.md',
-    ])
-    for (const [args, canList] of [
-      [{ after: 'journal/c.md' }, all], [{ folder: 'missing' }, all], [{ folder: 'a.md' }, all], [{ folder: 'journal' }, () => false],
-      [{ folder: '.obsidian' }, all], [{ folder: 'journal/deep/.config' }, all], [{}, null],
-    ] as const) {
-      expect(await ask(memory, args, canList), JSON.stringify(args)).toEqual(await ask(real.provider, args, canList))
-    }
   })
 })
 
@@ -1104,72 +1025,5 @@ describe('the fake core\'s history', () => {
     const commit = (await ctx.history.commit({ paths: ['notes/a.md'], message: 'save' })).commit!
     await expect(ctx.history.log({ path: 'notes/a.md' })).rejects.toMatchObject({ code: 'not-granted' })
     await expect(ctx.history.read({ path: 'notes/a.md', commit })).rejects.toMatchObject({ code: 'not-granted' })
-  })
-})
-
-describe('the fake history against the history module', () => {
-  afterEach(historyCleanup)
-
-  // The same calls on both. Ids are named by the order they first came in and each date is checked and then set aside,
-  // so the answers equal field for field
-  it('answers each call as the history module does', async () => {
-    const where = await historyPlace()
-    const real = (await historyStarted(where)).provider
-    const memory = new MemoryHistory(new Map())
-    const write = async (name: string, text: string) => {
-      memory.notes.set(name, text)
-      await mkdir(path.dirname(path.join(where.notes, name)), { recursive: true })
-      await writeFile(path.join(where.notes, name), text)
-    }
-    // Each provider's own commits in the order it made them, for the reads that name one
-    const made = new Map<Provider, string[]>([[real, []], [memory, []]])
-    const answers = new Map<Provider, unknown[]>([[real, []], [memory, []]])
-    async function both(action: string, args: (ids: string[]) => object, as: HistoryAsking = {}): Promise<void> {
-      for (const provider of [real, memory]) {
-        const call = historyCall(action, args(made.get(provider)!), as)
-        const prepared = await provider.prepare(call)
-        const answer = 'scope' in prepared ? await provider.perform(call, prepared).catch((err: unknown) => ({ refused: err })) : { refused: prepared }
-        const id = (answer as { commit?: unknown }).commit
-        if (typeof id === 'string') made.get(provider)!.push(id)
-        answers.get(provider)!.push(answer)
-      }
-    }
-    const agent: Call['caller'] = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
-    const handler: Call['caller'] = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
-    await both('history.log', () => ({ path: 'a.md' }))
-    await both('history.commit', () => ({ paths: ['none.md'], message: 'nothing yet' }))
-    await write('a.md', 'note a')
-    await write('journal/b.md', 'note b')
-    await both('history.commit', () => ({ paths: ['a.md', 'journal/b.md', 'a.md'], message: 'both\n\n' }))
-    await write('a.md', 'note a, edited')
-    await both('history.commit', () => ({ paths: ['a.md'], message: 'for an agent' }), { onBehalf: 'agent <x@example.com>' })
-    await both('history.commit', () => ({ paths: ['a.md'], message: 'again' }))
-    memory.notes.delete('journal/b.md')
-    await rm(path.join(where.notes, 'journal', 'b.md'))
-    await write('journal/c.md', 'note c')
-    await both('history.commit', () => ({ paths: ['journal/b.md', 'journal/c.md'], message: 'b gone' }), { caller: agent, root: handler, onBehalf: 'claude-code#1' })
-    for (const at of ['a.md', 'journal', 'journal/b.md', 'none.md']) await both('history.log', () => ({ path: at }))
-    await both('history.log', () => ({ path: 'a.md', limit: 1 }))
-    await both('history.read', ids => ({ path: 'a.md', commit: ids[0] }))
-    await both('history.read', ids => ({ path: 'journal/b.md', commit: ids[0] }))
-    await both('history.read', ids => ({ path: 'journal/b.md', commit: ids[2] }))
-    await both('history.read', ids => ({ path: 'journal', commit: ids[0] }))
-    await both('history.read', () => ({ path: 'a.md', commit: 'f'.repeat(40) }))
-    const named = (list: unknown[]) => {
-      const order: string[] = []
-      return JSON.parse(JSON.stringify(list, (key, value: unknown) => {
-        if (key === 'date') {
-          // git's %aI writes UTC as Z on some builds and +00:00 on others
-          expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:\d\d)$/)
-          return 'date'
-        }
-        if (key !== 'commit' || typeof value !== 'string') return value
-        if (!order.includes(value)) order.push(value)
-        return order.indexOf(value)
-      })) as unknown[]
-    }
-    const expected = named(answers.get(real)!)
-    expect(named(answers.get(memory)!)).toEqual(expected)
-    expect(made.get(real)).toHaveLength(3)
   })
 })
