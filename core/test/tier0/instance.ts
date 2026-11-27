@@ -104,7 +104,7 @@ export type Instance = {
   editor(): Promise<Page>
   trusted(): Promise<Page>
   // A click through main's input route, which main heard and the target got, answering where main heard it
-  click(target: Locator): Promise<Clicked>
+  click(target: Locator, options?: { holdMs?: number }): Promise<Clicked>
   // Text typed and a chord pressed in a page's window through main's before-input-event
   keys(page: Page, text: string): Promise<void>
   press(page: Page, chord: string): Promise<void>
@@ -246,9 +246,9 @@ export async function start(context: TestContext, options: Options = {}): Promis
       return page
     },
     trusted: () => pageAt(app, 'hetu://trusted/'),
-    click: async target => {
+    click: async (target, options = {}) => {
       const url = target.page().url()
-      const clicked = await click(app, target)
+      const clicked = await click(app, target, 10_000, options.holdMs)
       input.add(ROUTES.mouse)
       presses.push({ url, intended: clicked.intended, heard: clicked.page })
       return clicked
