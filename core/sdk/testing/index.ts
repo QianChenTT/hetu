@@ -287,7 +287,7 @@ export class FakeCore {
     for (const [id, topics] of Object.entries(providers)) {
       if (!this.missing.has(id)) this.infos(id, { state: 'ready', place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [...topics] })
     }
-    this.memory = new MemoryLuoshu((path, from) => this.publish('luoshu.changed', path, from), options.latencyMs ?? 0)
+    this.memory = new MemoryLuoshu(async (path, from) => this.publish('luoshu.changed', path, from), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     this.history = new MemoryHistory(this.memory.notes, options.latencyMs ?? 0)
     // lock.changed goes out through the router as the core wires it, to a plugin that reads the note
@@ -614,7 +614,7 @@ export class FakeCore {
   }
 
   // Through the router as the core wires the luoshu module, a move's new end naming the end it left
-  private async publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string, from?: string): Promise<void> {
+  private publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string, from?: string): void {
     this.router.publishCore('luoshu', topic === 'luoshu.changed' ? 'changed' : 'outside', path, from === undefined ? undefined : { from })
   }
 }
