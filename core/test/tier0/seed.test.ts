@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { inflateSync } from 'node:zlib'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { seed, type SeedSummary } from './seed.ts'
 
-// The tree's hash on every platform. A change to the seed changes it on purpose, and the new value goes here
-const TREE_HASH = '45bbd36f25871597433df26fcef5193bba89583a5f818534fee430d4615d8fd2'
+// The tree's hash, pinned on macOS. A change to the seed changes it on purpose, and the new value goes here. It holds
+// across platforms only once CI runs this file on Windows and Linux too. On a mismatch the message lists every file
+const TREE_HASH = '6ba018150991071bc9f2453728509c6edb07007d8eb8c8778ef0bc4f9eb8d29b'
 
 let base: string
 let dir: string
@@ -27,12 +28,17 @@ async function walk(root: string) {
   return { files: new Map([...found].sort(([a], [b]) => (a < b ? -1 : 1))), folders: dirs.sort() }
 }
 
+const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
+
 function treeHash(tree: Map<string, Buffer>, dirs: string[]) {
   const hash = createHash('sha256')
   for (const folder of dirs) hash.update(`d ${folder}\n`)
   for (const [rel, bytes] of tree) hash.update(`f ${rel} ${bytes.length}\n`).update(bytes)
   return hash.digest('hex')
 }
+
+// Path, size and hash of each file, to diff against the same list from another platform
+const listing = (tree: Map<string, Buffer>) => [...tree].map(([rel, b]) => `${rel} ${b.length} ${sha(b)}`).join('\n')
 
 const text = (rel: string) => files.get(rel)!.toString('utf8')
 const notes = () => [...files.keys()].filter(rel => rel.endsWith('.md') && !rel.split('/').some(s => s.startsWith('.')))
@@ -66,24 +72,39 @@ describe('seed', () => {
     const second = await walk(again)
     expect([...second.files.keys()]).toEqual([...files.keys()])
     expect(treeHash(second.files, second.folders)).toBe(treeHash(files, folders))
-    expect(treeHash(files, folders)).toBe(TREE_HASH)
+    expect(treeHash(files, folders), listing(files)).toBe(TREE_HASH)
   })
 
-  it('takes a seed of its own for other links in the same tree', async () => {
+  it('takes a seed of its own that changes the topic notes alone', async () => {
     const other = path.join(base, 'other')
     const its = await seed(other, { seed: 8 })
     const tree = await walk(other)
     expect(its.notes).toBe(summary.notes)
     expect([...tree.files.keys()]).toEqual([...files.keys()])
-    expect(treeHash(tree.files, tree.folders)).not.toBe(treeHash(files, folders))
+    const changed = [...files].filter(([rel, bytes]) => !bytes.equals(tree.files.get(rel)!)).map(([rel]) => rel)
+    expect(changed.length).toBeGreaterThan(200)
+    expect(changed.filter(rel => !text(rel).startsWith('---\ntitle: '))).toEqual([])
   })
 
-  it('refuses a folder that holds anything', async () => {
-    const full = path.join(base, 'full')
-    await seed(full)
-    await expect(seed(full)).rejects.toThrow(/not empty/)
+  it('writes into a missing or empty folder and refuses anything else', async () => {
+    const empty = await mkdtemp(path.join(base, 'empty-'))
+    await expect(seed(empty)).resolves.toMatchObject({ notes: 257 })
+    await expect(seed(empty)).rejects.toThrow(/not empty/)
+    const dotted = path.join(base, 'dotted')
+    await mkdir(dotted)
+    await writeFile(path.join(dotted, '.DS_Store'), '')
+    await expect(seed(dotted)).rejects.toThrow(/not empty/)
+    expect(await readdir(dotted)).toEqual(['.DS_Store'])
     await writeFile(path.join(base, 'a file'), 'x')
-    await expect(seed(path.join(base, 'a file'))).rejects.toThrow()
+    await expect(seed(path.join(base, 'a file'))).rejects.toThrow(/is not a folder/)
+  })
+
+  it('lets one of two seeds started together on a folder write it', async () => {
+    const shared = path.join(base, 'shared')
+    const results = await Promise.allSettled([seed(shared), seed(shared)])
+    expect(results.map(r => r.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const tree = await walk(shared)
+    expect(treeHash(tree.files, tree.folders)).toBe(treeHash(files, folders))
   })
 
   it('nests notes 3 folders deep with an empty folder and an image-only one', () => {
@@ -125,7 +146,7 @@ describe('seed', () => {
   })
 
   it('writes PNGs that inflate to their pixels', () => {
-    const png = files.get(`${summary.special.imagesOnly}/diagram-1.png`)!
+    const png = files.get(under(summary.special.imagesOnly)[0])!
     expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     const length = png.readUInt32BE(33)
     expect(png.toString('latin1', 37, 41)).toBe('IDAT')
@@ -141,9 +162,11 @@ describe('seed', () => {
         const angled = dest.startsWith('<')
         if (angled) forms.add('angle')
         else if (dest.includes('%20')) forms.add('percent')
-        const target = angled ? dest.slice(1, -1) : decodeURIComponent(dest)
+        // decodeURI, as the images plugin reads a path
+        const target = angled ? dest.slice(1, -1) : decodeURI(dest)
         const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(rel), target))
         expect(files.has(resolved), `${rel} -> ${dest}`).toBe(true)
+        expect(resolved, `${rel} links itself`).not.toBe(rel)
         count++
         if (target.startsWith('../')) upward++
       }
@@ -153,17 +176,18 @@ describe('seed', () => {
     expect([...forms].sort()).toEqual(['angle', 'percent'])
   })
 
-  it('resolves every wikilink by name or path except the one left unresolved on purpose', () => {
+  // A fact of the seed, not a judgment of hetu's resolver: each target names a file exactly. What the real build does
+  // with the deliberate case is for tier 0's journeys, which read it from special
+  it('names a file exactly with every wikilink but the deliberate one', () => {
     const known = new Set<string>()
     for (const rel of files.keys()) {
-      const plain = rel.normalize('NFC')
-      known.add(plain).add(plain.replace(/\.md$/, '')).add(path.posix.basename(plain))
-      known.add(path.posix.basename(plain).replace(/\.md$/, ''))
+      const name = path.posix.basename(rel)
+      known.add(rel).add(rel.replace(/\.md$/, '')).add(name).add(name.replace(/\.md$/, ''))
     }
     const missing = new Set<string>()
     for (const rel of notes()) {
       for (const [, inner] of text(rel).matchAll(/\[\[([^\]]+)\]\]/g)) {
-        const target = inner.split('|')[0].split('#')[0].normalize('NFC')
+        const target = inner.split('|')[0].split('#')[0]
         if (!known.has(target)) missing.add(target)
       }
     }
