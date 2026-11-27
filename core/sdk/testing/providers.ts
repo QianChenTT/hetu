@@ -19,19 +19,19 @@ export function versionOf(text: string): string {
 // The luoshu in memory. read answers { text, version, path } or not-found. write refuses stale for a baseVersion that isn't
 // the note's or one given for a note that doesn't exist yet. remove refuses stale for a baseVersion that isn't the
 // note's, a missing one included. move never lands on a note that exists. list answers pages as the luoshu plugin
-// does. It tells changed of each path it wrote, removed or moved
+// does. It tells changed of each path it wrote, removed or moved, a move's new end naming the end it left after it
 export class MemoryLuoshu implements Provider {
   readonly notes = new Map<string, string>()
   // Codes the next calls answer with, one each, for a test that needs the luoshu to fail for a while
   readonly refusals: RefusalCode[] = []
-  private readonly changed: (path: string) => Promise<void>
+  private readonly changed: (path: string, from?: string) => Promise<void>
   private readonly latencyMs: number
   // The most names one listing answers, LIST_PAGE but in tests
   private readonly pageSize: number
   private inFlight = 0
   private peak = 0
 
-  constructor(changed: (path: string) => Promise<void>, latencyMs = 0, pageSize = LIST_PAGE) {
+  constructor(changed: (path: string, from?: string) => Promise<void>, latencyMs = 0, pageSize = LIST_PAGE) {
     this.changed = changed
     this.latencyMs = latencyMs
     this.pageSize = pageSize
@@ -94,7 +94,7 @@ export class MemoryLuoshu implements Provider {
       this.notes.set(to, current)
       this.notes.delete(path)
       await this.changed(path)
-      await this.changed(to)
+      await this.changed(to, path)
       return null
     }
     if (call.action !== 'luoshu.write') throw { code: 'not-found' }

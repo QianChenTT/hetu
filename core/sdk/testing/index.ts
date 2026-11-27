@@ -259,7 +259,6 @@ export class FakeCore {
   private readonly storage: MemoryStorage
   private readonly history: MemoryHistory
   private readonly lock: { provider: Provider, guard: Guard }
-  private readonly luoshuWay: Way
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
   private readonly drawer: FakeDrawer | null
@@ -288,7 +287,7 @@ export class FakeCore {
     for (const [id, topics] of Object.entries(providers)) {
       if (!this.missing.has(id)) this.infos(id, { state: 'ready', place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [...topics] })
     }
-    this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
+    this.memory = new MemoryLuoshu((path, from) => this.publish('luoshu.changed', path, from), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     this.history = new MemoryHistory(this.memory.notes, options.latencyMs ?? 0)
     // lock.changed goes out through the router as the core wires it, to a plugin that reads the note
@@ -338,7 +337,6 @@ export class FakeCore {
     this.router.serve('gate', gateActions.serve)
     this.router.onWayClosed((caller, reason) => this.pluginsManager.crashed(caller, reason))
     this.router.onHeard((caller, kind) => this.pluginsManager.heard(caller, kind))
-    this.luoshuWay = new Way(this.router, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
     this.luoshu = {
       write: async (path, text, options = {}) => {
         this.memory.notes.set(path, text)
@@ -615,8 +613,9 @@ export class FakeCore {
     if (info !== undefined) this.pluginsManager.infos.set(this.manifest.id, { ...info, state })
   }
 
-  private async publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string): Promise<void> {
-    await this.luoshuWay.ask('events.publish', { topic, path }, defaultLimits.callDeadlineMs)
+  // Through the router as the core wires the luoshu module, a move's new end naming the end it left
+  private async publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string, from?: string): Promise<void> {
+    this.router.publishCore('luoshu', topic === 'luoshu.changed' ? 'changed' : 'outside', path, from === undefined ? undefined : { from })
   }
 }
 
