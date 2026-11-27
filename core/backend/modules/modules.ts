@@ -10,7 +10,7 @@ import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
 import {
-  luoshuTopics, moduleRequires, type CoreModules as Holder, type CoreModulesOptions, type Handed, type ModuleChange, type ModuleReason,
+  luoshuTopics, moduleRequires, type LuoshuPublish, type CoreModules as Holder, type CoreModulesOptions, type Handed, type ModuleChange, type ModuleReason,
   type ModuleState, type StorageModule,
 } from './header.ts'
 
@@ -429,11 +429,11 @@ export class CoreModules implements Holder {
 
 // What the luoshu publishes through: only its two topics go out. A publish that throws never fails the write that
 // made it. The join makes the luoshu with it
-export function luoshuPublish(publish: (topic: string, path: string) => void): (topic: string, path: string) => void {
-  return (topic, path) => {
+export function luoshuPublish(publish: LuoshuPublish): LuoshuPublish {
+  return (topic, path, fields) => {
     if (!(luoshuTopics as readonly string[]).includes(topic)) return
     try {
-      publish(topic, path)
+      publish(topic, path, fields)
     } catch {
       // The note is already written, a publish that throws loses its event and never fails the write
     }

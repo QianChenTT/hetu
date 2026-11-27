@@ -4,8 +4,9 @@ import type { Request } from './client.ts'
 import { Refused } from './refused.ts'
 
 // A signal and maybe a path, never content. luoshu.changed and luoshu.outside go to a plugin the gate lets list the
-// path, another plugin's topic as that plugin published it
-export type PathEvent<T extends string = string> = { readonly topic: T, readonly path?: string }
+// path, another plugin's topic as that plugin published it. luoshu.changed at a move's new end names the end it left as
+// from, for a plugin the gate lets list that end too
+export type PathEvent<T extends string = string> = { readonly topic: T, readonly path?: string, readonly from?: string }
 // A note locked, its lock renewed with a new end, cleared or expired: whether it is locked now and when its lock ends in
 // milliseconds since the epoch, null once it isn't. Never who holds it. Only a plugin that reads the note hears it, and
 // an expiry only once the core noticed it, which may be late, so a plugin that must act at the end times it from until.
@@ -56,8 +57,11 @@ function groups(topics: readonly string[]): string[][] {
 
 // An event as its topic's handlers take it, null for a lock.changed that carries no lock state, which no core sends
 function shaped(topic: string, message: Record<string, unknown>): PathEvent | LockChangedEvent | null {
-  const { path, locked, until } = message
-  if (topic !== 'lock.changed') return typeof path === 'string' ? { topic, path } : { topic }
+  const { path, from, locked, until } = message
+  if (topic !== 'lock.changed') {
+    if (typeof path !== 'string') return { topic }
+    return typeof from === 'string' ? { topic, path, from } : { topic, path }
+  }
   if (typeof path !== 'string') return null
   if (locked === true && typeof until === 'number') return { topic, path, locked, until }
   return locked === false && until === null ? { topic, path, locked, until } : null
