@@ -5,5 +5,5 @@ import { connect } from '../../sdk/frame.ts'
 void connect().then(view => {
   const received: unknown[] = []
   view.onMessage(data => void received.push(data))
-  Object.assign(globalThis, { probe: { view, received } })
+  Object.assign(globalThis, { probeFrame: { view, received } })
 })
