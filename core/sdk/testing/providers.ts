@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { LIST_PAGE, type HistoryCommit, type ResultOf } from '../../api/actions.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE } from '../../api/exec.ts'
+import { localName } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { signatureOf, type Call, type Guard, type Prepared, type Provider, type ProviderRefusal } from '../../api/policy-jobs.ts'
 import { quotas, spaceOf } from '../../api/storage.ts'
@@ -137,7 +138,8 @@ function sizeOf(kind: Kind, space: string, key: string, value: unknown): number 
 
 // storage.* and cache.* in memory, as the storage plugin keeps them: a space per caller and kind named by spaceOf,
 // values through JSON, undefined refused and core/api's quotas held. get answers the value or null, set and delete
-// answer null
+// answer null. A verb it doesn't serve or a key outside core/api's grammar answers invalid, as the storage plugin
+// answers. It holds no files, so it never answers tampered and has no clear
 export class MemoryStorage implements Provider {
   private readonly spaces: Record<Kind, Map<string, Map<string, Held>>> = { storage: new Map(), cache: new Map() }
   private readonly latencyMs: number
@@ -153,9 +155,14 @@ export class MemoryStorage implements Provider {
   async perform(call: Call): Promise<unknown> {
     await after(this.latencyMs)
     const [kind, verb] = call.action.split('.') as [Kind, string]
-    const name = spaceOf(call.caller)!
+    const name = spaceOf(call.caller)
+    if (name === null) throw { code: 'not-granted' } satisfies ProviderRefusal
+    if ((kind !== 'storage' && kind !== 'cache') || !['get', 'set', 'delete'].includes(verb)) throw { code: 'invalid' } satisfies ProviderRefusal
+    const { key: given, value } = (call.args ?? {}) as { key?: unknown, value?: unknown }
+    const named = localName.safeParse(given)
+    if (!named.success) throw { code: 'invalid' } satisfies ProviderRefusal
+    const key = named.data
     const space = this.space(kind, name)
-    const { key, value } = call.args as { key: string, value?: unknown }
     if (verb === 'get') return space.has(key) ? JSON.parse(JSON.stringify(space.get(key)!.value)) as unknown : null
     if (verb === 'delete') {
       space.delete(key)
