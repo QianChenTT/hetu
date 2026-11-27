@@ -7,6 +7,7 @@ import { _electron as electron, type ElectronApplication, type Page } from 'play
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
+import { quiet } from '../drive.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 export const electronPath = createRequire(import.meta.url)('electron') as string
@@ -119,11 +120,14 @@ export function env(extra: Record<string, string>): Record<string, string> {
 }
 
 // The built app from the source, as `electron .` starts it, or the packed build HETU_E2E_APP names, on its own data folder, its windows quiet so they take no
-// focus from the person at the machine: hidden off every display unless HETU_QUIET_WINDOWS is exactly 1, which shows
-// them on another display for a person who wants to watch. extra holds more environment, an
+// focus from the person at the machine: hidden and never the active app unless HETU_QUIET_WINDOWS is exactly 1, which
+// shows them on another display for a person who wants to watch. extra holds more environment, an
 // install folder of the test's own among it
-// switches are Chromium's, placed before the app
-export async function launch(dataDir: string, extra: Record<string, string> = {}, switches: string[] = []): Promise<ElectronApplication> {
+// switches are Chromium's, placed before the app. takesFocus leaves the app free to become the active one and its
+// windows to take the mouse, for a test of real focus that runs only when the screen is free for it
+export async function launch(
+  dataDir: string, extra: Record<string, string> = {}, switches: string[] = [], options: { takesFocus?: boolean } = {},
+): Promise<ElectronApplication> {
   // A run from the source loads fail-fast.cjs first, so main throwing ends the run instead of opening a dialog on the
   // desktop. A packed build takes no NODE_OPTIONS
   const failFast: Record<string, string> = drivenApp === undefined ? { NODE_OPTIONS: `--require=${JSON.stringify(path.join(import.meta.dirname, 'fail-fast.cjs'))}` } : {}
@@ -132,6 +136,8 @@ export async function launch(dataDir: string, extra: Record<string, string> = {}
     ? electron.launch({ args: [...switches, repo], env: environment })
     : electron.launch({ executablePath: drivenApp, args: switches, env: environment }))
   running.push(app)
+  // An app some tests start to see it quit at once has no windows left to keep quiet
+  if (environment.HETU_QUIET_WINDOWS === 'hidden' && options.takesFocus !== true) await quiet(app).catch(() => {})
   return app
 }
 
