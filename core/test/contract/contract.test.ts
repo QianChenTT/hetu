@@ -4,9 +4,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Gate, GrantedItem } from '../../api/policy-jobs.ts'
-import { quotas } from '../../api/storage.ts'
 import { createGate } from '../../backend/policy/gate/gate.ts'
-import { createStorage } from '../../backend/providers/storage/store.ts'
+import { createStorage, type Quotas } from '../../backend/providers/storage/store.ts'
 import { ModeGate, pairKey } from '../../sdk/testing/gate.ts'
 import { MemoryStorage } from '../../sdk/testing/providers.ts'
 import { gateCases, type Grants } from './gate.cases.ts'
@@ -28,13 +27,11 @@ export async function folder(): Promise<string> {
 }
 
 describe.each([
-  ['MemoryStorage', async () => ({ provider: new MemoryStorage(), quotas })],
-  // The module's own tests check it holds core/api's quotas when made with none
-  ['the storage module', async () => {
-    const small = { storage: { bytes: 4096, keys: 8 }, cache: { bytes: 4096, keys: 8 } }
-    const store = createStorage({ quotas: small })
+  ['MemoryStorage', async (quotas: Quotas) => new MemoryStorage(0, quotas)],
+  ['the storage module', async (quotas: Quotas) => {
+    const store = createStorage({ quotas })
     store.open(await folder())
-    return { provider: store, quotas: small }
+    return store
   }],
 ])('%s', (_, make) => storageCases(make))
 

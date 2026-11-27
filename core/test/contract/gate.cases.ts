@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import type { Capability } from '../../api/capabilities.ts'
+import { capabilityTypes, type Capability, type CapabilityType } from '../../api/capabilities.ts'
 import type { Caller } from '../../api/envelope.ts'
 import type { Access, Gate, Pair, Scope } from '../../api/policy-jobs.ts'
 import { editorCaller, pluginCaller } from './ask.ts'
@@ -12,6 +12,30 @@ const reader = pluginCaller('reader')
 const other = pluginCaller('other')
 const allow = { allow: true, view: 1 }
 const refuse = { allow: false, code: 'not-granted', view: 1 }
+
+// One item of each type with the scope that reaches it and whether an access with an empty scope passes. A type added
+// to core/api fails the case that reads this until it is listed here
+const everyType: Record<CapabilityType, [Capability, Scope, boolean]> = {
+  'luoshu.read': [{ type: 'luoshu.read', paths: ['**'] }, { paths: ['a.md'] }, false],
+  'luoshu.write': [{ type: 'luoshu.write', paths: ['**'] }, { paths: ['a.md'] }, false],
+  'luoshu.list': [{ type: 'luoshu.list', paths: ['**'] }, { paths: ['a.md'] }, false],
+  'ui.edit': [{ type: 'ui.edit', paths: ['**'] }, { paths: ['a.md'] }, false],
+  'ui.read': [{ type: 'ui.read', paths: ['**'] }, { paths: ['a.md'] }, false],
+  'lock.set': [{ type: 'lock.set', paths: ['**'] }, { paths: ['a.md'] }, false],
+  history: [{ type: 'history', access: 'read', paths: ['**'] }, { access: 'read', paths: ['a.md'] }, false],
+  'events.subscribe': [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { topics: ['luoshu.changed'] }, false],
+  'plugin.call': [{ type: 'plugin.call', targets: ['search'] }, { target: 'search' }, false],
+  exec: [{ type: 'exec', commands: [['git', 'status']], env: [] }, { command: ['git', 'status'] }, false],
+  'net.fetch': [{ type: 'net.fetch', hosts: ['example.com'] }, {}, false],
+  'ui.view': [{ type: 'ui.view' }, {}, true],
+  'ui.decoration': [{ type: 'ui.decoration' }, {}, true],
+  'ui.command': [{ type: 'ui.command' }, {}, true],
+  'ui.keystream': [{ type: 'ui.keystream' }, {}, true],
+  storage: [{ type: 'storage' }, {}, true],
+  'guard.hook': [{ type: 'guard.hook' }, {}, true],
+  'log.read': [{ type: 'log.read' }, {}, true],
+  'door.handle': [{ type: 'door.handle' }, {}, true],
+}
 
 // One canonical access, as the router asks for a call with power
 function access(caller: Caller, capability: Access['capability'], scope: Scope, pair?: Pair): Access {
@@ -42,6 +66,27 @@ export function gateCases(make: (grants: Grants) => Gate): void {
     ] as const) expect(gate.decide(access(reader, capability, scope)), `${capability} ${JSON.stringify(scope)}`).toEqual(refuse)
   })
 
+  it('lets each path or topic of an access be covered by a different item of its type', () => {
+    const gate = make({ plugins: { reader: [
+      { type: 'luoshu.read', paths: ['a/**'] }, { type: 'luoshu.read', paths: ['b/**'] },
+      { type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'events.subscribe', topics: ['lock.changed'] },
+    ] } })
+    expect(gate.decide(access(reader, 'luoshu.read', { paths: ['a/x.md', 'b/y.md'] }))).toEqual(allow)
+    expect(gate.decide(access(reader, 'luoshu.read', { paths: ['a/x.md', 'c/z.md'] }))).toEqual(refuse)
+    expect(gate.decide(access(reader, 'events.subscribe', { topics: ['luoshu.changed', 'lock.changed'] }))).toEqual(allow)
+  })
+
+  it('judges every capability type: held, it passes on the scope that reaches it, and with an empty scope only when it needs none', () => {
+    expect(Object.keys(everyType).sort()).toEqual([...capabilityTypes].sort())
+    for (const [type, [item, scope, bare]] of Object.entries(everyType) as [CapabilityType, [Capability, Scope, boolean]][]) {
+      const gate = make({ plugins: { reader: [item] } })
+      // net.fetch's scope holds no host yet, so nothing reaches it
+      expect(gate.decide(access(reader, type, scope)), `${type} reached`).toEqual(type === 'net.fetch' ? refuse : allow)
+      expect(gate.decide(access(reader, type, {})), `${type} empty`).toEqual(bare ? allow : refuse)
+      expect(make({ plugins: {} }).decide(access(reader, type, scope)), `${type} not held`).toEqual(refuse)
+    }
+  })
+
   it('judges history by the access an item names, exec by the whole argument array and refuses net.fetch', () => {
     const gate = make({ plugins: { reader: [
       { type: 'history', access: 'read', paths: ['notes/**'] }, { type: 'exec', commands: [['git', 'status']], env: [] }, { type: 'net.fetch', hosts: ['example.com'] },
@@ -49,7 +94,7 @@ export function gateCases(make: (grants: Grants) => Gate): void {
     expect(gate.decide(access(reader, 'history', { access: 'read', paths: ['notes/a.md'] }))).toEqual(allow)
     expect(gate.decide(access(reader, 'history', { access: 'commit', paths: ['notes/a.md'] }))).toEqual(refuse)
     expect(gate.decide(access(reader, 'exec', { command: ['git', 'status'] }))).toEqual(allow)
-    for (const command of [['git', 'status', '-s'], ['status', 'git'], ['git']]) {
+    for (const command of [['git', 'status', '-s'], ['status', 'git'], ['git'], ['git', 42 as unknown as string]]) {
       expect(gate.decide(access(reader, 'exec', { command })), command.join(' ')).toEqual(refuse)
     }
     expect(gate.decide(access(reader, 'net.fetch', {}))).toEqual(refuse)
