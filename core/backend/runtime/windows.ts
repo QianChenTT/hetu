@@ -50,9 +50,10 @@ const OFF_SCREEN = { x: -32000, y: -32000 }
 
 // A run from the source with HETU_QUIET_WINDOWS set to 1 opens its windows without taking focus, on a display other
 // than the one under the cursor when there is one, so the person at the machine can keep working and watch. Set to
-// hidden, as the tests run it, the windows still open and draw for Playwright and captures but off every display, at
-// zero opacity and unable to take focus, so a later focus() can't take the foreground either. A packaged build ignores
-// both
+// hidden, as the tests run it, the windows still open and draw for Playwright and captures but at zero opacity and
+// unable to take focus. Windows places them past every display. macOS moves them back onto one, to (0,32) on the main
+// display, where only the zero opacity hides them, and a later focus() there still brings hetu to the front. A
+// locked build ignores both, the driven build packed for tests reads them
 export function quietPlacement(options: {
   packaged: boolean
   env: Record<string, string | undefined>
