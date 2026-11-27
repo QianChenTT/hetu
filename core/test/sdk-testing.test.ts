@@ -356,11 +356,13 @@ describe('the fake luoshu\'s move against the luoshu plugin', () => {
     await mkdir(path.join(base, 'data'))
     await mkdir(path.join(base, 'install'))
     await writeFile(path.join(folder, 'journal', 'a.md'), 'a')
+    await writeFile(path.join(folder, 'c.md'), 'c')
     const told = { real: [] as unknown[], memory: [] as unknown[] }
     const real = createLuoshu({ publish: (_topic, at, fields) => void told.real.push(fields?.from === undefined ? [at] : [at, fields.from]) })
     real.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
     const memory = new MemoryLuoshu(async (at, from) => void told.memory.push(from === undefined ? [at] : [at, from]))
     memory.notes.set('journal/a.md', 'a')
+    memory.notes.set('c.md', 'c')
     let n = 0
     async function move(provider: Provider, from: string, to: string): Promise<unknown> {
       const call: Call = {
@@ -376,10 +378,18 @@ describe('the fake luoshu\'s move against the luoshu plugin', () => {
       }
     }
     try {
-      for (const [from, to] of [['journal/a.md', 'old/2026/a.md'], ['old/2026/a.md', 'b.md'], ['missing.md', 'c.md']]) {
+      // Into a folder it makes, out of it, onto a note that exists, from one that doesn't, a rename in place that only
+      // changes case and a move onto its own path
+      const moves = [
+        ['journal/a.md', 'old/2026/a.md'], ['old/2026/a.md', 'b.md'], ['b.md', 'c.md'], ['missing.md', 'd.md'], ['b.md', 'B.md'], ['c.md', 'c.md'],
+      ]
+      for (const [from, to] of moves) {
         expect(await move(memory, from!, to!), `${from} ${to}`).toEqual(await move(real.provider, from!, to!))
       }
-      expect(told.real).toEqual([['journal/a.md'], ['old/2026/a.md', 'journal/a.md'], ['old/2026/a.md'], ['b.md', 'old/2026/a.md']])
+      expect(told.real).toEqual([
+        ['journal/a.md'], ['old/2026/a.md', 'journal/a.md'], ['old/2026/a.md'], ['b.md', 'old/2026/a.md'],
+        ['b.md'], ['B.md', 'b.md'], ['c.md'], ['c.md', 'c.md'],
+      ])
       expect(told.memory).toEqual(told.real)
     } finally {
       real.close()
