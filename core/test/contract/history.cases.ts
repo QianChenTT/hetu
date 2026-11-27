@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest'
 import type { Provider } from '../../api/policy-jobs.ts'
-import { versionOf } from '../../sdk/testing/providers.ts'
 import { ask, editorCaller, pluginCaller, type Asking } from './ask.ts'
 
 // history.* over a notes folder, write and remove changing a note in it as the luoshu would
@@ -48,7 +47,8 @@ export function historyCases(make: () => Promise<HistorySubject>): void {
     await history.write('journal/c.md', 'note c')
     const gone = await commit(history, ['journal/b.md', 'journal/c.md'], 'b gone')
     expect(await log(history, 'journal/b.md')).toEqual({ commits: [entry(gone, 'b gone'), entry(first, 'b')] })
-    expect(await read(history, 'journal/b.md', first)).toEqual({ text: 'note b', version: versionOf('note b') })
+    // The version is the SHA-256 hex of the note's UTF-8 bytes
+    expect(await read(history, 'journal/b.md', first)).toEqual({ text: 'note b', version: 'd3f530389119ea7da8eab35f264572cfc6a6b03ec5f73e48bae35a36ecc03d96' })
     for (const [path, at] of [['journal/b.md', gone], ['journal', first], ['journal/b.md', 'f'.repeat(40)]]) {
       expect(await read(history, path, at), path).toEqual({ refused: { code: 'not-found' } })
     }

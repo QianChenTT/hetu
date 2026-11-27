@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import type { Guard, Provider } from '../../api/policy-jobs.ts'
-import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT } from '../../backend/lock/header.ts'
-import { ask, callOf, pluginCaller, type Asking } from './ask.ts'
+import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT } from '../../backend/lock/header.ts'
+import { ask, callOf, editorCaller, pluginCaller, type Asking } from './ask.ts'
 
 // lock.* and the lock guard over an empty notes folder, every end on the clock given, which wall time reads too, and
 // each lock.changed told kept with its path
@@ -65,6 +65,17 @@ export function lockCases(make: MakeLock): void {
     expect(await set(lock, [a], 1000, pair('another#1'))).toEqual({ ms: 1000 })
   })
 
+  it('holds one root plugin\'s clients together to MAX_LOCKS_PER_ROOT live locks, another root still taking', async () => {
+    const lock = await make({ now: 0 })
+    const names = Array.from({ length: MAX_LOCKS_PER_ROOT }, (_, i) => `notes/r${i}.md`)
+    const perClient = MAX_LOCKS_PER_CLIENT / 64
+    for (let i = 0; i < names.length; i += 64) {
+      expect(await set(lock, names.slice(i, i + 64), 1000, pair(`client${Math.floor(i / 64 / perClient)}#${i}`))).toEqual({ ms: 1000 })
+    }
+    expect(await set(lock, [a], 1000, pair('fresh#1'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await set(lock, [a], 1000, other)).toEqual({ ms: 1000 })
+  })
+
   it('tells lock.changed for each set, renewal, clear and expiry met, the end in wall time', async () => {
     const clock = { now: 0 }
     const lock = await make(clock)
@@ -89,7 +100,21 @@ export function lockCases(make: MakeLock): void {
       expect(await set(lock, [a, path], 1000), path).toEqual({ refused: { code: 'not-granted' } })
       expect(await held(lock, [path]), path).toEqual({ refused: { code: 'not-granted' } })
       expect(await clear(lock, [path]), path).toBeNull()
+      expect(await clear(lock, [path], { caller: editorCaller }), path).toEqual({ refused: { code: 'not-granted' } })
     }
     expect(await held(lock, [a])).toEqual({ locks: [] })
+  })
+
+  it('refuses a path spelled so the OS or the path joiner reads another name invalid, a plugin\'s clear leaving it out', async () => {
+    const lock = await make({ now: 0 })
+    const spellings: unknown[] = ['', '/etc/x', 'C:/x.md', '../x.md', 'notes/../a.md', 'notes//a.md', 'notes\\a.md', 'a:b.md', 'notes/a.md.', 'notes/a.md ',
+      'CON.md', 'notes/lpt1.txt', 'a\u0007.md', '\ud800.md', 'x'.repeat(5000), 42, null]
+    for (const path of spellings) {
+      const shown = JSON.stringify(path).slice(0, 30)
+      expect(await ask(lock.provider, 'lock.set', { paths: [path], ms: 1000 }), shown).toEqual({ refused: { code: 'invalid' } })
+      expect(await ask(lock.provider, 'lock.held', { paths: [path] }), shown).toEqual({ refused: { code: 'invalid' } })
+      expect(await ask(lock.provider, 'lock.clear', { paths: [path] }), shown).toBeNull()
+      expect(await ask(lock.provider, 'lock.clear', { paths: [path] }, { caller: editorCaller }), shown).toEqual({ refused: { code: 'invalid' } })
+    }
   })
 }
