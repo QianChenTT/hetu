@@ -10,6 +10,7 @@ import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage, setUp } from './helpers.ts'
+import { ask } from '../drive.ts'
 
 // The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the plugin folder.
 // The shipped token seam refuses every token, so a request that passes the token check runs in the join test
@@ -111,15 +112,6 @@ function status(lines: string[]): Promise<number> {
   })
 }
 const post = (extra: string[]) => status(['POST /mcp HTTP/1.1', ...extra, 'Content-Type: application/json', 'Content-Length: 2', 'Connection: close'])
-
-// A call from the editor through the shell's bridge
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    if ((message as { id?: unknown }).id === id) resolve(message)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [9000 + Math.floor(Math.random() * 1000), action, args] as const) as Promise<{ ok: boolean, result?: unknown }>
 
 const utilityFolders = async () => (await readdir(tmpdir())).filter(name => name.startsWith('hetu-utility-'))
 

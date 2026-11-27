@@ -4,21 +4,9 @@ import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { cleanup, editorPage, launch, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
+import { ask } from '../drive.ts'
 
 afterEach(cleanup)
-
-type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
-let next = 7000
-
-// A call through a page's bridge, as its own code makes one
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<Reply>
 
 async function data(switches: Partial<Switches> = {}): Promise<string> {
   const dataDir = await temp()

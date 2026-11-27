@@ -4,23 +4,11 @@ import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { cleanup, editorPage, launch, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
+import { ask, stubPicker, type Reply } from '../drive.ts'
 
 afterEach(cleanup)
 
 const PAST_DELAY = 1300
-
-type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
-let next = 9000
-
-// A call through a page's bridge, as its own code makes one
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<Reply>
 
 const codeOf = (reply: Reply) => (reply.ok ? 'ok' : reply.refusal?.code)
 
@@ -37,11 +25,6 @@ const listening = (page: Page) => page.evaluate(() => {
   })
 })
 const heard = (page: Page) => page.evaluate(() => (window as unknown as { heard: string[] }).heard)
-
-// Main's folder dialog answers with folder, since a test can't click an OS dialog
-const stubDialog = (app: ElectronApplication, folder: string) => app.evaluate(({ dialog }, picked) => {
-  dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [picked] })) as typeof dialog.showOpenDialog
-}, folder)
 
 async function started(): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, notes: string }> {
   const dataDir = await temp()
@@ -61,7 +44,7 @@ describe('the luoshu in the install', () => {
     const { app, editor, dataDir, notes } = await started()
     expect(codeOf(await ask(editor, 'luoshu.read', { path: 'a.md' }))).toBe('unavailable')
 
-    await stubDialog(app, notes)
+    await stubPicker(app, notes)
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const trusted = await pageAt(app, 'hetu://trusted/')

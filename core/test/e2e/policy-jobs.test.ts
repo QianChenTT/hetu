@@ -2,6 +2,7 @@ import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { cleanup, editorPage, launch, records, temp, until } from './helpers.ts'
+import { ask, type Reply } from '../drive.ts'
 
 afterEach(cleanup)
 
@@ -22,19 +23,6 @@ async function started(options: { switches?: Partial<Switches> } = {}) {
   await until(async () => (await records(dataDir)).some(record => record.event === 'core.ready'))
   return { dataDir, app, page }
 }
-
-type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
-let next = 1000
-
-// A call from the editor through the shell's bridge, as the shell makes one
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<Reply>
 
 const codeOf = (reply: Reply) => (reply.ok ? 'ok' : reply.refusal?.code)
 // No notes folder is picked, so a read the gate lets through answers unavailable at the luoshu's prepare

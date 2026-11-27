@@ -8,6 +8,7 @@ import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage, openByHand, setUp, writeOpener } from './helpers.ts'
+import { ask, type Reply } from '../drive.ts'
 
 afterEach(cleanup)
 
@@ -75,19 +76,6 @@ type Driven = { ctx: Ctx, heard: unknown[] }
 // Runs work inside the worker with its global, where the fixture left its ctx
 const drive = <T>(worker: Worker, work: (scope: Driven) => Promise<T>) =>
   worker.evaluate(`(${work.toString()})(globalThis)`) as Promise<T>
-
-type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
-let next = 9000
-
-// A call through the editor window's bridge, as its own code makes one: the editor holds write and read on **
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<Reply>
 
 const codeOf = (reply: Reply) => (reply.ok ? 'ok' : reply.refusal?.code)
 
@@ -297,15 +285,6 @@ self.onmessage = event => {
   })
 
   // A window's call to the core through its bridge, answered with the reply
-  let next = 1
-  const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-    const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-    bridge.listen(message => {
-      const reply = message as { kind?: string, id?: number }
-      if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-    })
-    bridge.send({ v: 1, kind: 'call', id, action, args })
-  }), [next++, action, args] as const) as Promise<{ ok: boolean, result?: unknown }>
 
   async function trustedWindow(app: ElectronApplication, editor: Page): Promise<Page> {
     await tick(PAST_DELAY)

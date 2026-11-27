@@ -1,9 +1,9 @@
-import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { baseEnv } from '../../lib/clean-env.ts'
 import { command, fakeDoor, handleRefusals, installDoor, reports, send, startedWith, writeHolder } from './door-driver.ts'
 import { cleanup, logged, pageAt, records, temp, until } from './helpers.ts'
+import { ask } from '../drive.ts'
 
 // The utility place's proof: a fake door in the door's utility process, driven through door.handle by a folder plugin
 // holding it, since nothing calls into the door
@@ -86,15 +86,6 @@ const alive = (pid: number) => {
     return false
   }
 }
-
-// A call from the editor through the shell's bridge
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    if ((message as { id?: unknown }).id === id) resolve(message)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [9000 + Math.floor(Math.random() * 1000), action, args] as const) as Promise<{ ok: boolean, result?: unknown }>
 
 describe('a utility half', () => {
   it('answers core.self as the core names it, the door\'s host half, and is told no data folder and none of main\'s environment', async () => {

@@ -2,13 +2,14 @@ import { execFile } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { ElectronApplication, Page, Worker } from 'playwright'
+import type { ElectronApplication, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, records, temp, until, workersPage } from './helpers.ts'
+import { ask } from '../drive.ts'
 
 // History and exec as the install ships them, called by a folder plugin's worker and by the editor window
 
@@ -71,17 +72,6 @@ const call = (worker: Worker, action: string, args: unknown) => worker.evaluate(
     return { ok: false, code: (err as { code?: string }).code }
   }
 }, [action, args] as const) as Promise<Outcome>
-
-let next = 9000
-// A call through the editor window's bridge
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<{ ok: boolean, result?: unknown, refusal?: { code: string } }>
 
 describe('history in the install', () => {
   it('commits a note for a plugin holding history commit, the editor window reads its log and the old text, and a program planted in the notes folder\'s git config never runs', async () => {

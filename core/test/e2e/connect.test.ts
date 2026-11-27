@@ -4,6 +4,7 @@ import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { command, fakeDoor, handleRefusals, installDoor, outcome, reports, startedWith, writeHolder } from './door-driver.ts'
 import { cleanup, logged, pageAt, temp, tick, until, visibleWindows, setUp } from './helpers.ts'
+import { ask } from '../drive.ts'
 
 // A client's connect in the built app: a fake door in its utility process asks the core for the connect and collects
 // the answer, each on a command a folder plugin holding door.handle hands it. The trusted window draws the request in
@@ -69,19 +70,6 @@ function markConfirm(): void {
 }
 
 const marksOf = (page: Page) => page.evaluate(() => ({ ...(window as unknown as { confirmMarks: Marks }).confirmMarks }))
-
-type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
-let next = 5000
-
-// A call through a page's bridge, as its own code makes one
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<Reply>
 
 describe('a connect in the trusted window', () => {
   it('shows the host first, the name and the label in quotes, takes no Confirm inside the delay and hands the yes once', async () => {
