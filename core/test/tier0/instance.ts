@@ -6,14 +6,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from 'playwright'
 import type { TestContext } from 'vitest'
+import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { executableIn } from '../../build/package.ts'
 import { unpackZip } from '../../backend/plugins-manager/unpack.ts'
 import { quiet, stubPicker, type Quieted } from '../drive.ts'
 import { writeApproved } from '../plugins-manager-fakes.ts'
+import { makeZip } from '../zip-maker.ts'
 import { takeLock } from './lock.ts'
 import { waitForMemory } from './memory.ts'
-import { drivenOutDir, pluginsProvenance, readBuildStamp, type BuildStamp, type PluginsProvenance } from './provenance.ts'
+import { drivenOutDir, filesUnder, pluginsProvenance, readBuildStamp, sha256Of, type BuildStamp, type PluginsProvenance } from './provenance.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 
@@ -36,8 +38,9 @@ export const profiles = {
 } as const satisfies Record<string, Profile>
 export const isSerial = (ids: readonly string[]) => ids.includes('mcp')
 
-// How the plugins get in: written approved before the start, as after their Confirm
-export type Route = 'approved'
+// How the plugins get in: written approved before the start, as after their Confirm, or installed through the trusted
+// window's own install flow
+export type Route = 'approved' | 'install'
 
 // Locks every tier 0 process sees. Starts go one at a time, so each reads free memory after the instance before it
 // is up, and the door is held by one instance at a time. Both waits end before the test's own timeout
@@ -74,6 +77,8 @@ export type RunRecord = {
   os: RunFacts['os']
   // The input routes this instance was driven through
   input: string[]
+  // What the harness did to the app beyond input, each a step a person's run doesn't take
+  harness: string[]
   // What a page's focus reads as at the quit: emulated when the editor page has it and no window does natively
   focus: 'emulated' | 'native' | 'none' | 'unknown'
   quiet: Quieted
@@ -122,7 +127,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
       if (state === 'fail') console.warn(`tier 0 kept the failed instance's trace and folders in ${folder}`)
       else if (kept === undefined) await rm(folder, { recursive: true, force: true, maxRetries: 5 })
       else {
-        for (const done of [tracePath, data, notes]) await rm(done, { recursive: true, force: true, maxRetries: 5 })
+        for (const done of [tracePath, data, notes, path.join(folder, 'profile.zip')]) await rm(done, { recursive: true, force: true, maxRetries: 5 })
         const recorded = path.join(folder, 'record.json')
         const record = await readFile(recorded, 'utf8').then(text => JSON.parse(text) as RunRecord, () => null)
         if (record !== null) await writeFile(recorded, `${JSON.stringify({ ...record, trace: null }, null, 2)}\n`)
@@ -148,7 +153,15 @@ export async function start(context: TestContext, options: Options = {}): Promis
   const ids = profile.plugins === 'all-but-mcp' ? inZip.filter(id => id !== 'mcp') : [...profile.plugins].sort()
   const missing = ids.filter(id => !inZip.includes(id))
   if (missing.length > 0) throw new Error(`the plugin zip has no ${missing.join(', ')}`)
-  const installed = { route, zip: facts.plugins.zip, sha256: facts.plugins.sha256 }
+  // The zip an install route picks: the shipped one, or one of the profile's plugins alone when it leaves some out
+  let installed = { route, zip: facts.plugins.zip, sha256: facts.plugins.sha256 }
+  if (route === 'install' && ids.length < inZip.length) {
+    const zip = path.join(folder, 'profile.zip')
+    const entries = []
+    for (const id of ids) for (const file of await filesUnder(path.join(unpacked, id))) entries.push({ name: `${id}/${file}`, data: await readFile(path.join(unpacked, id, file)) })
+    await writeFile(zip, makeZip(entries))
+    installed = { route, zip, sha256: await sha256Of(zip) }
+  }
 
   await mkdir(notes, { recursive: true })
   for (const [name, text] of Object.entries(options.notes ?? {})) {
@@ -158,10 +171,11 @@ export async function start(context: TestContext, options: Options = {}): Promis
   const store = new StateStore(data)
   await store.writeSwitches(defaultSwitches())
   await store.writeLuoshu({ folder: notes })
-  for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
+  if (route === 'approved') for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
   if (isSerial(ids)) held.releases.push(await takeLock(DOOR_LOCK, { signal: context.signal, ms: 90_000 }))
 
   const input = new Set<string>()
+  const harness: string[] = []
   let tracing = false
   let record: RunRecord | null = null
   const begun = Date.now()
@@ -170,6 +184,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   const launched = Date.now()
   // The first call into main, before anything can bring a window forward
   const quieted = await quiet(app)
+  await watchDelays(app)
 
   held.quit = async () => {
     if (record !== null) return record
@@ -190,7 +205,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
       const folders = (await readdir(path.join(data, 'plugins'), { withFileTypes: true }).catch(() => [])).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
       record = {
         instance: path.basename(folder), profile: profile.name, serial: isSerial(ids), build: facts.build, os: facts.os,
-        input: [...input].sort(), focus, quiet: quieted, plugins: { ...facts.plugins, ids, folders, installed },
+        input: [...input].sort(), harness, focus, quiet: quieted, plugins: { ...facts.plugins, ids, folders, installed },
         launchMs: launched - begun, quitMs, exitCode, trace: tracing ? tracePath : null,
       }
       await writeFile(path.join(folder, 'record.json'), `${JSON.stringify(record, null, 2)}\n`)
@@ -218,6 +233,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   // The next start reads free memory with this instance up
   await instance.editor()
   await releaseStart()
+  if (route === 'install') await installThroughTrusted(instance, installed.zip, ids, input, harness)
   return instance
 }
 
@@ -229,6 +245,77 @@ async function writeShipped(store: StateStore, data: string, from: string, id: s
   const manifest = JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as { version: string, capabilities: { type: string }[] }
   const writes = manifest.capabilities.filter(grant => grant.type === 'luoshu.write')
   await writeApproved(store, id, root, { granted: manifest.capabilities as never, version: manifest.version, firstUse: [], confirmed: writes as never })
+}
+
+// When main restarts each window's input delay: on show, on focus and on a load, as the trusted window's delay does.
+// A window open before this ran counts from now but is not marked as seen, since its show may never have come
+const watchDelays = (app: ElectronApplication) => app.evaluate(({ app, BrowserWindow }) => {
+  const restarts = new Map<number, number>()
+  const seen = new Set<number>()
+  Object.assign(globalThis, { tier0Restarts: restarts, tier0Seen: seen })
+  const watch = (window: InstanceType<typeof BrowserWindow>) => {
+    restarts.set(window.id, Date.now())
+    const mark = () => {
+      restarts.set(window.id, Date.now())
+      seen.add(window.id)
+    }
+    window.on('show', mark)
+    window.on('focus', mark)
+    // The trusted window's own listener for a load comes after the first load started, so that one restarts nothing
+    window.webContents.on('did-start-loading', () => restarts.set(window.id, Date.now()))
+  }
+  for (const window of BrowserWindow.getAllWindows()) watch(window)
+  app.on('browser-window-created', (_event, window) => watch(window))
+})
+
+// Waits until main's input delay on the window showing url has run out, read from main's own restarts
+async function armed(app: ElectronApplication, url: string): Promise<void> {
+  const left = await app.evaluate(({ BrowserWindow }, [url, delay]) => {
+    const window = BrowserWindow.getAllWindows().find(found => found.webContents.getURL() === url)
+    const at = window === undefined ? undefined : (globalThis as unknown as { tier0Restarts: Map<number, number> }).tier0Restarts.get(window.id)
+    return at === undefined ? delay : Math.max(0, at + delay - Date.now())
+  }, [url, INPUT_DELAY_MS + 100] as const)
+  if (left > 0) await sleep(left)
+}
+
+// Presses once main's delay on the page's window has run out and Playwright found the button enabled, then waits for
+// what it does. A press main still dropped is pressed again after the wait
+async function pressUntil(app: ElectronApplication, input: Set<string>, page: Page, target: Locator, done: () => Promise<boolean>, what: string): Promise<void> {
+  input.add('playwright')
+  for (let presses = 0; !(await done()); presses++) {
+    if (presses === 3) throw new Error(`pressed 3 times and never saw ${what}. The page shows: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 600)}`)
+    await armed(app, page.url())
+    await target.click({ timeout: 10_000 })
+    await until(done, what, 10_000).catch(() => {
+      // Not shown in 10 s: the press was dropped, and the loop presses again
+    })
+  }
+}
+
+// The trusted window's install: Plugins and security, Install from a zip through the picker, Install, then the Confirm
+async function installThroughTrusted(instance: Instance, zip: string, ids: readonly string[], input: Set<string>, harness: string[]): Promise<void> {
+  const { app } = instance
+  const editor = await instance.editor()
+  await instance.picker(zip)
+  await instance.click(editor.getByRole('button', { name: 'Plugins and security' }))
+  await instance.trusted()
+  // The startup flow's trusted window, hidden, was shown with no show event, and the press's focus() gives no focus
+  // event under the activation policy, so its delay never starts and every press is dropped. The show a person's run
+  // gets is emitted from main then, and the record says so
+  const armedOnItsOwn = await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(found => found.webContents.getURL() === 'hetu://trusted/')!
+    if ((globalThis as unknown as { tier0Seen: Set<number> }).tier0Seen.has(window.id)) return true
+    window.emit('show')
+    return false
+  })
+  if (!armedOnItsOwn) harness.push('emitted show on the trusted window, which had none')
+  const trusted = await instance.trusted()
+  const install = trusted.locator('section.installing').getByRole('button', { name: 'Install', exact: true })
+  await pressUntil(app, input, trusted, trusted.getByRole('button', { name: 'Install from a zip' }).first(), async () => await install.count() === 1, 'the plugins found in the zip')
+  const confirm = trusted.getByRole('button', { name: 'Confirm', exact: true }).first()
+  await pressUntil(app, input, trusted, install, async () => await confirm.count() === 1, 'the install Confirm')
+  const installed = async () => (await readdir(path.join(instance.data, 'plugins')).catch(() => [])).filter(id => ids.includes(id)).length === ids.length
+  await pressUntil(app, input, trusted, confirm, installed, 'the plugins installed')
 }
 
 // Whether the editor page has focus and whether any window has it natively
