@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -395,15 +395,19 @@ describe('the drawer', () => {
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+End')
     await editor.keyboard.type(' typed last')
-    const typed = Date.now()
     const done = exited(app)
-    // As the window's close button does, well inside the page's 1 s draft timer
-    await app.evaluate(({ BrowserWindow }) => {
+    // As the window's close button does, with no draft kept yet, read in the same turn of main as the close. So the
+    // draft found below was kept by the quit's grace, not the page's 1 s timer
+    const kept = await app.evaluate(({ BrowserWindow }, spaces) => {
+      const fs = process.getBuiltinModule('node:fs')
+      const drafts = fs.existsSync(spaces) ? fs.readdirSync(spaces).filter(name => name.startsWith('key-draft')) : []
       for (const window of BrowserWindow.getAllWindows()) if (window.webContents.getURL() === 'hetu://editor/') window.close()
-    })
-    expect(Date.now() - typed).toBeLessThan(300)
+      return drafts
+    }, path.join(dataDir, 'storage', 'window.editor'))
+    expect(kept).toEqual([])
     // Quit's grace and shutdown take well under this. Left open by the trusted window, hetu never exits
     expect(await Promise.race([done, tick(15_000).then(() => 'still running')])).toBe(0)
+    expect((await readdir(path.join(dataDir, 'storage', 'window.editor'))).filter(name => name.startsWith('key-draft'))).toHaveLength(1)
     const again = await launch(dataDir)
     const next = await editorPage(again)
     await until(() => logged(dataDir, 'core.ready'))

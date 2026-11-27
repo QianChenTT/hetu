@@ -421,7 +421,7 @@ describe('the fail-safe at start', () => {
     if (box) {
       afterFailure({ action: 'stopped', mode, box }, {
         quitting: () => false, announce: () => {}, quit: (code, again) => { quits.push(`quit ${code} ${again}`) },
-        ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, packaged: false, env: {}, later: () => {},
+        ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, holdCloses: () => {}, editorsOpen: () => false, packaged: false, env: {}, later: () => {},
       })
       expect(quits).toEqual(['quit 1 true'])
     } else ending.relaunch()
@@ -521,7 +521,7 @@ describe('the fail-safe at start', () => {
       if (box) {
         afterFailure({ action: 'stopped', mode, box }, {
           quitting: () => false, announce: () => {}, quit: () => {},
-          ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, packaged: false, env: {}, later: () => {},
+          ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, holdCloses: () => {}, editorsOpen: () => false, packaged: false, env: {}, later: () => {},
         })
       } else ending.relaunch()
       await made.pluginsManager.shutdown()
