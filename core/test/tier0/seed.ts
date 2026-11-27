@@ -1,4 +1,4 @@
-// The notes folder a tier 0 instance starts on: 257 notes 3 folders deep with every shape a vault in use has, written
+// The notes folder a tier 0 instance starts on: 261 notes 3 folders deep with every shape a vault in use has, written
 // fresh for each instance. A run of its own PRNG picks the links, so the tree and its bytes are the same on every run
 // and platform. The PNGs hold stored deflate blocks rather than zlib's output, which Node's bundled zlib may give
 // differently by CPU. Keeping the notes read-only is the runner's part: each instance gets a fresh copy
@@ -16,6 +16,9 @@ export interface SeedSummary {
   notes: number
   daily: number
   images: number
+  pdfs: number
+  // Every file under .obsidian and .git
+  dotFiles: number
   files: number
   // Folders outside the dot folders, the root not counted
   folders: number
@@ -23,10 +26,21 @@ export interface SeedSummary {
   // The path of each special case, relative with / separators
   special: {
     big: string
+    longName: string
+    deep: string
+    nfdNote: string
+    nfdFolderNote: string
+    pdf: string
     empty: string
     imagesOnly: string
-    // A wikilink to no file, left for the real build to judge, as written in Welcome.md
+    // The cases left for the real build to judge, each a target as written in Welcome.md. A wikilink to no file
     unresolved: string
+    // A wikilink in NFC to a note named in NFD. Equal only once both sides are normalized
+    nfcLinkToNfd: string
+    // Embeds of files that are not notes, which a resolver that indexes notes alone never finds
+    nonNoteEmbeds: string[]
+    // Image links in both CommonMark forms, angle brackets and %20
+    imageLinks: string[]
   }
 }
 
@@ -94,6 +108,30 @@ function png(w: number, h: number, rgb: readonly number[]) {
     chunk('IDAT', zdata), chunk('IEND', Buffer.alloc(0))])
 }
 
+// One page with one line of text, its cross reference table counted from the bytes written. /Length counts the
+// stream's bytes up to the end of line before endstream, which it leaves out
+function pdf(title: string) {
+  const content = `BT /F1 18 Tf 20 40 Td (${title}) Tj ET`
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let out = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((body, i) => {
+    offsets.push(out.length)
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`
+  })
+  const xref = out.length
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  out += offsets.map(at => `${String(at).padStart(10, '0')} 00000 n \n`).join('')
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(out, 'latin1')
+}
+
 // A Markdown link target from one file to another, valid per CommonMark: angle brackets, or %20 and the rest of
 // encodeURIComponent per segment. No name here holds a character decodeURI leaves encoded. Counted by segments, since
 // path.posix.relative reads process.cwd()
@@ -112,8 +150,38 @@ const TOPICS = ['Projects/Work/Alpha', 'Projects/Work/Beta', 'Projects/Personal/
 const TAGS = ['#project', '#idea', '#todo', '#reading', '#health', '#中文']
 const EMPTY = 'Empty folder'
 const IMAGES = 'Attachments'
+// The fourth has a space, so a link to it takes %20
+const PNGS = ['diagram-1.png', 'diagram-2.png', 'diagram-3.png', 'diagram 4.png']
+const PDF = 'Reading/Papers/Paper scan.pdf'
 const BIG = 'Archive/Big log 5000 lines.md'
 const UNRESOLVED = 'Not written yet'
+// Written as NFD. APFS keeps the form a name was written in and reads either form as one name, NTFS and ext4 keep
+// both as different names. So no NFC twin of these is written anywhere: the NFC names beside them differ
+const NFD_NOTE = 'Inbox/Résumé draft.md'.normalize('NFD')
+const NFD_FOLDER_NOTE = 'Reading/Études/Étude 1.md'.normalize('NFD')
+const NFC_LINK = 'Résumé draft'.normalize('NFC')
+// The deep path's length in UTF-16 units: past Windows MAX_PATH (260) from any root, which Node's fs passes by
+// prefixing \\?\ itself, and within the 512 a scope and a canonical path hold (MAX_SCOPE_LENGTH). Kept past MAX_PATH
+// on purpose so tier 0 finds what hetu does with it: history runs the system git with no core.longpaths
+const DEEP_LENGTH = 300
+
+// 200 bytes of UTF-8 with .md: within 255 bytes (APFS, ext4) and 255 UTF-16 units (NTFS)
+function longName() {
+  let name = 'Long name 很长的名字'
+  while (Buffer.byteLength(`${name}名.md`) <= 200) name += '名'
+  while (Buffer.byteLength(`${name}.md`) < 200) name += 'x'
+  return `Archive/${name}.md`
+}
+
+// 9 folders deep on purpose (Archive, Deep and 7 levels), each name well under 255, the leaf padded to DEEP_LENGTH
+function deepPath() {
+  const leaf = 'Deep note.md'
+  const level = (n: number) => `/Level ${n} folder with a fairly long name`
+  let at = 'Archive/Deep'
+  for (let n = 1; at.length + level(n).length + leaf.length < DEEP_LENGTH; n++) at += level(n)
+  return `${at}/${'x'.repeat(DEEP_LENGTH - at.length - leaf.length - 1)}${leaf}`
+}
+
 // No note links itself, so a self-link never stands in for a link between two notes
 function topicNote(random: () => number, idx: number, folder: string, name: string, all: [string, string][]) {
   const rel = `${folder}/${name}.md`
@@ -185,6 +253,12 @@ export async function seed(dir: string, options: SeedOptions = {}): Promise<Seed
   names[20] = ['Inbox', 'Café notes — résumé']
   names.forEach(([t, n], idx) => out.set(`${t}/${n}.md`, topicNote(random, idx, t, n, names)))
 
+  const pdfName = path.posix.basename(PDF)
+  const papers = 'Reading/Papers/Papers note 01.md'
+  const paper = out.get(papers)
+  if (typeof paper !== 'string') throw new Error(`seed: no ${papers} to link the PDF from`)
+  out.set(papers, `${paper}\nThe scan: ![[${pdfName}]] or [open it](<${pdfName}>).\n`)
+
   for (let d = 1; d <= 14; d++) {
     const day = `2026-11-${String(d).padStart(2, '0')}`
     out.set(`Daily/${day}.md`, `# ${day}\n\n- [ ] Review [[Inbox note 01]]\n- Met with team about [[Alpha note 03]] #daily\n`)
@@ -197,13 +271,34 @@ export async function seed(dir: string, options: SeedOptions = {}): Promise<Seed
   }
   out.set(BIG, `${lines.join('\n')}\n`)
 
-  out.set('Welcome.md', `# Welcome\n\nStart at [[Inbox note 01]] or [[会议记录 2026]].\n\n![[${IMAGES}/diagram-1.png]]\n\n` +
-    `Edge cases:\n\n- [[${UNRESOLVED}]], a link left unresolved\n`)
+  const long = longName()
+  const deep = deepPath()
+  out.set(NFD_NOTE, `# ${path.posix.basename(NFD_NOTE, '.md')}\n\nA name written in NFD, beside [[Café notes — résumé]] in NFC.\n`)
+  out.set(NFD_FOLDER_NOTE, `# Étude 1\n\nIn a folder named in NFD. Back to [Welcome](${linkTo(NFD_FOLDER_NOTE, 'Welcome.md', false)}).\n`)
+  out.set(long, '# A long name\n\n200 bytes of UTF-8 in its name.\n')
+  out.set(deep, `# Deep note\n\n${deep.length} UTF-16 units from the root. Back to [Welcome](${linkTo(deep, 'Welcome.md', true)}).\n`)
+
+  const edge = [['the NFD draft', NFD_NOTE], ['the NFD folder', NFD_FOLDER_NOTE], ['the long name', long],
+    ['the deep note', deep], ['the scan', PDF]]
+    .map(([label, to], i) => `- [${label}](${linkTo('Welcome.md', to, i % 2 === 0)})`).join('\n')
+  const embeds = [`${IMAGES}/${PNGS[0]}`, pdfName]
+  const imageLinks = [linkTo('Welcome.md', `${IMAGES}/${PNGS[1]}`, true), linkTo('Welcome.md', `${IMAGES}/${PNGS[3]}`, false)]
+  out.set('Welcome.md', `# Welcome\n\nStart at [[Inbox note 01]] or [[会议记录 2026]].\n\n![[${embeds[0]}]]\n\n` +
+    `![second diagram](${imageLinks[0]})\n![fourth diagram](${imageLinks[1]})\n\nEdge cases:\n\n${edge}\n` +
+    `- ![[${embeds[1]}]]\n- [[${NFC_LINK}]] linked in NFC\n- [[${UNRESOLVED}]], a link left unresolved\n`)
   out.set('README notes.md', '# About this vault\n\nMigrated from Obsidian. See [Welcome](Welcome.md).\n')
 
   ;[[200, 40, 40], [40, 200, 40], [40, 40, 200], [200, 200, 40]].forEach((rgb, i) => {
-    out.set(`${IMAGES}/diagram-${i + 1}.png`, png(64, 48, rgb))
+    out.set(`${IMAGES}/${PNGS[i]}`, png(64, 48, rgb))
   })
+  out.set(PDF, pdf('Paper scan'))
+
+  out.set('.obsidian/app.json', `${JSON.stringify({ alwaysUpdateLinks: true, newFileLocation: 'folder',
+    newFileFolderPath: 'Inbox', attachmentFolderPath: IMAGES }, null, 2)}\n`)
+  out.set('.obsidian/templates/Hidden template.md', '# A note in a dot folder\n\nNo listing shows it.\n')
+  out.set('.git/HEAD', 'ref: refs/heads/main\n')
+  out.set('.git/config', '[core]\n\trepositoryformatversion = 0\n\tbare = false\n')
+  out.set('.git/description', 'Plain files, not a repository.\n')
 
   const folderSet = new Set<string>([EMPTY])
   for (const rel of out.keys()) {
@@ -224,9 +319,12 @@ export async function seed(dir: string, options: SeedOptions = {}): Promise<Seed
     notes: rels.filter(rel => rel.endsWith('.md') && !dotted(rel)).length,
     daily: rels.filter(rel => rel.startsWith('Daily/')).length,
     images: rels.filter(rel => rel.endsWith('.png')).length,
+    pdfs: rels.filter(rel => rel.endsWith('.pdf')).length,
+    dotFiles: rels.filter(dotted).length,
     files: rels.length,
     folders: folders.filter(f => !dotted(f)).length,
     emptyFolders: folders.filter(f => !rels.some(rel => rel.startsWith(`${f}/`))).length,
-    special: { big: BIG, empty: EMPTY, imagesOnly: IMAGES, unresolved: UNRESOLVED },
+    special: { big: BIG, longName: long, deep, nfdNote: NFD_NOTE, nfdFolderNote: NFD_FOLDER_NOTE, pdf: PDF, empty: EMPTY,
+      imagesOnly: IMAGES, unresolved: UNRESOLVED, nfcLinkToNfd: NFC_LINK, nonNoteEmbeds: embeds, imageLinks },
   }
 }
