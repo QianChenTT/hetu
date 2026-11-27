@@ -6,7 +6,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, openByHand, temp, until, workersPage, writeOpener } from './helpers.ts'
+import { cleanup, editorPage, exited, launch, logged, openByHand, temp, tick, until, workersPage, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -104,5 +104,36 @@ describe('an open note hetu moved', () => {
     await until(async () => (await again.editor.locator('#note-text').innerText()).includes('A draft of this note'))
     await again.editor.getByRole('button', { name: 'Restore' }).click()
     await until(async () => (await shown(again.editor).innerText()) === 'alpha typed')
+  })
+})
+
+// shell.trashItem in main moves what it is handed into bin instead of the OS's Trash, so a remove leaves the machine's
+// own Trash alone. Main calls it through the same shell object at each remove
+async function binned(app: ElectronApplication, bin: string): Promise<void> {
+  await app.evaluate(({ shell }, into) => {
+    const { rename } = process.getBuiltinModule('node:fs/promises')
+    const { basename, join } = process.getBuiltinModule('node:path')
+    shell.trashItem = absolute => rename(absolute, join(into, basename(absolute)))
+  }, bin)
+}
+
+describe('an open note hetu removed', () => {
+  it('says so on the note bar, keeps the unsaved text as a draft and never saves to the path it left', async () => {
+    const { app, editor, folder, worker } = await started({ 'a.md': 'alpha', 'z.md': 'zeta' })
+    const bin = await temp()
+    await binned(app, bin)
+    await typed(editor, 'a.md', ' typed')
+    await drive(worker, async scope => {
+      const { version } = await scope.ctx.luoshu.read({ path: 'a.md' }) as { version: string }
+      return scope.ctx.luoshu.remove({ path: 'a.md', baseVersion: version })
+    })
+    expect(await readdir(bin)).toEqual(['a.md'])
+    const bar = editor.locator('#note-text')
+    await until(async () => (await bar.innerText()) === 'This note was moved or deleted, so this tab can\'t save it. Your text is kept as a draft')
+    expect(await title(editor)).toBe('a.md (unsaved)')
+    await editor.keyboard.press('ControlOrMeta+s')
+    await tick(500)
+    expect((await readdir(folder)).sort()).toEqual(['z.md'])
+    expect(await shown(editor).innerText()).toBe('alpha typed')
   })
 })
