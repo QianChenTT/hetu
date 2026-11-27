@@ -16,7 +16,7 @@ import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { afterFailure, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
+import { afterFailure, closeQuits, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { frameOwner } from '../api/ids.ts'
@@ -202,8 +202,14 @@ async function start(): Promise<void> {
       },
     })
     let editor: BrowserWindow | null = null
+    // The editor windows main closes itself, which close with no quit
+    const closedByMain = new WeakSet<BrowserWindow>()
     const closeEditors = () => {
-      for (const window of seen) if (window !== trusted.window && !window.isDestroyed()) window.close()
+      for (const window of seen) {
+        if (window === trusted.window || window.isDestroyed()) continue
+        closedByMain.add(window)
+        window.close()
+      }
       editor = null
     }
     // The log failing while running: windows hear core.quitting and get their grace, then hetu quits with an error and
@@ -390,9 +396,9 @@ async function start(): Promise<void> {
         const zoom = contents.getZoomFactor()
         contents.send('hetu:press', { down: mouse.type === 'mouseDown', x: (mouse.globalX - content.x) / zoom, y: (mouse.globalY - content.y) / zoom })
       })
-      // Closing the last window quits hetu, so it goes the way Quit goes and the page keeps its drafts first
+      // Closing the editor quits hetu the way Quit does, the trusted window open or not, so the page keeps its drafts first
       window.on('close', event => {
-        if (quitting !== null || [...seen].some(other => other !== window && !other.isDestroyed())) return
+        if (!closeQuits({ quitting: quitting !== null, byMain: closedByMain.has(window) })) return
         event.preventDefault()
         app.quit()
       })

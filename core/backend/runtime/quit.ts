@@ -85,6 +85,13 @@ export class Ending {
   }
 }
 
+// Whether a close of the editor window is held and hetu quits the way Quit does instead, the trusted window open or
+// not, so the page keeps its drafts first. A close during a quit goes on and starts no second quit. So does a close
+// main makes itself, as the stopped mode leaving only the trusted window
+export function closeQuits(state: { quitting: boolean, byMain: boolean }): boolean {
+  return !state.quitting && !state.byMain
+}
+
 // How long windows hear core.quitting before a quit after a failure goes on, so the editor can keep a draft
 export const QUIT_GRACE_MS = 2000
 // How long a quit the human asked for waits after core.quitting before its windows close, for the same drafts
