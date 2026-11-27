@@ -27,6 +27,8 @@ export type ViewHooks = {
   key(instance: string, event: KeyboardEvent): boolean
   // The human moved into another open note
   focused?(instance: string): void
+  // hetu moved the note an instance holds, which is named by its new path from now on
+  moved?(instance: Instance): void
   // A Ctrl+click, Cmd+click on macOS, on a link mark: the link it landed on or tied when two tied for it
   link(instance: string, hit: LinkHit | 'tied'): void
   // The range of the text the editor draws moved, told once as it is made and again each time it moves. CodeMirror's
@@ -306,6 +308,13 @@ export class EditorViews implements Editors {
       annotations: remote ? [Transaction.addToHistory.of(false), Transaction.remote.of(true)] : [],
       userEvent: remote ? 'input.remote' : 'input.restore',
     })
+  }
+
+  moved(id: string, path: string): void {
+    const instance = this.open.get(id)?.instance
+    if (instance === undefined) return
+    instance.path = path
+    this.hooks.moved?.(instance)
   }
 
   destroy(id: string): void {

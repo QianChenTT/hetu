@@ -23,7 +23,8 @@ import type { Versions } from './versions.ts'
 // An open note as the drawer serves it. The page's editor implements it
 export type Instance = {
   readonly id: string
-  readonly path: string
+  // The note's path, the new one once hetu moved the note
+  path: string
   readonly versions: Versions
   text(): string
   selection(): { anchor: number, head: number }[]

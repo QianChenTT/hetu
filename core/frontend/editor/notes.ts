@@ -12,6 +12,8 @@ export type Editors = {
   // remote marks a change from outside: kept out of undo and not the human's typing
   replace(instance: string, text: string, remote: boolean): void
   destroy(instance: string): void
+  // hetu moved the note: its tab is named by the new path from now on
+  moved(instance: string, path: string): void
 }
 
 export type NoteNotice =
@@ -26,12 +28,12 @@ type Draft = { path: string, base: string, text: string, at: number, edits: stri
 
 export type OpenNote = {
   readonly instance: string
-  // The path the luoshu resolved, never the spelling it was opened under
-  readonly path: string
+  // The path the luoshu resolved, never the spelling it was opened under, the new one once hetu moved the note
+  path: string
   // Where its draft is kept, worked out once and again when the note leaves its path
   key: string
   // Where its draft goes once the note leaves its path
-  readonly goneKey: string
+  goneKey: string
   // The luoshu's version of the text the buffer started from or last saved
   version: string
   dirty: boolean
@@ -99,6 +101,8 @@ export class Notes {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
   // The notes whose last save answered locked and that no take over has started on since
   private readonly locked = new Set<string>()
+  // Tabs hetu moved whose drafts are on their way to their new keys
+  private readonly moving = new Set<Promise<void>>()
   private n = 0
 
   constructor(link: CoreLink, editors: Editors, tell: (notice: NoteNotice) => void, clock: () => number = () => Date.now()) {
@@ -109,12 +113,14 @@ export class Notes {
   }
 
   // core.quitting comes on the shell's subscription. A save by hetu, this window's own included, is luoshu.changed and
-  // one by another program luoshu.outside
+  // one by another program luoshu.outside. A move by hetu is luoshu.changed at the end it left, then at its new end
+  // naming the one it left
   start(): void {
     this.link.on('core.quitting', () => void this.keepAll())
     // With no path the window missed these events, so every open note is read again
     for (const topic of ['luoshu.changed', 'luoshu.outside']) {
       this.link.on(topic, event => {
+        if (event.path !== undefined && event.from !== undefined && this.follow(event.from, event.path)) return
         if (event.path !== undefined) void this.outside(event.path)
         else for (const note of this.opened.values()) void this.outside(note.path)
       })
@@ -241,7 +247,9 @@ export class Notes {
     return this.save(instance)
   }
 
+  // After every moved tab's draft reached its new key, so a quit keeps none under the path the note left
   async keepAll(): Promise<void> {
+    await Promise.all(this.moving)
     await Promise.all([...this.opened.values()].filter(note => note.dirty).map(note => this.keep(note)))
   }
 
@@ -314,6 +322,46 @@ export class Notes {
     this.timers.delete(note.instance)
     note.key = note.goneKey
     if (!note.dirty || await this.keep(note)) this.tell({ kind: 'gone', instance: note.instance, path: note.path, kept: note.dirty })
+  }
+
+  // hetu moved the note of a tab at from, a tab marked gone from there included, to the path to. The tab is named by
+  // the new path before anything awaits, so a read of from that answers not-found after finds the path no longer the
+  // tab's and leaves it live. Whatever the tab held at from no longer holds: a lock answer and a gone notice. False when
+  // no tab was at from, or another tab is at to already, which then reads as a change at to
+  private follow(from: string, to: string): boolean {
+    if (this.byPath.has(to)) return false
+    const live = this.byPath.get(from)
+    const note = live !== undefined ? this.opened.get(live) : [...this.opened.values()].reverse().find(open => open.gone && open.path === from)
+    if (note === undefined) return false
+    this.byPath.delete(from)
+    this.byPath.set(to, note.instance)
+    const kept = note.key
+    note.path = to
+    note.gone = false
+    this.locked.delete(note.instance)
+    this.editors.moved(note.instance, to)
+    const rekeyed = this.rekeyed(note, kept, to).finally(() => this.moving.delete(rekeyed))
+    this.moving.add(rekeyed)
+    return true
+  }
+
+  // The tab's draft keys for its new path, and the draft kept under the old key, for a dirty text or an offer, rewritten
+  // under the new one and the old one deleted. Moved again since, the newer move does it
+  private async rekeyed(note: OpenNote, kept: string, to: string): Promise<void> {
+    const [key, gone] = await Promise.all([draftKey(to), goneKey(to)])
+    if (note.path !== to) return
+    note.key = key
+    note.goneKey = gone
+    if (note.draftFrom === kept) note.draftFrom = key
+    if (note.draft !== null) note.draft = { ...note.draft, path: to }
+    const got = await this.link.call('storage.get', { key: kept })
+    const draft = got.ok ? draftOf(got.result) : null
+    if (draft !== null) {
+      const moved = await this.link.call('storage.set', { key, value: { ...draft, path: to } })
+      if (!moved.ok) return this.refused(note, moved.refusal?.code ?? 'failed', moved.refusal?.reason)
+      await this.link.call('storage.delete', { key: kept })
+    }
+    if (note.dirty) await this.keep(note)
   }
 
   private async read(path: string): Promise<Read> {

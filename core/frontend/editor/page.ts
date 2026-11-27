@@ -109,6 +109,14 @@ function start(bridge: Bridge): void {
       layers?.schedule()
     },
     link: (instance, hit) => drawer?.linkClicked(instance, hit),
+    // Each plugin's reach to the note is judged again at its new path. A gone or locked notice no longer holds
+    moved: instance => {
+      drawer?.forget()
+      const notice = noteNotices.get(instance.id)?.kind
+      if (notice === 'gone' || notice === 'locked') noteNotices.delete(instance.id)
+      drawTitle()
+      drawNoteBar()
+    },
   }, styleNonce, mac)
   const theNotes = new Notes(link, views, notice => {
     noteNotices.set(notice.instance, notice)
