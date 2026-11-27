@@ -7,6 +7,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
+import { typeThroughMain } from '../tier0/input.ts'
 import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 // Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
@@ -431,30 +432,6 @@ describe('a view frame', () => {
     await scope.ctx.ui.views.post(instance, told)
   }, [data, at] as const)
 
-  // Keys Playwright sends never pass the window's before-input-event, and keys sent with sendInputEvent pass it but go
-  // to the page and never to a frame. So main's own handler is handed each key as the window's input would hand it and,
-  // when it lets the key go on, the debugger sends it in the same task to the frame holding focus, as the browser sends
-  // a key main let go on. gap is the time between keys, 0 for a burst. Answers where in text each key main dropped stood
-  const typeThroughMain = (app: ElectronApplication, text: string, gap: number) => app.evaluate(async ({ webContents }, [typed, wait]) => {
-    const contents = webContents.getAllWebContents().find(each => each.getURL() === 'hetu://editor/')!
-    if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
-    const dropped: number[] = []
-    for (const [at, key] of [...typed].entries()) {
-      const code = `Key${key.toUpperCase()}`
-      const windowsVirtualKeyCode = key.toUpperCase().charCodeAt(0)
-      for (const type of ['keyDown', 'keyUp'] as const) {
-        let prevented = false
-        const input = { type, key, code, control: false, meta: false, alt: false, shift: false, isAutoRepeat: false }
-        contents.emit('before-input-event', { preventDefault: () => { prevented = true } }, input)
-        if (prevented && type === 'keyDown') dropped.push(at)
-        if (prevented) continue
-        const sent = type === 'keyDown' ? { type, key, code, text: key, windowsVirtualKeyCode } : { type, key, code, windowsVirtualKeyCode }
-        void contents.debugger.sendCommand('Input.dispatchKeyEvent', sent)
-      }
-      await new Promise(resolve => setTimeout(resolve, wait))
-    }
-    return dropped
-  }, [text, gap] as const)
   // Holds the page's thread for ms from after ms on, so the page sees a frame take focus only once it is free and only
   // main stands between the frame and the keys typed meanwhile
   const holdPage = (editor: Page, after: number, ms: number) => editor.evaluate(([wait, hold]) => {
