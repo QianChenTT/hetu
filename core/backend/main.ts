@@ -16,7 +16,7 @@ import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { afterFailure, closeQuits, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
+import { afterFailure, Ending, quitInOrder, QuitRun, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { frameOwner } from '../api/ids.ts'
@@ -75,7 +75,6 @@ async function start(): Promise<void> {
   let updater: Updater | null = null
   // An update's installer, started once Quit has run, false when it started nothing so hetu starts again
   let startAfterQuit: (() => boolean) | null = null
-  let quitting: Promise<void> | null = null
   // Set once the system said its session ends: a shutdown, a restart or a logoff, which closes windows with no quit
   let sessionEnding = false
   let code = 0
@@ -84,25 +83,33 @@ async function start(): Promise<void> {
   // A quit after a failure and one that starts hetu again keep the restart marker, a clean one clears it
   const ending = new Ending()
   const seen = new Set<BrowserWindow>()
-  app.on('before-quit', event => {
-    event.preventDefault()
-    updater?.close()
-    quitting ??= (async () => {
-      // A quit the human asked for: windows hear core.quitting and get a moment to keep their drafts, as after a failure
-      if (ending.asked() && routerOf !== null && [...seen].some(window => !window.isDestroyed())) {
-        routerOf.quitting()
-        await new Promise(resolve => setTimeout(resolve, DRAFT_GRACE_MS))
-      }
-      for (const window of seen) if (!window.isDestroyed()) window.close()
+  const quitting = new QuitRun<BrowserWindow>({
+    windows: () => seen,
+    // A quit the human asked for: windows hear core.quitting and get a moment to keep their drafts, as after a failure
+    announce: () => {
+      if (!ending.asked() || routerOf === null || ![...seen].some(window => !window.isDestroyed())) return false
+      routerOf.quitting()
+      return true
+    },
+    wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    finish: async () => {
       await ending.leave(pluginsManagerOf)
       const missed = parts === null ? (await booted.release(), []) : await quitInOrder(parts)
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
-    })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => {
+    },
+    exit: err => {
+      if (err !== null) console.error(`quit: ${reason(err)}`)
       // An installer started starts hetu again itself, so it wins over a restart
       if (startAfterQuit !== null ? !startAfterQuit() : again) app.relaunch()
       app.exit(code)
-    })
+    },
+    quit: () => app.quit(),
+  })
+  app.on('before-quit', event => {
+    event.preventDefault()
+    updater?.close()
+    quitting.start()
   })
   // The hidden renderers never close, so hetu quits when the last window a human sees does
   const show = (window: BrowserWindow) => {
@@ -196,26 +203,21 @@ async function start(): Promise<void> {
         // exits once its parts stopped whatever windows are left. The session ending lets it close
         window.on('session-end', () => { sessionEnding = true })
         window.on('close', event => {
-          if (keepsOpen({ due: pluginsManager?.startupDue() === true, quitting: quitting !== null, sessionEnding })) event.preventDefault()
+          if (keepsOpen({ due: pluginsManager?.startupDue() === true, quitting: quitting.started(), sessionEnding })) event.preventDefault()
         })
         return window
       },
     })
     let editor: BrowserWindow | null = null
-    // The editor windows main closes itself, which close with no quit
-    const closedByMain = new WeakSet<BrowserWindow>()
-    const closeEditors = () => {
-      for (const window of seen) {
-        if (window === trusted.window || window.isDestroyed()) continue
-        closedByMain.add(window)
-        window.close()
-      }
+    // Closed by main, so with no quit
+    const closeAllButTrusted = () => {
+      for (const window of seen) if (window !== trusted.window) quitting.close(window)
       editor = null
     }
     // The log failing while running: windows hear core.quitting and get their grace, then hetu quits with an error and
     // starts once more. Or the plugins manager stopped in the stopped mode, which leaves only the trusted window
     const onFailure = (failure: Failure) => afterFailure(failure, {
-      quitting: () => quitting !== null,
+      quitting: () => quitting.started(),
       announce: () => router?.quitting(),
       quit: (exitCode, restart) => {
         code = exitCode
@@ -226,7 +228,9 @@ async function start(): Promise<void> {
       showTrusted: () => trusted.show(),
       // Modal, so the quit follows once the human closed it
       showBox: mode => (dialog.showMessageBoxSync({ type: 'error', defaultId: 0, ...stoppedBox(mode) }) === 1 ? 'retry' : 'quit'),
-      closeEditors,
+      closeEditors: closeAllButTrusted,
+      holdCloses: () => quitting.failed(),
+      editorsOpen: () => [...seen].some(window => window !== trusted.window && !window.isDestroyed()),
       packaged: LOCKED,
       env: process.env,
       later: (run, ms) => setTimeout(run, ms).unref?.(),
@@ -344,7 +348,7 @@ async function start(): Promise<void> {
     updater = createUpdater({
       locked: LOCKED, running: app.getVersion(), platform: process.platform, recording: wired.recording, dataDir: booted.dataDir,
       quit: start => {
-        if (quitting !== null) return false
+        if (quitting.started()) return false
         startAfterQuit = start
         app.quit()
         return true
@@ -397,11 +401,7 @@ async function start(): Promise<void> {
         contents.send('hetu:press', { down: mouse.type === 'mouseDown', x: (mouse.globalX - content.x) / zoom, y: (mouse.globalY - content.y) / zoom })
       })
       // Closing the editor quits hetu the way Quit does, the trusted window open or not, so the page keeps its drafts first
-      window.on('close', event => {
-        if (!closeQuits({ quitting: quitting !== null, byMain: closedByMain.has(window) })) return
-        event.preventDefault()
-        app.quit()
-      })
+      window.on('close', event => quitting.editorClosing(window, event))
       return window
     }
     const placement = () => quietPlacement({
@@ -413,7 +413,7 @@ async function start(): Promise<void> {
     // A second hetu on the same data folder quits before ready and this one comes to the front. In the stopped mode that
     // is the trusted window
     app.on('second-instance', () => {
-      if (quitting !== null) return
+      if (quitting.started()) return
       if (wired.pluginsManager.stopped() !== null) {
         if (!wired.pluginsManager.stoppedBox()) trusted.show()
         return
@@ -429,7 +429,7 @@ async function start(): Promise<void> {
     // The built-ins main decides with are frozen for the run before the core modules start
     freezeIntrinsics()
     await wired.pluginsManager.start()
-    if (quitting !== null) return
+    if (quitting.started()) return
     // A control failed at start: only the trusted window opens, or the native box with the security view off
     const stopped = wired.pluginsManager.stopped()
     if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
