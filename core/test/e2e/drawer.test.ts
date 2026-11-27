@@ -7,7 +7,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage, openByHand, writeOpener } from './helpers.ts'
+import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, visibleWindows, workersPage, openByHand, writeOpener } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -372,6 +372,38 @@ describe('the drawer', () => {
     const done = exited(app)
     await quit(editor, app)
     expect(await done).toBe(0)
+    const again = await launch(dataDir)
+    const next = await editorPage(again)
+    await until(() => logged(dataDir, 'core.ready'))
+    await open(next, 'a.md')
+    await until(async () => (await next.locator('#note-text').innerText()).includes('A draft of this note'))
+    await next.getByRole('button', { name: 'Restore' }).click()
+    await until(async () => (await shown(next).innerText()) === 'base typed last')
+  })
+
+  it('keeps what was typed just before the editor window closes as a draft, the trusted window open', async () => {
+    const { app, editor, dataDir } = await started({ notes: { 'a.md': 'base' } })
+    // Takes no focus and no click from the person at the machine, the trusted window opened below included
+    await app.evaluate(({ app, BrowserWindow }) => {
+      if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
+      for (const window of BrowserWindow.getAllWindows()) window.setIgnoreMouseEvents(true)
+      app.on('browser-window-created', (_event, window) => window.setIgnoreMouseEvents(true))
+    })
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
+    await open(editor, 'a.md')
+    await shown(editor).click()
+    await editor.keyboard.press('ControlOrMeta+End')
+    await editor.keyboard.type(' typed last')
+    const typed = Date.now()
+    const done = exited(app)
+    // As the window's close button does, well inside the page's 1 s draft timer
+    await app.evaluate(({ BrowserWindow }) => {
+      for (const window of BrowserWindow.getAllWindows()) if (window.webContents.getURL() === 'hetu://editor/') window.close()
+    })
+    expect(Date.now() - typed).toBeLessThan(300)
+    // Quit's grace and shutdown take well under this. Left open by the trusted window, hetu never exits
+    expect(await Promise.race([done, tick(15_000).then(() => 'still running')])).toBe(0)
     const again = await launch(dataDir)
     const next = await editorPage(again)
     await until(() => logged(dataDir, 'core.ready'))

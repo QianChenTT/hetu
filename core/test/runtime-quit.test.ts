@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { afterFailure, Ending, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
+import { afterFailure, closeQuits, Ending, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
 
 const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -79,6 +79,20 @@ describe('quit', () => {
     const calls: string[] = []
     relaunch({ relaunch: () => calls.push('relaunch'), quit: () => calls.push('quit') })
     expect(calls).toEqual(['relaunch', 'quit'])
+  })
+})
+
+describe('closing the editor window', () => {
+  it('quits the way Quit does on every close, the trusted window open or not, so the page keeps its drafts first', () => {
+    expect(closeQuits({ quitting: false, byMain: false })).toBe(true)
+  })
+
+  it('lets a close during a quit go on, so no second quit starts', () => {
+    expect(closeQuits({ quitting: true, byMain: false })).toBe(false)
+  })
+
+  it('lets a close main makes itself go on, as the stopped mode leaving only the trusted window', () => {
+    expect(closeQuits({ quitting: false, byMain: true })).toBe(false)
   })
 })
 
