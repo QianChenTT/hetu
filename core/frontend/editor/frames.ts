@@ -398,6 +398,8 @@ export class Frames {
     const url = (got.result as { url: string }).url
     held.url = url
     const element = createFrameElement(document, url)
+    element.dataset.hetuView = instance
+    element.dataset.hetuOwner = held.owner
     element.addEventListener('load', () => this.loaded(instance, held))
     held.element = element
     this.loads.started(instance)

@@ -91,6 +91,8 @@ export class Layers {
     if (tree === undefined || tree.owner !== owner) {
       // A popover's strip names the plugin by its id, which the core checks, never a name the plugin picked
       tree = new TreeView(owner, surface, owner, this.hooks.drawHooks(owner, surface))
+      tree.root.dataset.hetuView = surface
+      tree.root.dataset.hetuOwner = owner
       this.views.set(surface, tree)
     }
     return tree
@@ -359,6 +361,7 @@ export class Layers {
       this.lifted.set(id, element)
     }
     element.dataset.of = of
+    element.dataset.hetuTab = of
     element.dataset.layout = layout
     const view = of.startsWith('v') ? this.titles.view(of) : null
     const text = view !== null ? `${view.text}${view.down ? ' (not running)' : ''}` : this.titles.note(of) ?? ''

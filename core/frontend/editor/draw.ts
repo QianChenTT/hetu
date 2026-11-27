@@ -234,6 +234,12 @@ export class TreeView {
       if (node.tip === undefined) element.removeAttribute('title')
       else element.title = node.tip
     }
+    // The note a row carries, which tier 0 reads the row by
+    const note = node.drag?.type === 'note' ? node.drag.value : undefined
+    if (element.dataset.hetuNote !== note) {
+      if (note === undefined) delete element.dataset.hetuNote
+      else element.dataset.hetuNote = note
+    }
     if (node.zone !== undefined) this.zones.set(node.zone, element)
     switch (node.kind) {
       case 'box':
