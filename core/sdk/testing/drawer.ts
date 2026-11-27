@@ -190,6 +190,12 @@ export class FakeDrawer {
     }
   }
 
+  // The human pressed outside the plugin's frames, on the note or in another plugin's frame. An open the plugin's frames
+  // ask after it is the plugin's own, as hetu's drawer counts the presses main pushes
+  pressedElsewhere(): void {
+    this.credit.pressed(null)
+  }
+
   // The human picked another theme: every frame is told the page's variables as hetu's drawer tells them
   changeTheme(variables: Readonly<Record<string, string>>): void {
     this.frameTheme = Object.freeze({ ...variables })
