@@ -199,13 +199,20 @@ export class MemoryStorage implements Provider {
 
 // lock.* and the lock guard of the lock module itself, its table, holder, caps and expiry on the clock given and its
 // lock.changed through the publish given, with the paths taken as spelled where the module makes them canonical on the
-// disk. The folder it is handed is one no prepare here reads
+// disk. A dot name is refused not-granted and a plugin's clear leaves it out, as the module's prepare does. The folder
+// it is handed is one no prepare here reads
 export function memoryLock(options: LockOptions): { provider: Provider, guard: Guard } {
   const lock = createLock(options)
   lock.role.open({ folder: 'memory', dataDir: '', installDir: '' })
   return {
     provider: {
-      prepare: async call => ({ scope: { paths: [...(call.args as { paths: string[] }).paths] } }),
+      prepare: async call => {
+        const paths = (call.args as { paths?: unknown } | null)?.paths
+        if (!Array.isArray(paths)) return { code: 'invalid' }
+        const dotted = (path: string) => path.split('/').some(isDotName)
+        if (call.action === 'lock.clear' && call.caller.kind !== 'window') return { scope: { paths: paths.filter(path => !dotted(path)) } }
+        return paths.some(dotted) ? { code: 'not-granted' } : { scope: { paths: [...paths] } }
+      },
       perform: (call, prepared) => lock.provider.perform(call, prepared),
     },
     guard: lock.guard,
