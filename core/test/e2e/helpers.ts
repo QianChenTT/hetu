@@ -136,8 +136,10 @@ export async function launch(
     ? electron.launch({ args: [...switches, repo], env: environment })
     : electron.launch({ executablePath: drivenApp, args: switches, env: environment }))
   running.push(app)
-  // An app some tests start to see it quit at once has no windows left to keep quiet
-  if (environment.HETU_QUIET_WINDOWS === 'hidden' && options.takesFocus !== true) await quiet(app).catch(() => {})
+  // An app some tests start to see it quit at once has no windows left to keep quiet, so a failure is told, not thrown
+  if (environment.HETU_QUIET_WINDOWS === 'hidden' && options.takesFocus !== true) {
+    await quiet(app).catch((err: unknown) => console.warn(`the quiet launch was not applied: ${String(err)}`))
+  }
   return app
 }
 

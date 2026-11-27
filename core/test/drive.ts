@@ -29,13 +29,21 @@ export const stubPicker = (app: ElectronApplication, picked: string | null, opti
     }) as typeof dialog.showOpenDialog
   }, [picked, options.focusTrusted === true] as const)
 
+// What quiet set, as a record reports it
+export type Quieted = { activation: 'prohibited' | 'not set off macOS', mouse: 'ignored' }
+
 // Keeps a hidden run out of the person's way, as the first call after the launch. macOS still brings hetu to the front
 // on its own focus() of a hidden window, so the app may never become the active one there. Every window lets the mouse
 // pass through, so a click on the spot a see-through window covers reaches what the person sees. Playwright's input
 // goes through the pages, and its focus emulation answers focus questions there
-export const quiet = (app: ElectronApplication) => app.evaluate(({ app, BrowserWindow }) => {
-  if (process.platform === 'darwin') app.setActivationPolicy('prohibited')
+export const quiet = (app: ElectronApplication): Promise<Quieted> => app.evaluate(({ app, BrowserWindow }) => {
+  let activation: 'prohibited' | 'not set off macOS' = 'not set off macOS'
+  if (process.platform === 'darwin') {
+    app.setActivationPolicy('prohibited')
+    activation = 'prohibited'
+  }
   const passThrough = (window: InstanceType<typeof BrowserWindow>) => window.setIgnoreMouseEvents(true)
   for (const window of BrowserWindow.getAllWindows()) passThrough(window)
   app.on('browser-window-created', (_event, window) => passThrough(window))
+  return { activation, mouse: 'ignored' as const }
 })
