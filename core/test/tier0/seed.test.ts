@@ -8,7 +8,7 @@ import { seed, type SeedSummary } from './seed.ts'
 
 // The tree's hash, pinned on macOS. A change to the seed changes it on purpose, and the new value goes here. It holds
 // across platforms only once CI runs this file on Windows and Linux too. On a mismatch the message lists every file
-const TREE_HASH = '6ba018150991071bc9f2453728509c6edb07007d8eb8c8778ef0bc4f9eb8d29b'
+const TREE_HASH = '7cecbd23e09c4da6fd396012228b4add1dd0ad4c37de17c7e65e234f54c59f61'
 
 let base: string
 let dir: string
@@ -58,9 +58,12 @@ afterAll(async () => {
 describe('seed', () => {
   it('writes what the summary counts', () => {
     expect(summary.notes).toBe(notes().length)
-    expect(summary.notes).toBe(257)
+    // seed.py's 257 and 4 added here: two NFD names, the long name and the deep note
+    expect(summary.notes).toBe(261)
     expect(summary.daily).toBe(14)
     expect(summary.images).toBe(4)
+    expect(summary.pdfs).toBe(1)
+    expect(summary.dotFiles).toBe([...files.keys()].filter(rel => rel.startsWith('.')).length)
     expect(summary.files).toBe(files.size)
     expect(summary.folders).toBe(folders.filter(f => !f.split('/').some(s => s.startsWith('.'))).length)
     expect(summary.emptyFolders).toBe(1)
@@ -88,7 +91,7 @@ describe('seed', () => {
 
   it('writes into a missing or empty folder and refuses anything else', async () => {
     const empty = await mkdtemp(path.join(base, 'empty-'))
-    await expect(seed(empty)).resolves.toMatchObject({ notes: 257 })
+    await expect(seed(empty)).resolves.toMatchObject({ notes: 261 })
     await expect(seed(empty)).rejects.toThrow(/not empty/)
     const dotted = path.join(base, 'dotted')
     await mkdir(dotted)
@@ -123,6 +126,37 @@ describe('seed', () => {
     }
   })
 
+  it('writes NFD names beside NFC ones, read back as written', async () => {
+    const { nfdNote, nfdFolderNote } = summary.special
+    for (const rel of [nfdNote, nfdFolderNote]) {
+      expect(rel).not.toBe(rel.normalize('NFC'))
+      expect(files.has(rel)).toBe(true)
+    }
+    const inbox = await readdir(path.join(dir, path.dirname(nfdNote)))
+    expect(inbox).toContain(path.basename(nfdNote))
+    const nfc = inbox.filter(name => /[^\x00-\x7f]/.test(name) && name === name.normalize('NFC'))
+    expect(nfc.some(name => name.includes('é'))).toBe(true)
+  })
+
+  it('writes a 200 byte name and a path past Windows MAX_PATH but within the 512 a scope holds', () => {
+    const { longName, deep } = summary.special
+    const name = path.posix.basename(longName)
+    expect(Buffer.byteLength(name)).toBe(200)
+    expect(name.length).toBeLessThanOrEqual(255)
+    expect(deep.length).toBeGreaterThan(260)
+    expect(deep.length).toBeLessThanOrEqual(512)
+    expect(deep.split('/')).toHaveLength(10)
+    expect(deep.split('/').every(segment => Buffer.byteLength(segment) <= 255)).toBe(true)
+    expect(files.has(longName) && files.has(deep)).toBe(true)
+  })
+
+  it('writes .obsidian and .git as plain dot folders', () => {
+    expect(JSON.parse(text('.obsidian/app.json'))).toBeTypeOf('object')
+    expect(text('.git/HEAD')).toBe('ref: refs/heads/main\n')
+    expect(under('.git').length).toBeGreaterThanOrEqual(3)
+    expect(under('.obsidian').some(rel => rel.endsWith('.md'))).toBe(true)
+  })
+
   it('writes a big note of exactly 5,000 lines', () => {
     const big = text(summary.special.big)
     expect(big.endsWith('\n')).toBe(true)
@@ -153,6 +187,32 @@ describe('seed', () => {
     expect(inflateSync(png.subarray(41, 41 + length))).toHaveLength(48 * (1 + 64 * 3))
   })
 
+  it('writes a PDF whose cross reference table points at its objects', () => {
+    const pdf = files.get(summary.special.pdf)!.toString('latin1')
+    expect(pdf.startsWith('%PDF-1.4\n')).toBe(true)
+    expect(pdf.endsWith('%%EOF\n')).toBe(true)
+    const start = Number(/startxref\n(\d+)\n%%EOF\n$/.exec(pdf)![1])
+    expect(pdf.slice(start, start + 4)).toBe('xref')
+    const offsets = [...pdf.slice(start).matchAll(/^(\d{10}) 00000 n \n/gm)].map(m => Number(m[1]))
+    expect(offsets).toHaveLength(5)
+    offsets.forEach((at, i) => expect(pdf.slice(at)).toMatch(new RegExp(`^${i + 1} 0 obj`)))
+    const [, length, stream] = /\/Length (\d+) >>\nstream\n([\s\S]*?)\nendstream/.exec(pdf)!
+    expect(stream).toHaveLength(Number(length))
+  })
+
+  it('links the PDF from notes, as an embed and as a Markdown link', () => {
+    const name = path.posix.basename(summary.special.pdf)
+    expect(notes().some(rel => text(rel).includes(`![[${name}]]`))).toBe(true)
+    expect(notes().some(rel => text(rel).includes(`(<${name}>)`))).toBe(true)
+  })
+
+  it('links images in both CommonMark forms', () => {
+    const [angled, encoded] = summary.special.imageLinks
+    expect(text('Welcome.md')).toContain(`](${angled})`)
+    expect(text('Welcome.md')).toContain(`](${encoded})`)
+    expect([angled.startsWith('<'), encoded.includes('%20')]).toEqual([true, true])
+  })
+
   it('points every Markdown link at a file that exists, ../ and encoded spaces among them', () => {
     let count = 0
     let upward = 0
@@ -177,20 +237,25 @@ describe('seed', () => {
   })
 
   // A fact of the seed, not a judgment of hetu's resolver: each target names a file exactly. What the real build does
-  // with the deliberate case is for tier 0's journeys, which read it from special
-  it('names a file exactly with every wikilink but the deliberate one', () => {
+  // with the deliberate cases is for tier 0's journeys, which read them from special
+  it('names a file exactly with every wikilink but the deliberate cases', () => {
     const known = new Set<string>()
     for (const rel of files.keys()) {
       const name = path.posix.basename(rel)
       known.add(rel).add(rel.replace(/\.md$/, '')).add(name).add(name.replace(/\.md$/, ''))
     }
     const missing = new Set<string>()
+    const targets = new Set<string>()
     for (const rel of notes()) {
       for (const [, inner] of text(rel).matchAll(/\[\[([^\]]+)\]\]/g)) {
         const target = inner.split('|')[0].split('#')[0]
+        targets.add(target)
         if (!known.has(target)) missing.add(target)
       }
     }
-    expect([...missing]).toEqual([summary.special.unresolved])
+    const { unresolved, nfcLinkToNfd, nonNoteEmbeds } = summary.special
+    expect([...missing].sort()).toEqual([nfcLinkToNfd, unresolved].sort())
+    expect(known.has(nfcLinkToNfd.normalize('NFD'))).toBe(true)
+    expect(nonNoteEmbeds.every(embed => targets.has(embed) && known.has(embed) && !embed.endsWith('.md'))).toBe(true)
   })
 })
