@@ -7,13 +7,15 @@ import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from 'playwright'
 import type { TestContext } from 'vitest'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
+import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
+import { classes } from '../../backend/policy/grant-risk-classifier/decide.ts'
 import { executableIn } from '../../build/package.ts'
 import { unpackZip } from '../../backend/plugins-manager/unpack.ts'
 import { quiet, stubPicker, type Quieted } from '../drive.ts'
 import { writeApproved } from '../plugins-manager-fakes.ts'
 import { makeZip } from '../zip-maker.ts'
-import { click, detachDebuggers, Dropped, keys, press, readFocus, ROUTES, typeThroughMain, watchInput, type Clicked, type Focus } from './input.ts'
+import { click, detachDebuggers, Dropped, keys, press, readFocus, ROUTES, typeThroughMain, watchInput, type Clicked, type ClickOptions, type Focus } from './input.ts'
 import { takeLock } from './lock.ts'
 import { seed } from './seed.ts'
 import { waitForMemory } from './memory.ts'
@@ -116,7 +118,7 @@ export type Instance = {
   editor(): Promise<Page>
   trusted(): Promise<Page>
   // A click through main's input route, which main heard and the target got, answering where main heard it
-  click(target: Locator, options?: { holdMs?: number }): Promise<Clicked>
+  click(target: Locator, options?: ClickOptions): Promise<Clicked>
   // Text typed and a chord pressed in a page's window through main's before-input-event
   keys(page: Page, text: string): Promise<void>
   press(page: Page, chord: string): Promise<void>
@@ -164,7 +166,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
       }
       else if (kept === undefined) await rm(folder, { recursive: true, force: true, maxRetries: 5 })
       else {
-        for (const done of [tracePath, data, notes, path.join(folder, 'profile.zip')]) await rm(done, { recursive: true, force: true, maxRetries: 5 })
+        for (const done of [tracePath, data, notes, path.join(folder, 'profile.zip'), path.join(folder, 'broken.zip')]) await rm(done, { recursive: true, force: true, maxRetries: 5 })
         const recorded = path.join(folder, 'record.json')
         const record = await readFile(recorded, 'utf8').then(text => JSON.parse(text) as RunRecord, () => null)
         if (record !== null) await writeFile(recorded, `${JSON.stringify({ ...record, trace: null }, null, 2)}\n`)
@@ -212,8 +214,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
     const store = new StateStore(data)
     await store.writeSwitches(defaultSwitches())
     if (options.firstRun !== true) await store.writeLuoshu({ folder: notes })
-    if (route === 'approved') for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
-    for (const [id, from] of Object.entries(tests)) await writeShipped(store, data, from, id)
+    if (route === 'approved') await writeShipped(store, data, new Map([...ids.map(id => [id, path.join(unpacked, id)] as const), ...Object.entries(tests)]))
   }
   if (isSerial(ids)) held.releases.push(await takeLock(DOOR_LOCK, { signal: context.signal, ms: 90_000 }))
 
@@ -288,9 +289,9 @@ export async function start(context: TestContext, options: Options = {}): Promis
       return page
     },
     trusted: () => pageAt(app, 'hetu://trusted/'),
-    click: async (target, options = {}) => {
+    click: async (target, options) => {
       const url = target.page().url()
-      const clicked = await click(app, target, 10_000, options.holdMs)
+      const clicked = await click(app, target, undefined, options)
       input.add(ROUTES.mouse)
       presses.push({ url, intended: clicked.intended, heard: clicked.page })
       return clicked
@@ -311,7 +312,10 @@ export async function start(context: TestContext, options: Options = {}): Promis
     usedInput: route => void input.add(route),
     harnessed: step => void harness.push(step),
     focus: () => readFocus(app),
-    picker: (picked, pick = {}) => stubPicker(app, picked, pick),
+    picker: async (picked, pick = {}) => {
+      await stubPicker(app, picked, pick)
+      if (pick.focusTrusted === true) harness.push(PICKER_FOCUS)
+    },
     ended: () => closed,
     quit: () => held.quit!(),
   }
@@ -322,14 +326,25 @@ export async function start(context: TestContext, options: Options = {}): Promis
   return instance
 }
 
-// A shipped or test plugin copied into the plugin folder and written approved, its write grants confirmed, as the human's
-// Confirm at install and at first use leave it
-async function writeShipped(store: StateStore, data: string, from: string, id: string): Promise<void> {
-  const root = path.join(data, 'plugins', id)
-  await cp(from, root, { recursive: true })
-  const manifest = JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as { version: string, capabilities: { type: string }[] }
-  const writes = manifest.capabilities.filter(grant => grant.type === 'luoshu.write')
-  await writeApproved(store, id, root, { granted: manifest.capabilities as never, version: manifest.version, firstUse: [], confirmed: writes as never })
+// The shipped plugins and any test plugins, each a built folder by its id, copied into the plugin folder and written
+// approved, each with the class and first-use items the grant risk classifier gives it beside the others and its write
+// grants confirmed, as the human's Confirm at install and at first use leave them. A class the classifier wouldn't give
+// is moved by the pass at start, which raises a request a test's next Confirm could answer
+async function writeShipped(store: StateStore, data: string, folders: ReadonlyMap<string, string>): Promise<void> {
+  const ids = [...folders.keys()]
+  const manifests = new Map<string, { version: string, capabilities: Capability[] }>()
+  for (const [id, from] of folders) manifests.set(id, JSON.parse(await readFile(path.join(from, 'hetu-plugin.json'), 'utf8')))
+  const stored = { class: null, firstUse: [], unclassed: false, owed: null }
+  const answer = classes({ cause: 'start', change: null, confirm: false, plugins: ids.map(id => ({ id, granted: manifests.get(id)!.capabilities, stored })) })
+  for (const [id, from] of folders) {
+    const root = path.join(data, 'plugins', id)
+    await cp(from, root, { recursive: true })
+    const { version, capabilities } = manifests.get(id)!
+    const verdict = answer.plugins.find(each => each.id === id)!
+    const writes = capabilities.filter(grant => grant.type === 'luoshu.write')
+    const firstUse = verdict.firstUse.filter(item => item.type !== 'luoshu.write')
+    await writeApproved(store, id, root, { granted: capabilities, version, class: verdict.class, firstUse, confirmed: writes })
+  }
 }
 
 // When main restarts each window's input delay: on show, on focus and on a load, as the trusted window's delay does.
@@ -403,6 +418,8 @@ async function installThroughTrusted(instance: Instance, zip: string, ids: reado
 // under the activation policy, so its delay never starts and every press is dropped. The show a person's run gets is
 // emitted from main then, and the record says so. Answers whether the window had a show or focus of its own
 export const EMITTED_SHOW = 'emitted show on the trusted window, which had none'
+// What the picker stub with focusTrusted does on each answer, recorded each time it is set so
+export const PICKER_FOCUS = 'the picker stub emits focus on the trusted window before it answers, as a real picker\'s close does'
 export const showUnseen = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) => {
   const window = BrowserWindow.getAllWindows().find(found => found.webContents.getURL() === 'hetu://trusted/')!
   if ((globalThis as unknown as { tier0Seen: Set<number> }).tier0Seen.has(window.id)) return true
