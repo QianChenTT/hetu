@@ -3,13 +3,17 @@ import type { Provider } from '../../api/policy-jobs.ts'
 import type { Quotas } from '../../backend/providers/storage/store.ts'
 import { ask, editorCaller, pluginCaller } from './ask.ts'
 
-// A store made empty for each case and the quotas it holds each space to: core/api's for the fake, small ones for the
-// storage module, whose disk takes seconds to fill core/api's key count
-export type StorageSubject = { provider: Provider, quotas: Quotas }
+// A store made empty for each case, holding each space to the quotas given. Both sides take small ones, since the
+// storage module's disk takes seconds to fill core/api's key count. Each side's default is core/api's, which its own
+// tests check
+export type MakeStorage = (quotas: Quotas) => Promise<Provider>
+
+// Apart for each kind, so a store that counts one kind against the other's quota fails
+const quotas: Quotas = { storage: { bytes: 4096, keys: 8 }, cache: { bytes: 2048, keys: 6 } }
 
 // storage.* and cache.* as every caller reaches them
-export function storageCases(made: () => Promise<StorageSubject>): void {
-  const make = async () => (await made()).provider
+export function storageCases(made: MakeStorage): void {
+  const make = () => made(quotas)
   const other = pluginCaller('other')
 
   it('answers what was set through JSON, null for a key never set and null for set and delete', async () => {
@@ -41,6 +45,7 @@ export function storageCases(made: () => Promise<StorageSubject>): void {
     const invalid = { refused: { code: 'invalid' } }
     expect(await ask(store, 'storage.set', { key: 'k', value: undefined })).toEqual(invalid)
     expect(await ask(store, 'cache.set', { key: 'k' })).toEqual(invalid)
+    expect(await ask(store, 'storage.set', { key: 'a'.repeat(64), value: 1 })).toBeNull()
     for (const key of ['Key', '1a', 'a-b', 'a.b', '', 'a'.repeat(65), 42, undefined]) {
       expect(await ask(store, 'storage.set', { key, value: 1 }), String(key)).toEqual(invalid)
       expect(await ask(store, 'storage.get', { key }), String(key)).toEqual(invalid)
@@ -54,17 +59,19 @@ export function storageCases(made: () => Promise<StorageSubject>): void {
     expect(await ask(await make(), 'storage.get', { key: 'k' }, { caller: content })).toEqual({ refused: { code: 'not-granted' } })
   })
 
-  it('holds a space to its key count, replacing a key at the count still allowed', async () => {
-    const { provider: store, quotas } = await made()
-    for (let i = 0; i < quotas.storage.keys; i++) expect(await ask(store, 'storage.set', { key: `k${i}`, value: 1 })).toBeNull()
-    expect(await ask(store, 'storage.set', { key: 'more', value: 1 })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
-    expect(await ask(store, 'storage.set', { key: 'k0', value: 2 })).toBeNull()
-    expect(await ask(store, 'storage.set', { key: 'more', value: 1 }, { caller: other })).toBeNull()
+  it('holds each kind of a space to its own key count, replacing a key at the count still allowed', async () => {
+    const store = await make()
+    for (const kind of ['storage', 'cache'] as const) {
+      for (let i = 0; i < quotas[kind].keys; i++) expect(await ask(store, `${kind}.set`, { key: `k${i}`, value: 1 })).toBeNull()
+      expect(await ask(store, `${kind}.set`, { key: 'more', value: 1 }), kind).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+      expect(await ask(store, `${kind}.set`, { key: 'k0', value: 2 })).toBeNull()
+      expect(await ask(store, `${kind}.set`, { key: 'more', value: 1 }, { caller: other })).toBeNull()
+    }
   })
 
   // A key's line and, in storage, the 64-character hash line under it
   it('holds a space to its bytes, counted as the key\'s line and in storage its hash line', async () => {
-    const { provider: store, quotas } = await made()
+    const store = await make()
     const line = '{"space":"reader","key":"big","value":""}\n'.length
     const big = 'x'.repeat(quotas.storage.bytes - line - 65)
     expect(await ask(store, 'storage.set', { key: 'big', value: `${big}x` })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
