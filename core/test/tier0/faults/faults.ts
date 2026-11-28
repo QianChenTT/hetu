@@ -116,7 +116,7 @@ export const faults: readonly Fault[] = [
     id: 'sealed 10',
     plants: [{ repo: 'plugins', patch: 'f10.patch' }],
     what: 'search never finds a note whose path has a space or a CJK character',
-    expected: [],
+    expected: ['journeys/notes.real.test.ts'],
   },
 ]
 
