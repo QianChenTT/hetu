@@ -73,6 +73,9 @@ export type Options = {
   // folders are kept until the test ends, the earlier instance's cleanup removing them. Nothing is written to them, so
   // it takes no notes, seed or install route
   after?: Pick<Instance, 'data' | 'notes'>
+  // A first run: no notes folder picked and, on the install route, the zip left for the test to install, so the
+  // startup flow's own steps are what the test drives
+  firstRun?: boolean
   // The run's facts when a caller already read them, so a run of many instances hashes the zip once
   facts?: RunFacts
   // Stand-ins for the memory reading and how long to wait for memory, for the gate's own test
@@ -108,6 +111,8 @@ export type Instance = {
   data: string
   notes: string
   ids: string[]
+  // The zip the install route picks
+  zip: string
   editor(): Promise<Page>
   trusted(): Promise<Page>
   // A click through main's input route, which main heard and the target got, answering where main heard it
@@ -120,6 +125,8 @@ export type Instance = {
   frameKeys(typed: string | readonly string[], gap?: number, page?: Page): Promise<number[]>
   // Names a route a test drove the instance through itself, such as Playwright's own input, for the record
   usedInput(route: string): void
+  // Names a step the harness took beyond input, such as an emitted show, for the record
+  harnessed(step: string): void
   focus(): Promise<Focus>
   // Main's open dialog answering with picked from now on. focusTrusted as a real picker's close does
   picker(picked: string | null, options?: { focusTrusted?: boolean }): Promise<void>
@@ -204,7 +211,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
     }
     const store = new StateStore(data)
     await store.writeSwitches(defaultSwitches())
-    await store.writeLuoshu({ folder: notes })
+    if (options.firstRun !== true) await store.writeLuoshu({ folder: notes })
     if (route === 'approved') for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
     for (const [id, from] of Object.entries(tests)) await writeShipped(store, data, from, id)
   }
@@ -274,7 +281,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   tracing = true
 
   const instance: Instance = {
-    app, folder, data, notes, ids,
+    app, folder, data, notes, ids, zip: installed.zip,
     editor: async () => {
       const page = await pageAt(app, 'hetu://editor/')
       await until(async () => (await visibleUrls(app)).includes('hetu://editor/'), 'the editor window to show')
@@ -302,6 +309,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
       return dropped
     },
     usedInput: route => void input.add(route),
+    harnessed: step => void harness.push(step),
     focus: () => readFocus(app),
     picker: (picked, pick = {}) => stubPicker(app, picked, pick),
     ended: () => closed,
@@ -310,7 +318,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   // The next start reads free memory with this instance up
   await instance.editor()
   await releaseStart()
-  if (route === 'install') await installThroughTrusted(instance, installed.zip, ids, harness)
+  if (route === 'install' && options.firstRun !== true) await installThroughTrusted(instance, installed.zip, ids, harness)
   return instance
 }
 
@@ -346,7 +354,7 @@ const watchDelays = (app: ElectronApplication) => app.evaluate(({ app, BrowserWi
 })
 
 // Waits until main's input delay on the window showing url has run out, read from main's own restarts
-async function armed(app: ElectronApplication, url: string): Promise<void> {
+export async function armed(app: ElectronApplication, url: string): Promise<void> {
   const left = await app.evaluate(({ BrowserWindow }, [url, delay]) => {
     const window = BrowserWindow.getAllWindows().find(found => found.webContents.getURL() === url)
     const at = window === undefined ? undefined : (globalThis as unknown as { tier0Restarts: Map<number, number> }).tier0Restarts.get(window.id)
@@ -358,7 +366,7 @@ async function armed(app: ElectronApplication, url: string): Promise<void> {
 // Presses through main's route once main's delay on the page's window has run out, then waits for what it does. A
 // press main dropped is pressed again at once. A press the button got with nothing shown in 10 s is pressed again,
 // and any other failure of the click stops the install naming its cause
-async function pressUntil(instance: Instance, page: Page, target: Locator, done: () => Promise<boolean>, what: string): Promise<void> {
+export async function pressUntil(instance: Instance, page: Page, target: Locator, done: () => Promise<boolean>, what: string): Promise<void> {
   for (let presses = 0; !(await done()); presses++) {
     if (presses === 3) throw new Error(`pressed 3 times and never saw ${what}. The page shows: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 600)}`)
     await armed(instance.app, page.url())
@@ -381,16 +389,7 @@ async function installThroughTrusted(instance: Instance, zip: string, ids: reado
   await instance.picker(zip)
   await instance.click(editor.getByRole('button', { name: 'Plugins and security' }))
   await instance.trusted()
-  // The startup flow's trusted window, hidden, was shown with no show event, and the press's focus() gives no focus
-  // event under the activation policy, so its delay never starts and every press is dropped. The show a person's run
-  // gets is emitted from main then, and the record says so
-  const armedOnItsOwn = await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows().find(found => found.webContents.getURL() === 'hetu://trusted/')!
-    if ((globalThis as unknown as { tier0Seen: Set<number> }).tier0Seen.has(window.id)) return true
-    window.emit('show')
-    return false
-  })
-  if (!armedOnItsOwn) harness.push('emitted show on the trusted window, which had none')
+  if (!await showUnseen(app)) harness.push(EMITTED_SHOW)
   const trusted = await instance.trusted()
   const install = trusted.locator('section.installing').getByRole('button', { name: 'Install', exact: true })
   await pressUntil(instance, trusted, trusted.getByRole('button', { name: 'Install from a zip' }).first(), async () => await install.count() === 1, 'the plugins found in the zip')
@@ -399,6 +398,17 @@ async function installThroughTrusted(instance: Instance, zip: string, ids: reado
   const installed = async () => (await readdir(path.join(instance.data, 'plugins')).catch(() => [])).filter(id => ids.includes(id)).length === ids.length
   await pressUntil(instance, trusted, confirm, installed, 'the plugins installed')
 }
+
+// The startup flow's trusted window, hidden, was shown with no show event, and a press's focus() gives no focus event
+// under the activation policy, so its delay never starts and every press is dropped. The show a person's run gets is
+// emitted from main then, and the record says so. Answers whether the window had a show or focus of its own
+export const EMITTED_SHOW = 'emitted show on the trusted window, which had none'
+export const showUnseen = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) => {
+  const window = BrowserWindow.getAllWindows().find(found => found.webContents.getURL() === 'hetu://trusted/')!
+  if ((globalThis as unknown as { tier0Seen: Set<number> }).tier0Seen.has(window.id)) return true
+  window.emit('show')
+  return false
+})
 
 // Whether the editor page has focus and whether any window has it natively
 async function focusNow(app: ElectronApplication): Promise<RunRecord['focus']> {
