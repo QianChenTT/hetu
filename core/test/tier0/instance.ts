@@ -63,6 +63,9 @@ export type Options = {
   route?: Route
   // Files of a notes folder written fresh for this instance, else an empty one
   notes?: Record<string, string>
+  // Test plugins beside the shipped ones, each a built folder by its id, written approved as the shipped ones are.
+  // The approved route only, and the record names them
+  tests?: Record<string, string>
   // The run's facts when a caller already read them, so a run of many instances hashes the zip once
   facts?: RunFacts
   // Stand-ins for the memory reading and how long to wait for memory, for the gate's own test
@@ -85,7 +88,7 @@ export type RunRecord = {
   // What a page's focus reads as at the quit: emulated when the editor page has it and no window does natively
   focus: 'emulated' | 'native' | 'none' | 'unknown'
   quiet: Quieted
-  plugins: PluginsProvenance & { ids: string[], folders: string[], installed: { route: Route, zip: string, sha256: string } }
+  plugins: PluginsProvenance & { ids: string[], tests: string[], folders: string[], installed: { route: Route, zip: string, sha256: string } }
   launchMs: number
   quitMs: number | null
   exitCode: number | null
@@ -158,6 +161,8 @@ export async function start(context: TestContext, options: Options = {}): Promis
 
   const facts = options.facts ?? await runFacts()
   const route = options.route ?? 'approved'
+  const tests = options.tests ?? {}
+  if (route !== 'approved' && Object.keys(tests).length > 0) throw new Error('test plugins go in on the approved route only')
   await mkdir(unpacked)
   const staged = await unpackZip(await readFile(facts.plugins.zip), unpacked)
   if (staged.problem !== null) throw new Error(`the plugin zip didn't unpack: ${staged.problem}`)
@@ -184,6 +189,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   await store.writeSwitches(defaultSwitches())
   await store.writeLuoshu({ folder: notes })
   if (route === 'approved') for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
+  for (const [id, from] of Object.entries(tests)) await writeShipped(store, data, from, id)
   if (isSerial(ids)) held.releases.push(await takeLock(DOOR_LOCK, { signal: context.signal, ms: 90_000 }))
 
   const input = new Set<string>()
@@ -222,7 +228,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
       const folders = (await readdir(path.join(data, 'plugins'), { withFileTypes: true }).catch(() => [])).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
       record = {
         instance: path.basename(folder), profile: profile.name, serial: isSerial(ids), build: facts.build, os: facts.os,
-        input: [...input].sort(), presses, harness, focus, quiet: quieted, plugins: { ...facts.plugins, ids, folders, installed },
+        input: [...input].sort(), presses, harness, focus, quiet: quieted, plugins: { ...facts.plugins, ids, tests: Object.keys(tests).sort(), folders, installed },
         launchMs: launched - begun, quitMs, exitCode, trace: tracing ? tracePath : null,
       }
       await writeFile(path.join(folder, 'record.json'), `${JSON.stringify(record, null, 2)}\n`)
@@ -272,7 +278,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   return instance
 }
 
-// A shipped plugin copied into the plugin folder and written approved, its write grants confirmed, as the human's
+// A shipped or test plugin copied into the plugin folder and written approved, its write grants confirmed, as the human's
 // Confirm at install and at first use leave it
 async function writeShipped(store: StateStore, data: string, from: string, id: string): Promise<void> {
   const root = path.join(data, 'plugins', id)
