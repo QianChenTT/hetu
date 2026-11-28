@@ -13,6 +13,7 @@ import { unpackZip } from '../../backend/plugins-manager/unpack.ts'
 import { quiet, stubPicker, type Quieted } from '../drive.ts'
 import { writeApproved } from '../plugins-manager-fakes.ts'
 import { makeZip } from '../zip-maker.ts'
+import { click, keys, press, readFocus, ROUTES, typeThroughMain, watchInput, type Focus } from './input.ts'
 import { takeLock } from './lock.ts'
 import { waitForMemory } from './memory.ts'
 import { drivenOutDir, filesUnder, pluginsProvenance, readBuildStamp, sha256Of, type BuildStamp, type PluginsProvenance } from './provenance.ts'
@@ -97,8 +98,16 @@ export type Instance = {
   ids: string[]
   editor(): Promise<Page>
   trusted(): Promise<Page>
-  // A click through Playwright, recorded as such
-  click(target: Locator): Promise<void>
+  // A click through main's input route, which main heard, answering the screen point it heard
+  click(target: Locator): Promise<{ x: number, y: number }>
+  // Text typed and a chord pressed in a page's window through main's before-input-event
+  keys(page: Page, text: string): Promise<void>
+  press(page: Page, chord: string): Promise<void>
+  // Keys into the editor's frame holding focus through main's handler, answering where main dropped one
+  frameKeys(typed: string | readonly string[], gap?: number): Promise<number[]>
+  // Playwright's own press, which never passes main, recorded as such
+  playwrightPress(page: Page, key: string): Promise<void>
+  focus(): Promise<Focus>
   // Main's open dialog answering with picked from now on. focusTrusted as a real picker's close does
   picker(picked: string | null, options?: { focusTrusted?: boolean }): Promise<void>
   quit(): Promise<RunRecord>
@@ -185,6 +194,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   // The first call into main, before anything can bring a window forward
   const quieted = await quiet(app)
   await watchDelays(app)
+  await watchInput(app)
 
   held.quit = async () => {
     if (record !== null) return record
@@ -223,17 +233,34 @@ export async function start(context: TestContext, options: Options = {}): Promis
       return page
     },
     trusted: () => pageAt(app, 'hetu://trusted/'),
-    click: async target => {
-      input.add('playwright')
-      await target.click()
+    click: target => {
+      input.add(ROUTES.mouse)
+      return click(app, target)
     },
+    keys: (page, text) => {
+      input.add(ROUTES.keys)
+      return keys(app, page, text)
+    },
+    press: (page, chord) => {
+      input.add(ROUTES.keys)
+      return press(app, page, chord)
+    },
+    frameKeys: (typed, gap = 20) => {
+      input.add(ROUTES.frameKeys)
+      return typeThroughMain(app, typed, gap)
+    },
+    playwrightPress: (page, key) => {
+      input.add('playwright')
+      return page.keyboard.press(key)
+    },
+    focus: () => readFocus(app),
     picker: (picked, pick = {}) => stubPicker(app, picked, pick),
     quit: () => held.quit!(),
   }
   // The next start reads free memory with this instance up
   await instance.editor()
   await releaseStart()
-  if (route === 'install') await installThroughTrusted(instance, installed.zip, ids, input, harness)
+  if (route === 'install') await installThroughTrusted(instance, installed.zip, ids, harness)
   return instance
 }
 
@@ -278,14 +305,13 @@ async function armed(app: ElectronApplication, url: string): Promise<void> {
   if (left > 0) await sleep(left)
 }
 
-// Presses once main's delay on the page's window has run out and Playwright found the button enabled, then waits for
-// what it does. A press main still dropped is pressed again after the wait
-async function pressUntil(app: ElectronApplication, input: Set<string>, page: Page, target: Locator, done: () => Promise<boolean>, what: string): Promise<void> {
-  input.add('playwright')
+// Presses through main's route once main's delay on the page's window has run out, then waits for what it does. A
+// press main heard and still dropped is pressed again after the wait
+async function pressUntil(instance: Instance, page: Page, target: Locator, done: () => Promise<boolean>, what: string): Promise<void> {
   for (let presses = 0; !(await done()); presses++) {
     if (presses === 3) throw new Error(`pressed 3 times and never saw ${what}. The page shows: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 600)}`)
-    await armed(app, page.url())
-    await target.click({ timeout: 10_000 })
+    await armed(instance.app, page.url())
+    await instance.click(target)
     await until(done, what, 10_000).catch(() => {
       // Not shown in 10 s: the press was dropped, and the loop presses again
     })
@@ -293,7 +319,7 @@ async function pressUntil(app: ElectronApplication, input: Set<string>, page: Pa
 }
 
 // The trusted window's install: Plugins and security, Install from a zip through the picker, Install, then the Confirm
-async function installThroughTrusted(instance: Instance, zip: string, ids: readonly string[], input: Set<string>, harness: string[]): Promise<void> {
+async function installThroughTrusted(instance: Instance, zip: string, ids: readonly string[], harness: string[]): Promise<void> {
   const { app } = instance
   const editor = await instance.editor()
   await instance.picker(zip)
@@ -311,11 +337,11 @@ async function installThroughTrusted(instance: Instance, zip: string, ids: reado
   if (!armedOnItsOwn) harness.push('emitted show on the trusted window, which had none')
   const trusted = await instance.trusted()
   const install = trusted.locator('section.installing').getByRole('button', { name: 'Install', exact: true })
-  await pressUntil(app, input, trusted, trusted.getByRole('button', { name: 'Install from a zip' }).first(), async () => await install.count() === 1, 'the plugins found in the zip')
+  await pressUntil(instance, trusted, trusted.getByRole('button', { name: 'Install from a zip' }).first(), async () => await install.count() === 1, 'the plugins found in the zip')
   const confirm = trusted.getByRole('button', { name: 'Confirm', exact: true }).first()
-  await pressUntil(app, input, trusted, install, async () => await confirm.count() === 1, 'the install Confirm')
+  await pressUntil(instance, trusted, install, async () => await confirm.count() === 1, 'the install Confirm')
   const installed = async () => (await readdir(path.join(instance.data, 'plugins')).catch(() => [])).filter(id => ids.includes(id)).length === ids.length
-  await pressUntil(app, input, trusted, confirm, installed, 'the plugins installed')
+  await pressUntil(instance, trusted, confirm, installed, 'the plugins installed')
 }
 
 // Whether the editor page has focus and whether any window has it natively
