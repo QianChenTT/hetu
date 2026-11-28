@@ -48,7 +48,7 @@ export type Route = 'approved' | 'install'
 
 // Locks every tier 0 process sees. Starts go one at a time, so each reads free memory after the instance before it
 // is up, and the door is held by one instance at a time. Both waits end before the test's own timeout
-const START_LOCK = path.join(os.tmpdir(), 'hetu-tier0-start.lock')
+export const START_LOCK = path.join(os.tmpdir(), 'hetu-tier0-start.lock')
 const DOOR_LOCK = path.join(os.tmpdir(), 'hetu-tier0-door.lock')
 
 export async function runFacts() {
@@ -460,8 +460,8 @@ function run() {
   }
 }
 
-const processEnv = () => Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined))
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+export const processEnv = () => Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined))
+export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 export async function until(check: () => Promise<boolean> | boolean, what: string, ms = 30_000): Promise<void> {
   for (let waited = 0; !(await check()); waited += 50) {
@@ -470,7 +470,7 @@ export async function until(check: () => Promise<boolean> | boolean, what: strin
   }
 }
 
-async function pageAt(app: ElectronApplication, url: string): Promise<Page> {
+export async function pageAt(app: ElectronApplication, url: string): Promise<Page> {
   let found: Page | undefined
   await until(() => (found = app.windows().find(page => page.url() === url)) !== undefined, url)
   await found!.waitForLoadState()

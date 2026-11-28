@@ -1,3 +1,10 @@
 {
-  "status": "pending"
+  "status": "set",
+  "factor": 2,
+  "factors": { "cold.firstNote": 5, "warm.firstNote": 5 },
+  "spreadShare": 1,
+  "measures": {
+    "cold.ready": 600, "cold.shown": 740, "cold.editor": 148, "cold.firstNote": 11, "cold.quit": 270,
+    "warm.ready": 550, "warm.shown": 690, "warm.editor": 150, "warm.firstNote": 11, "warm.quit": 270
+  }
 }
