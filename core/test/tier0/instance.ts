@@ -13,7 +13,7 @@ import { unpackZip } from '../../backend/plugins-manager/unpack.ts'
 import { quiet, stubPicker, type Quieted } from '../drive.ts'
 import { writeApproved } from '../plugins-manager-fakes.ts'
 import { makeZip } from '../zip-maker.ts'
-import { click, keys, press, readFocus, ROUTES, typeThroughMain, watchInput, type Focus } from './input.ts'
+import { click, detachDebuggers, Dropped, keys, press, readFocus, ROUTES, typeThroughMain, watchInput, type Clicked, type Focus } from './input.ts'
 import { takeLock } from './lock.ts'
 import { waitForMemory } from './memory.ts'
 import { drivenOutDir, filesUnder, pluginsProvenance, readBuildStamp, sha256Of, type BuildStamp, type PluginsProvenance } from './provenance.ts'
@@ -76,8 +76,10 @@ export type RunRecord = {
   serial: boolean
   build: RunFacts['build']
   os: RunFacts['os']
-  // The input routes this instance was driven through
+  // The input routes this instance was driven through, each once a call through it worked
   input: string[]
+  // Each click through main's route: the window, where it was meant on the page and where main heard it
+  presses: { url: string, intended: { x: number, y: number }, heard: { x: number, y: number } }[]
   // What the harness did to the app beyond input, each a step a person's run doesn't take
   harness: string[]
   // What a page's focus reads as at the quit: emulated when the editor page has it and no window does natively
@@ -98,15 +100,16 @@ export type Instance = {
   ids: string[]
   editor(): Promise<Page>
   trusted(): Promise<Page>
-  // A click through main's input route, which main heard, answering the screen point it heard
-  click(target: Locator): Promise<{ x: number, y: number }>
+  // A click through main's input route, which main heard and the target got, answering where main heard it
+  click(target: Locator): Promise<Clicked>
   // Text typed and a chord pressed in a page's window through main's before-input-event
   keys(page: Page, text: string): Promise<void>
   press(page: Page, chord: string): Promise<void>
-  // Keys into the editor's frame holding focus through main's handler, answering where main dropped one
-  frameKeys(typed: string | readonly string[], gap?: number): Promise<number[]>
-  // Playwright's own press, which never passes main, recorded as such
-  playwrightPress(page: Page, key: string): Promise<void>
+  // Keys into the frame holding focus in a window, the editor's by default, through main's handler, answering where
+  // main dropped one
+  frameKeys(typed: string | readonly string[], gap?: number, page?: Page): Promise<number[]>
+  // Names a route a test drove the instance through itself, such as Playwright's own input, for the record
+  usedInput(route: string): void
   focus(): Promise<Focus>
   // Main's open dialog answering with picked from now on. focusTrusted as a real picker's close does
   picker(picked: string | null, options?: { focusTrusted?: boolean }): Promise<void>
@@ -185,6 +188,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
 
   const input = new Set<string>()
   const harness: string[] = []
+  const presses: RunRecord['presses'] = []
   let tracing = false
   let record: RunRecord | null = null
   const begun = Date.now()
@@ -203,6 +207,9 @@ export async function start(context: TestContext, options: Options = {}): Promis
     let exitCode: number | null = null
     try {
       focus = await focusNow(app).catch(() => 'unknown' as const)
+      await detachDebuggers(app).catch(() => {
+        // A main already gone has no debugger left to let go of
+      })
       if (tracing) await app.context().tracing.stop({ path: tracePath }).catch((err: unknown) => console.warn(`tier 0 lost the trace: ${String(err)}`))
       const exited = new Promise<number | null>(resolve => app.process().once('exit', code => resolve(code)))
       const asked = Date.now()
@@ -215,7 +222,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
       const folders = (await readdir(path.join(data, 'plugins'), { withFileTypes: true }).catch(() => [])).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
       record = {
         instance: path.basename(folder), profile: profile.name, serial: isSerial(ids), build: facts.build, os: facts.os,
-        input: [...input].sort(), harness, focus, quiet: quieted, plugins: { ...facts.plugins, ids, folders, installed },
+        input: [...input].sort(), presses, harness, focus, quiet: quieted, plugins: { ...facts.plugins, ids, folders, installed },
         launchMs: launched - begun, quitMs, exitCode, trace: tracing ? tracePath : null,
       }
       await writeFile(path.join(folder, 'record.json'), `${JSON.stringify(record, null, 2)}\n`)
@@ -233,26 +240,27 @@ export async function start(context: TestContext, options: Options = {}): Promis
       return page
     },
     trusted: () => pageAt(app, 'hetu://trusted/'),
-    click: target => {
+    click: async target => {
+      const url = target.page().url()
+      const clicked = await click(app, target)
       input.add(ROUTES.mouse)
-      return click(app, target)
+      presses.push({ url, intended: clicked.intended, heard: clicked.page })
+      return clicked
     },
-    keys: (page, text) => {
+    keys: async (page, text) => {
+      await keys(app, page, text)
       input.add(ROUTES.keys)
-      return keys(app, page, text)
     },
-    press: (page, chord) => {
+    press: async (page, chord) => {
+      await press(app, page, chord)
       input.add(ROUTES.keys)
-      return press(app, page, chord)
     },
-    frameKeys: (typed, gap = 20) => {
+    frameKeys: async (typed, gap = 20, page) => {
+      const dropped = await typeThroughMain(app, typed, gap, page)
       input.add(ROUTES.frameKeys)
-      return typeThroughMain(app, typed, gap)
+      return dropped
     },
-    playwrightPress: (page, key) => {
-      input.add('playwright')
-      return page.keyboard.press(key)
-    },
+    usedInput: route => void input.add(route),
     focus: () => readFocus(app),
     picker: (picked, pick = {}) => stubPicker(app, picked, pick),
     quit: () => held.quit!(),
@@ -306,14 +314,20 @@ async function armed(app: ElectronApplication, url: string): Promise<void> {
 }
 
 // Presses through main's route once main's delay on the page's window has run out, then waits for what it does. A
-// press main heard and still dropped is pressed again after the wait
+// press main dropped is pressed again at once. A press the button got with nothing shown in 10 s is pressed again,
+// and any other failure of the click stops the install naming its cause
 async function pressUntil(instance: Instance, page: Page, target: Locator, done: () => Promise<boolean>, what: string): Promise<void> {
   for (let presses = 0; !(await done()); presses++) {
     if (presses === 3) throw new Error(`pressed 3 times and never saw ${what}. The page shows: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 600)}`)
     await armed(instance.app, page.url())
-    await instance.click(target)
+    try {
+      await instance.click(target)
+    } catch (err) {
+      if (err instanceof Dropped) continue
+      throw err
+    }
     await until(done, what, 10_000).catch(() => {
-      // Not shown in 10 s: the press was dropped, and the loop presses again
+      // Not shown in 10 s: the loop presses again
     })
   }
 }

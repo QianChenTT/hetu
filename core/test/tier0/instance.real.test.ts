@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { ROUTES } from './input.ts'
+import { heard, ROUTES } from './input.ts'
 import { drivenApp, drivenOut, isSerial, pluginsZip, profiles, repo, start, until, watchFrontmost } from './instance.ts'
 import { readBuildStamp, treeState } from './provenance.ts'
 
@@ -78,7 +78,14 @@ describe('a tier 0 instance', () => {
     await until(() => editor.frames().some(frame => frame.url().includes('file-explorer.views')), 'the installed explorer drawing')
     const profileZip = path.join(instance.folder, 'profile.zip')
     const installed = await sha256(profileZip)
+    // Main heard each install press on the trusted window: Install from a zip, Install and the Confirm, some maybe
+    // pressed again after main dropped them
+    const pressed = await heard(instance.app, 0, { url: 'hetu://trusted/', kind: 'mouse' })
+    expect(pressed.filter(input => input.type === 'mouseDown' && !input.prevented).length).toBeGreaterThanOrEqual(3)
     const record = await instance.quit()
+    const onTrusted = record.presses.filter(each => each.url === 'hetu://trusted/')
+    expect(onTrusted.length).toBeGreaterThanOrEqual(3)
+    for (const each of onTrusted) expect(Math.abs(each.heard.x - each.intended.x) + Math.abs(each.heard.y - each.intended.y)).toBeLessThanOrEqual(2)
     expect(record).toMatchObject({ profile: 'explorer', serial: false, exitCode: 0, input: [ROUTES.mouse] })
     expect(record.plugins.installed).toEqual({ route: 'install', zip: profileZip, sha256: installed })
     expect(installed).not.toBe(record.plugins.sha256)
