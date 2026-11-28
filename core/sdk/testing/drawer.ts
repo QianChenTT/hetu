@@ -42,10 +42,11 @@ export type FakeFrame = {
   theme(): Theme
   onTheme(handler: (theme: Theme) => void): void
   // The human pressed in the frame, or pressed Enter in it, so one open from the plugin's frames within
-  // OPEN_GRACE_MS is theirs
+  // OPEN_GRACE_MS is theirs. The frame holds focus from then until a press anywhere else
   pressed(): void
-  // Enter went down in the frame while it held focus, a press as pressed is
-  keyed(): void
+  // Enter went down with focus where it is: a press as pressed is when this frame holds focus from a press, else
+  // nothing, as hetu's drawer counts Enter only in the frame it let focus into. False when it counted nothing
+  keyed(): boolean
   // The human let go of the press, which counts it from then, as for a long press
   released(): void
   // The frame's open as @hetu/sdk/frame's: the human's after pressed, else the plugin's own in the background. Answers
@@ -92,6 +93,8 @@ export class FakeDrawer {
   private readonly themeHeard = new Set<(theme: Theme) => void>()
   // Whether the human just pressed in one of the plugin's frames, and the drag tokens its frames were given
   private credit = new OpenCredit(() => Date.now())
+  // The mounted frame holding focus from the human's press in it, null for none
+  private focused: string | null = null
   private readonly dragTokens = new Map<string, { path: string, until: number }>()
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
@@ -117,6 +120,7 @@ export class FakeDrawer {
     this.instancesOf.clear()
     this.frames.clear()
     this.credit = new OpenCredit(() => Date.now())
+    this.focused = null
     this.dragTokens.clear()
     return this.editor
   }
@@ -171,8 +175,15 @@ export class FakeDrawer {
       onTheme: handler => {
         onTheme = handler
       },
-      pressed: () => this.credit.pressed(SELF),
-      keyed: () => this.credit.keyed(SELF),
+      pressed: () => {
+        this.credit.pressed(SELF)
+        this.focused = instance
+      },
+      keyed: () => {
+        if (this.focused !== instance || this.frames.get(instance) !== received) return false
+        this.credit.keyed(SELF)
+        return true
+      },
       released: () => this.credit.released(SELF),
       open: path => {
         if (!asked({ kind: 'open', path }) || !this.has('ui.view')) return null
@@ -194,6 +205,7 @@ export class FakeDrawer {
   // ask after it is the plugin's own, as hetu's drawer counts the presses main pushes
   pressedElsewhere(): void {
     this.credit.pressed(null)
+    this.focused = null
   }
 
   // The human picked another theme: every frame is told the page's variables as hetu's drawer tells them

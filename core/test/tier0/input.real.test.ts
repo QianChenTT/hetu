@@ -55,6 +55,18 @@ describe('main\'s input route on the driven build', () => {
     expect(record.presses).toEqual([{ url: 'hetu://editor/', intended: clicked.intended, heard: clicked.page }])
   })
 
+  it('holds a press before its release, a held press on a Files row opening its note to the front from the release', async context => {
+    const instance = await start(context, { notes })
+    const editor = await instance.editor()
+    const row = await filesRow(editor, 'c')
+    const since = await mark(instance.app)
+    const begun = Date.now()
+    await instance.click(row, { holdMs: 800 })
+    expect(Date.now() - begun).toBeGreaterThanOrEqual(800)
+    expect((await heard(instance.app, since, { kind: 'mouse' })).map(input => input.type)).toEqual(['mouseDown', 'mouseUp'])
+    await until(async () => (await title(editor)) === 'c.md', 'c.md in the note bar')
+  })
+
   it('never reaches a plugin frame with sendInputEvent\'s mouse, which main hears, where the route\'s click on the same row opens it', async context => {
     const instance = await start(context, { notes })
     const editor = await instance.editor()

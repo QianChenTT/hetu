@@ -194,11 +194,17 @@ describe('opens and drags from a frame in the fake drawer', () => {
     expect(drawer.drop(`${DRAG_PREFIX}${earlier}`)).toBeNull()
   })
 
-  it('takes Enter in the frame and the release of a long press as the human\'s press, as hetu\'s drawer does', async () => {
+  it('takes Enter in the frame holding focus from a press and the release of a long press as the human\'s press, as hetu\'s drawer does', async () => {
     const { drawer, frame } = await opening()
-    frame.keyed()
-    expect(drawer.isHuman(frame.open('notes/a.md')!)).toBe(true)
+    // Enter counts only in the frame holding focus from a press, so one with no press before counts nothing
+    expect(frame.keyed()).toBe(false)
     vi.useFakeTimers({ toFake: ['Date'] })
+    frame.pressed()
+    vi.setSystemTime(Date.now() + OPEN_GRACE_MS + 1)
+    expect(frame.keyed()).toBe(true)
+    expect(drawer.isHuman(frame.open('notes/a.md')!)).toBe(true)
+    drawer.pressedElsewhere()
+    expect(frame.keyed()).toBe(false)
     frame.pressed()
     vi.setSystemTime(Date.now() + 2000)
     frame.released()

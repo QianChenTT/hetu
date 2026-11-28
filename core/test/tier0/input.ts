@@ -250,8 +250,9 @@ const hitFromPage = async (page: Page, target: Locator, at: { x: number, y: numb
 // Before it: the target enabled, its box the same two frames running and the hit check from the page down. After it:
 // main heard exactly one press then one release on the window at the intended point, main let both through, and the
 // target got pointerdown and pointerup. Any of those failing throws naming which, Dropped for a press main prevented.
-// Playwright's trial click is no check here, since in a plugin frame it presses for real
-export async function click(app: ElectronApplication, target: Locator, timeout = 10_000): Promise<Clicked> {
+// Playwright's trial click is no check here, since in a plugin frame it presses for real. holdMs holds the press that
+// long before the release, as a long press
+export async function click(app: ElectronApplication, target: Locator, timeout = 10_000, holdMs = 0): Promise<Clicked> {
   const page = target.page()
   const url = page.url()
   await target.scrollIntoViewIfNeeded({ timeout })
@@ -284,18 +285,19 @@ export async function click(app: ElectronApplication, target: Locator, timeout =
     }
   }, token)
   const since = await mark(app)
-  await app.evaluate(async ({ webContents }, [url, x, y]) => {
+  await app.evaluate(async ({ webContents }, [url, x, y, hold]) => {
     const contents = webContents.getAllWebContents().find(each => each.getURL() === url)!
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
     const send = (type: string, more: object) => contents.debugger.sendCommand('Input.dispatchMouseEvent', { type, x, y, ...more })
     try {
       await send('mouseMoved', { button: 'none' })
       await send('mousePressed', { button: 'left', clickCount: 1 })
+      if (hold > 0) await new Promise(resolve => setTimeout(resolve, hold))
       await send('mouseReleased', { button: 'left', clickCount: 1 })
     } catch (err) {
       throw new Error(contents.debugger.isAttached() ? `CDP refused the click: ${String(err)}` : `the debugger on ${url} detached: DevTools opened or the page went away`)
     }
-  }, [url, intended.x, intended.y] as const)
+  }, [url, intended.x, intended.y, holdMs] as const)
   let presses: Heard[] = []
   for (const end = Date.now() + 2000; !presses.some(input => input.type === 'mouseUp'); await sleep(25)) {
     if (Date.now() > end) throw new Error(`main never heard the click on ${url}`)

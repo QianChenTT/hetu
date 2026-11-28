@@ -2,8 +2,8 @@ import { API_VERSION } from '../../api/manifest.ts'
 import { definePlugin } from '../../sdk/plugin.ts'
 
 // The test plugin the drawer's cases drive, its worker the same code under the fake core and bundled into the driven
-// build. It lists every note, reads only own/ and reads through ui.read the notes the human opened, so a note outside
-// own/ reaches it only once the human opened it. Its frame draws a pad to press in and talks through @hetu/sdk/frame
+// build. It lists the notes at the top and in own/, reads only own/ and reads through ui.read the notes the human
+// opened, so a note outside own/ reaches it only once the human opened it, and one in no folder it lists never. Its frame draws a pad to press in and talks through @hetu/sdk/frame
 // as a shipped plugin's frame does
 
 export const probeManifest = {
@@ -12,7 +12,7 @@ export const probeManifest = {
   views: { pad: { title: 'Probe', kind: 'view', frame: 'pad' } },
   capabilities: [
     { type: 'ui.view' },
-    { type: 'luoshu.list', paths: ['**'] },
+    { type: 'luoshu.list', paths: ['*.md', 'own/**'] },
     { type: 'luoshu.read', paths: ['own/**'] },
     { type: 'ui.read', paths: ['**'] },
   ],
@@ -66,5 +66,5 @@ export function probe(expose: (ask: (ask: Ask) => Promise<unknown>) => void) {
 
 // In the driven build's worker, where a test reaches it through the workers page
 export default probe(ask => {
-  (globalThis as unknown as { probe: unknown }).probe = { ask }
+  (globalThis as unknown as { probeWorker: unknown }).probeWorker = { ask }
 })
