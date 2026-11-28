@@ -15,6 +15,7 @@ import { writeApproved } from '../plugins-manager-fakes.ts'
 import { makeZip } from '../zip-maker.ts'
 import { click, detachDebuggers, Dropped, keys, press, readFocus, ROUTES, typeThroughMain, watchInput, type Clicked, type Focus } from './input.ts'
 import { takeLock } from './lock.ts'
+import { seed } from './seed.ts'
 import { waitForMemory } from './memory.ts'
 import { drivenOutDir, filesUnder, pluginsProvenance, readBuildStamp, sha256Of, type BuildStamp, type PluginsProvenance } from './provenance.ts'
 
@@ -66,6 +67,11 @@ export type Options = {
   // Test plugins beside the shipped ones, each a built folder by its id, written approved as the shipped ones are.
   // The approved route only, and the record names them
   tests?: Record<string, string>
+  // The seed's notes folder written fresh for this instance, before any notes given
+  seeded?: boolean
+  // The data and notes folders an instance quit earlier in the test left, so this one starts as after a restart. Its
+  // folders are kept until the test ends, the earlier instance's cleanup removing them
+  after?: Pick<Instance, 'data' | 'notes'>
   // The run's facts when a caller already read them, so a run of many instances hashes the zip once
   facts?: RunFacts
   // Stand-ins for the memory reading and how long to wait for memory, for the gate's own test
@@ -126,8 +132,8 @@ export async function start(context: TestContext, options: Options = {}): Promis
   const profile = options.profile ?? profiles.shipped
   const kept = process.env.HETU_TIER0_RUN || undefined
   const folder = await mkdtemp(kept === undefined ? path.join(os.tmpdir(), `hetu-tier0-${profile.name}-`) : path.join(kept, `${profile.name}-`))
-  const data = path.join(folder, 'data')
-  const notes = path.join(folder, 'notes')
+  const data = options.after?.data ?? path.join(folder, 'data')
+  const notes = options.after?.notes ?? path.join(folder, 'notes')
   const unpacked = path.join(folder, 'unpacked')
   const tracePath = path.join(folder, 'trace.zip')
   const held: { app: ElectronApplication | null, quit: (() => Promise<RunRecord>) | null, releases: (() => Promise<void>)[] } = { app: null, quit: null, releases: [] }
@@ -180,16 +186,19 @@ export async function start(context: TestContext, options: Options = {}): Promis
     installed = { route, zip, sha256: await sha256Of(zip) }
   }
 
-  await mkdir(notes, { recursive: true })
-  for (const [name, text] of Object.entries(options.notes ?? {})) {
-    await mkdir(path.dirname(path.join(notes, name)), { recursive: true })
-    await writeFile(path.join(notes, name), text)
+  if (options.after === undefined) {
+    await mkdir(notes, { recursive: true })
+    if (options.seeded === true) await seed(notes)
+    for (const [name, text] of Object.entries(options.notes ?? {})) {
+      await mkdir(path.dirname(path.join(notes, name)), { recursive: true })
+      await writeFile(path.join(notes, name), text)
+    }
+    const store = new StateStore(data)
+    await store.writeSwitches(defaultSwitches())
+    await store.writeLuoshu({ folder: notes })
+    if (route === 'approved') for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
+    for (const [id, from] of Object.entries(tests)) await writeShipped(store, data, from, id)
   }
-  const store = new StateStore(data)
-  await store.writeSwitches(defaultSwitches())
-  await store.writeLuoshu({ folder: notes })
-  if (route === 'approved') for (const id of ids) await writeShipped(store, data, path.join(unpacked, id), id)
-  for (const [id, from] of Object.entries(tests)) await writeShipped(store, data, from, id)
   if (isSerial(ids)) held.releases.push(await takeLock(DOOR_LOCK, { signal: context.signal, ms: 90_000 }))
 
   const input = new Set<string>()
@@ -200,6 +209,8 @@ export async function start(context: TestContext, options: Options = {}): Promis
   const begun = Date.now()
   const app = await electron.launch({ executablePath: facts.build.app, args: [], env: { ...processEnv(), HETU_DATA_DIR: data, HETU_QUIET_WINDOWS: 'hidden' } })
   held.app = app
+  // Held from the start, since Playwright lets go of its handle once the app is gone
+  const child = app.process()
   const launched = Date.now()
   // The first call into main, before anything can bring a window forward
   const quieted = await quiet(app)
@@ -217,13 +228,17 @@ export async function start(context: TestContext, options: Options = {}): Promis
         // A main already gone has no debugger left to let go of
       })
       if (tracing) await app.context().tracing.stop({ path: tracePath }).catch((err: unknown) => console.warn(`tier 0 lost the trace: ${String(err)}`))
-      const exited = new Promise<number | null>(resolve => app.process().once('exit', code => resolve(code)))
-      const asked = Date.now()
-      // The quit takes main down while the call is out, so its answer never comes
-      void app.evaluate(({ app }) => app.quit()).catch(() => {})
-      const ended = await Promise.race([exited, sleep(20_000).then(() => 'hung' as const)])
-      if (ended === 'hung') await app.close()
-      else [quitMs, exitCode] = [Date.now() - asked, ended]
+      // A run that quit hetu as a person does, with its keys, finds the process gone, which says how it ended
+      if (child.exitCode !== null || child.signalCode !== null) exitCode = child.exitCode
+      else {
+        const exited = new Promise<number | null>(resolve => child.once('exit', code => resolve(code)))
+        const asked = Date.now()
+        // The quit takes main down while the call is out, so its answer never comes
+        void app.evaluate(({ app }) => app.quit()).catch(() => {})
+        const ended = await Promise.race([exited, sleep(20_000).then(() => 'hung' as const)])
+        if (ended === 'hung') await app.close()
+        else [quitMs, exitCode] = [Date.now() - asked, ended]
+      }
     } finally {
       const folders = (await readdir(path.join(data, 'plugins'), { withFileTypes: true }).catch(() => [])).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
       record = {
