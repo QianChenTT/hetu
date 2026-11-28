@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { heard, ROUTES } from './input.ts'
 import { drivenApp, drivenOut, isSerial, pluginsZip, profiles, repo, start, until, watchFrontmost } from './instance.ts'
+import { logged } from './log.ts'
 import { readBuildStamp, treeState } from './provenance.ts'
 
 const sha256 = async (file: string) => createHash('sha256').update(await readFile(file)).digest('hex')
@@ -120,6 +121,19 @@ describe('a tier 0 instance', () => {
     } finally {
       await rm(run, { recursive: true, force: true })
     }
+  })
+
+  // Plugins written approved hold the class the classifier gives them, so the pass at start moves none and nothing
+  // waits for a Confirm that a test's next press could answer
+  it('starts the shipped plugins written approved with no request waiting', async context => {
+    const instance = await start(context)
+    const editor = await instance.editor()
+    await until(() => editor.frames().some(frame => frame.url().includes('file-explorer.views')), 'the explorer drawing')
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    const requests = (await logged(instance.data)).filter(record => record.event === 'security.request')
+    expect(requests, 'requests raised at an approved start').toEqual([])
+    expect(await editor.locator('[data-hetu="notice"], button', { hasText: /moved from class|New plugin found|asks to use|security change is waiting/ }).count()).toBe(0)
+    await instance.quit()
   })
 
   it('marks a profile holding mcp as one that runs alone', () => {
