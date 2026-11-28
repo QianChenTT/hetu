@@ -1,0 +1,27 @@
+diff --git a/links/src/worker.ts b/links/src/worker.ts
+index 5990fbc..0e1de53 100644
+--- a/links/src/worker.ts
++++ b/links/src/worker.ts
+@@ -54,10 +54,10 @@ async function start(ctx: PluginContext): Promise<void> {
+ 
+   // Reads the note again. One that is gone or no longer the plugin's to read leaves the index, one whose read failed
+   // for a passing reason keeps what the index held
+-  async function refresh(path: string): Promise<void> {
++  async function refresh(path: string, mayBeGone = true): Promise<void> {
+     const read = await ctx.try(ctx.luoshu.read({ path }))
+     if (read.ok) index.set(path, read.value.text)
+-    else if (['not-found', 'not-granted', 'switched-off'].includes(read.refused.code)) index.remove(path)
++    else if (mayBeGone && ['not-found', 'not-granted', 'switched-off'].includes(read.refused.code)) index.remove(path)
+   }
+ 
+   async function readAll(paths: readonly string[]): Promise<void> {
+@@ -98,7 +98,8 @@ async function start(ctx: PluginContext): Promise<void> {
+   // the listing at start made it
+   await ctx.try(ctx.events.on(['luoshu.changed', 'luoshu.outside'], async event => {
+     if (event.path === undefined || !event.path.toLowerCase().endsWith(NOTE)) return
+-    await refresh(event.path)
++    // hetu's own writes leave the note where it is, so a failed read after one is a passing one
++    await refresh(event.path, event.topic === 'luoshu.outside')
+     draw()
+   }, {
+     onResync: () => void readAll(index.paths()).then(draw).catch(threw),

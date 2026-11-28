@@ -1,0 +1,12 @@
+diff --git a/footnotes/src/view.ts b/footnotes/src/view.ts
+index 1234d3e..26e2814 100644
+--- a/footnotes/src/view.ts
++++ b/footnotes/src/view.ts
+@@ -93,7 +93,6 @@ export function viewOf(look: Look): UiNode {
+   const children: UiNode[] = []
+   if (look.status !== null) children.push({ id: 'status', kind: 'text', text: shown(look.status).slice(0, MAX_TEXT), style: { ...NOTE } })
+   if (look.note === null) children.push({ id: 'empty', kind: 'text', text: 'Open a note to see its footnotes', style: { ...NOTE } })
+-  else if (look.footnotes.length === 0) children.push({ id: 'empty', kind: 'text', text: 'No footnotes in this note', style: { ...NOTE } })
+   else children.push(...look.footnotes.map(footnote => row(footnote, look)))
+   return { id: 'root', kind: 'box', style: { ...ROOT }, children }
+ }

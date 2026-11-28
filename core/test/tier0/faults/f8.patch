@@ -1,0 +1,13 @@
+diff --git a/file-explorer/src/explorer.ts b/file-explorer/src/explorer.ts
+index e3c0be7..afe74b6 100644
+--- a/file-explorer/src/explorer.ts
++++ b/file-explorer/src/explorer.ts
+@@ -88,6 +88,8 @@ export class Explorer {
+ 
+   // A new listing's tree. A folder no longer in it is no longer open, so one made again under that name starts closed
+   private listed(pages: string[][]): void {
++    // As many notes as the last listing and none refused, so the frames already show this tree
++    if (this.listing === null && this.seq > 0 && pages.flat().filter(isNote).length === this.notes.size) return
+     this.tree = treeOf(pages)
+     this.listing = null
+     this.folders = folderPaths(this.tree)

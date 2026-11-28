@@ -1,0 +1,16 @@
+diff --git a/core/frontend/editor/page.ts b/core/frontend/editor/page.ts
+index 67963b8..77306b0 100644
+--- a/core/frontend/editor/page.ts
++++ b/core/frontend/editor/page.ts
+@@ -626,11 +626,6 @@ function start(bridge: Bridge): void {
+       toggleRaw()
+       return
+     }
+-    if (event.key === 'Escape' && menuOpen) {
+-      event.preventDefault()
+-      toggleMenu(false)
+-      return
+-    }
+     const core = coreKeyOf(event, mac)
+     if (core === null) return
+     event.preventDefault()

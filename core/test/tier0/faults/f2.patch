@@ -1,0 +1,12 @@
+diff --git a/core/frontend/editor/page.ts b/core/frontend/editor/page.ts
+index 67963b8..bd7cea1 100644
+--- a/core/frontend/editor/page.ts
++++ b/core/frontend/editor/page.ts
+@@ -385,7 +385,6 @@ function start(bridge: Bridge): void {
+     applyTheme()
+     theLayers.favorites = settings.value.favorites
+     theLayers.changed()
+-    drawMenuSoon()
+   }
+ 
+   // ---- the views menu, in the core layer
