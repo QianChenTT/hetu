@@ -5,7 +5,7 @@
 // dist-package/replay with a summary and the recall. A fault that doesn't plant cleanly is refused, naming the conflict
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, openSync, readFileSync } from 'node:fs'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { faultsNamed, patchFile, type Fault, type Plant } from '../core/test/tier0/faults/faults.ts'
@@ -36,6 +36,8 @@ const describePlant = (plant: Plant) => 'revert' in plant
 
 // A plant goes in through git apply's three-way merge, as git revert would, and anything it can't merge is refused
 function plant(dir: string, what: Plant): void {
+  // A copied checkout's index holds the stat of the files it was copied from
+  spawnSync('git', ['-C', dir, 'update-index', '-q', '--refresh'])
   const input = 'revert' in what ? git(dir, 'diff', what.revert, `${what.revert}^`, '--', ...(what.paths ?? [])) : readFileSync(patchFile(what.patch))
   const applied = spawnSync('git', ['-C', dir, 'apply', '--3way', '--whitespace=nowarn'], { input, encoding: 'utf8' })
   const unmerged = git(dir, 'diff', '--name-only', '--diff-filter=U').trim()
@@ -68,7 +70,8 @@ console.log(`replay of ${chosen.map(fault => fault.name).join(', ')} on ${commit
 async function replay(fault: Fault | null, folder: string): Promise<Run> {
   await mkdir(folder, { recursive: true })
   const log = path.join(folder, 'run.log')
-  const scratch = await mkdtemp(path.join(os.tmpdir(), 'hetu-replay-'))
+  // The real path, as vitest names its files by it
+  const scratch = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hetu-replay-')))
   const copy = path.join(scratch, 'hetu')
   let plugins = pluginsDir()
   try {
