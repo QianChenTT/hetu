@@ -188,6 +188,7 @@ export class EditorViews implements Editors {
   create(id: string, text: string, path = ''): void {
     const element = document.createElement('div')
     element.className = 'editor'
+    element.dataset.hetuEditor = id
     element.hidden = true
     this.host.append(element)
     // A note saved with CRLF keeps it: CodeMirror counts a line break as one place whichever it is
@@ -210,7 +211,7 @@ export class EditorViews implements Editors {
           EditorView.domEventHandlers({
             focus: () => {
               if (this.shownId === id) return
-              this.shownId = id
+              this.current(id)
               this.hooks.focused?.(id)
             },
             // Alt+click shows the element under the pointer. The click is taken whole, so the cursor stays at the place
@@ -314,14 +315,21 @@ export class EditorViews implements Editors {
     open.view.destroy()
     open.element.remove()
     this.open.delete(id)
-    if (this.shownId === id) this.shownId = null
+    if (this.shownId === id) this.current(null)
   }
 
   // Makes the note current, has it laid out and focuses it unless told not to
   show(id: string, focus = true): void {
-    this.shownId = this.open.has(id) ? id : null
+    this.current(this.open.has(id) ? id : null)
     this.onCurrent?.()
     if (focus) this.open.get(id)?.view.focus()
+  }
+
+  // The current note, marked on its element for readers outside the page
+  private current(id: string | null): void {
+    if (this.shownId !== null) this.open.get(this.shownId)?.element.removeAttribute('data-hetu-current')
+    this.shownId = id
+    if (id !== null) this.open.get(id)?.element.setAttribute('data-hetu-current', '')
   }
 
   // Told when the current note changes, so the layers place it before it takes focus

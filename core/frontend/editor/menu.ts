@@ -90,6 +90,7 @@ function viewList(views: MenuData['views'], actions: MenuActions): HTMLUListElem
   for (const view of views) {
     const item = document.createElement('li')
     item.dataset.view = view.key
+    item.dataset.hetuViewKey = view.key
     const star = action(view.favorite ? '★' : '☆', () => actions.favorite(view.key, !view.favorite))
     star.className = 'menu-star'
     star.title = view.favorite ? 'A favorite, which gets room first' : 'Make it a favorite, which gets room first'

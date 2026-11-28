@@ -10,12 +10,12 @@
 <ul id="banner" hidden></ul>
 <div id="notices" hidden></div>
 <header id="bar">
-<span id="title">No note open</span>
+<span id="title" data-hetu="note-title">No note open</span>
 <button id="raw-open" type="button">Real text</button>
 <button id="views" type="button">Views</button>
 <button id="security" type="button">Plugins and security</button>
 </header>
-<div id="note-bar" hidden><span id="note-text"></span><span id="note-actions"></span></div>
+<div id="note-bar" data-hetu="note-bar" hidden><span id="note-text"></span><span id="note-actions"></span></div>
 <main id="stage">
 <div id="base"></div>
 <div id="editors"><p id="empty" hidden>No note is open. Open one from a plugin's view, such as a file list or a quick open. Ctrl+/ shows the real text of a note</p></div>
@@ -24,7 +24,7 @@
 <div id="drag-ghost" hidden></div>
 <div id="drop-zones" hidden></div>
 <div id="drop-mark" hidden></div>
-<section id="menu" hidden tabindex="-1">
+<section id="menu" data-hetu="views-menu" hidden tabindex="-1">
 <header><span>Views and look</span><button id="menu-close" type="button">Close</button></header>
 <div id="menu-body"></div>
 </section>
