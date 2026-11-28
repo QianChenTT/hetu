@@ -30,7 +30,7 @@ export const faults: readonly Fault[] = [
     id: 'X13, #273',
     plants: [{ repo: 'hetu', revert: '0baae9d' }, { repo: 'hetu', revert: '5d01b52' }],
     what: 'an open note moved or removed by hetu is no longer marked gone, its unsaved text is saved to the path it left',
-    expected: ['journeys/notes-gone.real.test.ts'],
+    expected: ['journeys/notes-gone.real.test.ts', 'state.real.test.ts'],
   },
   {
     name: 'W2',
@@ -44,14 +44,14 @@ export const faults: readonly Fault[] = [
     id: 'X1, hetu-plugins d6e6dcc',
     plants: [{ repo: 'plugins', revert: 'd6e6dcc', paths: ['links'] }, { repo: 'plugins', patch: 'x1-explorer.patch' }],
     what: 'a Files row and a Links row open their note through the worker\'s editor.open, in the background and never as the human\'s',
-    expected: ['input.real.test.ts', 'journeys/notes.real.test.ts'],
+    expected: ['input.real.test.ts', 'state.real.test.ts', 'journeys/notes.real.test.ts'],
   },
   {
     name: 'F1',
     id: 'sealed 1',
     plants: [{ repo: 'hetu', patch: 'f1.patch' }],
     what: 'the title keeps (unsaved) after a save',
-    expected: ['state.real.test.ts', 'journeys/notes.real.test.ts'],
+    expected: ['input.real.test.ts', 'state.real.test.ts', 'journeys/notes.real.test.ts'],
   },
   {
     name: 'F2',
@@ -95,14 +95,14 @@ export const faults: readonly Fault[] = [
     id: 'sealed 7',
     plants: [{ repo: 'plugins', patch: 'f7.patch' }],
     what: 'the Footnotes view is blank for a note with no footnotes',
-    expected: [],
+    expected: ['state.real.test.ts'],
   },
   {
     name: 'F8',
     id: 'sealed 8',
     plants: [{ repo: 'plugins', patch: 'f8.patch' }],
     what: 'Files keeps the old name after a rename',
-    expected: ['state.real.test.ts', 'journeys/notes.real.test.ts'],
+    expected: ['state.real.test.ts', 'journeys/notes-gone.real.test.ts'],
   },
   {
     name: 'F9',
