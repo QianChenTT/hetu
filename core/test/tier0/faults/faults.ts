@@ -2,6 +2,7 @@
 // planted by reverting its fix commits, by a patch kept here or both, in hetu or in a copy of the plugins checkout.
 // expected names the tier 0 files thought to catch it, read against what the replay saw, never used to pick tests
 import path from 'node:path'
+import type { KnownRed } from './outcome.ts'
 
 export type Repo = 'hetu' | 'plugins'
 // A revert takes each commit's change back in the order listed, newest first, limited to paths when given
@@ -119,6 +120,10 @@ export const faults: readonly Fault[] = [
     expected: ['journeys/notes.real.test.ts'],
   },
 ]
+
+// Tests that fail on main for a reason written here, so a replay still counts against main. Any other failure on main
+// refuses the whole replay. Each is listed with its reason in the summary
+export const knownReds: readonly KnownRed[] = []
 
 export function faultsNamed(name: string): Fault[] {
   if (name === 'all') return [...faults]
