@@ -94,6 +94,15 @@ describe('which places disagree', () => {
     expect(disagreements(state)).toEqual([{ places: ['Files view', 'its rows'], values: ['shown', 'the frame has no document'] }])
   })
 
+  // Search shares the Files column, so Files behind it is hidden and its tree reads no rows by role
+  it('compares no Files rows while another view hides Files, then compares them again once it is shown', () => {
+    const state = agreeing()
+    state.files = { shown: false, rows: [], problem: null }
+    expect(disagreements(state)).toEqual([])
+    state.files.shown = true
+    expect(pairs(state)).toEqual([['disk f', 'Files tree'], ['disk a.md', 'Files tree']])
+  })
+
   it('names a menu star against the settings, a row with no one star, and focus against the current note and main', () => {
     const state = agreeing()
     state.menu = { 'links/links': true, 'search/search': null }

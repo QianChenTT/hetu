@@ -8,11 +8,37 @@ import { counted, type Logged } from '../log.ts'
 
 export const EMITTED_FOCUS = 'emitted focus on the trusted window in the press\'s own task, to press inside its input delay'
 
-// A press on a trusted window control once main's delay on the window ran out. armed reads the harness's own record
-// of main's restarts, since main's delay is held where no test reaches it, so a press main still drops says the delay
-// never armed or restarted on something the record missed
+// How long the trusted window must go without drawing before a press, and the most a press waits for that. Its draws
+// after one change come a few ms apart, as after an install its two plugins starting redraw it about 10 ms apart
+export const QUIET_MS = 250
+const QUIET_WAIT_MS = 5000
+
+// Waits until the page has added or removed no element for QUIET_MS. The trusted window draws itself whole on each
+// change it hears, replacing every control, so a press during a draw goes to the copy that took the control's place
+// (T-50's journey, 2026-11-28)
+export async function settled(page: Page): Promise<void> {
+  const quiet = await page.evaluate(([quietMs, waitMs]) => new Promise<boolean>(resolve => {
+    const began = Date.now()
+    let last = began
+    const observer = new MutationObserver(() => { last = Date.now() })
+    observer.observe(document.body, { childList: true, subtree: true })
+    const timer = setInterval(() => {
+      const now = Date.now()
+      if (now - last < quietMs && now - began < waitMs) return
+      clearInterval(timer)
+      observer.disconnect()
+      resolve(now - last >= quietMs)
+    }, 25)
+  }), [QUIET_MS, QUIET_WAIT_MS] as const)
+  if (!quiet) throw new Error(`${page.url()} kept drawing for ${QUIET_WAIT_MS} ms, never ${QUIET_MS} ms without a draw to press in`)
+}
+
+// A press on a trusted window control once main's delay on the window ran out and the page stopped drawing. armed
+// reads the harness's own record of main's restarts, since main's delay is held where no test reaches it, so a press
+// main still drops says the delay never armed or restarted on something the record missed
 export async function pressArmed(instance: Instance, target: Locator): Promise<void> {
   await armed(instance.app, target.page().url())
+  await settled(target.page())
   await instance.click(target).catch((err: unknown) => {
     if (err instanceof Dropped) throw new Error(`the delay never armed: main still dropped the press after the harness read its delay as run out on ${target.page().url()}`)
     throw err

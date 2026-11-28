@@ -7,11 +7,24 @@ import type { Page } from 'playwright'
 import { describe, expect, it } from 'vitest'
 import { start, until, type Instance } from '../instance.ts'
 import { disagreements, readState, type State } from '../state.ts'
-import { current, explorer, heardKey, markInput, note, noteTabs, openFromFiles, shownNote, step, typeInNote } from './steps.ts'
+import { current, currentTab, explorer, heardKey, markInput, note, noteTabs, openFromFiles, shownNote, step, typeInNote } from './steps.ts'
 
 const WELCOME = 'Welcome.md'
 const CAFE = 'Inbox/Café notes — résumé.md'
 const LAUNCH = 'Inbox/🚀 Launch ideas.md'
+// The seed's one note holding the word Migrated, a path with a space (sealed F10, T-87)
+const README = 'README notes.md'
+const INBOX_1 = note(1)
+
+// A drawer view brought to the front by a click on its tab, as views share a column
+async function viewInFront(instance: Instance, editor: Page, owner: string): Promise<State> {
+  const tab = (await readState(instance)).tabs.find(each => each.text.startsWith(`${owner} · `))
+  if (tab === undefined) throw new Error(`no ${owner} tab in the drawer`)
+  await instance.click(editor.locator(`[data-hetu-tab="${tab.instance}"]`))
+  return step(instance, state => state.drawer.some(view => view.owner === owner && view.shown && view.lines.length > 0))
+}
+const viewOf = (state: State, owner: string) => state.drawer.find(view => view.owner === owner)
+const rowOf = (editor: Page, owner: string, path: string) => editor.locator(`div[data-hetu-view][data-hetu-owner="${owner}"] [data-hetu-note="${path}"]`)
 
 // D-746 (AJ20 parked): after an open licensed by a press in a frame, focus stays in that frame, the note in front
 // without it, so typing never follows into the note
@@ -42,6 +55,43 @@ describe('a note\'s life on the driven build', () => {
     expect(noteTabs(again).map(tab => tab.text)).toEqual([WELCOME, CAFE, LAUNCH])
     expect(again.title).toBe(WELCOME)
     await focusStaysInFiles(editor, again)
+    await instance.quit()
+  })
+
+  // Search reads every note once it starts, so its hit is waited for past agree's few seconds. The hit's row opens the
+  // note to the front as the human's open
+  it('finds a note whose path has a space in Search and opens it from its row', async context => {
+    const instance = await start(context, { seeded: true })
+    const editor = await instance.editor()
+    await step(instance, state => (state.files?.rows?.length ?? 0) > 0)
+    await viewInFront(instance, editor, 'search')
+    await instance.click(editor.locator('div[data-hetu-view][data-hetu-owner="search"] input'))
+    await instance.keys(editor, 'Migrated')
+    const hits = async () => viewOf(await readState(instance), 'search')?.notes ?? []
+    await until(async () => (await hits()).length > 0, 'a hit for Migrated', 30_000).catch(async () => {
+      throw new Error(`Search found nothing for Migrated, which ${README} holds. It shows: ${viewOf(await readState(instance), 'search')?.lines.join(' / ')}`)
+    })
+    const found = await step(instance, state => viewOf(state, 'search')?.lines.includes('1 note') === true)
+    expect(viewOf(found, 'search')?.notes).toEqual([README])
+    await instance.click(rowOf(editor, 'search', README))
+    const opened = await step(instance, state => currentTab(state) === README)
+    expect(opened.title).toBe(README)
+    expect(current(opened)?.text).toContain('Migrated from Obsidian')
+    await instance.quit()
+  })
+
+  // X1's links half: a note opened from a Links row comes to the front as the human's open, not behind the note in front
+  it('opens a note to the front from its row in Links', async context => {
+    const instance = await start(context, { seeded: true })
+    const editor = await instance.editor()
+    await openFromFiles(instance, editor, WELCOME)
+    await viewInFront(instance, editor, 'links')
+    await step(instance, state => viewOf(state, 'links')?.notes.includes(INBOX_1) === true)
+    await instance.click(rowOf(editor, 'links', INBOX_1).first())
+    const opened = await step(instance, state => currentTab(state) === INBOX_1)
+    expect(opened.title).toBe(INBOX_1)
+    expect(noteTabs(opened).map(tab => tab.text)).toEqual([WELCOME, INBOX_1])
+    expect(current(opened)?.shown).toBe(true)
     await instance.quit()
   })
 

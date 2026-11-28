@@ -146,7 +146,7 @@ describe('main\'s input route on the driven build', () => {
     expect(record.input).toEqual([ROUTES.frameKeys, ROUTES.mouse, 'sendInputEvent keys with focus in a frame'].sort())
   })
 
-  it('clicks into a shadow root and at zoom 1.5, and refuses a disabled target and one clipped by its frame\'s box', async context => {
+  it('clicks into a shadow root and at zoom 1.5, and refuses a disabled target, one clipped by its frame\'s box and one a redraw replaced under the press', async context => {
     const instance = await start(context, { notes })
     const editor = await instance.editor()
     await editor.evaluate(() => {
@@ -164,6 +164,12 @@ describe('main\'s input route on the driven build', () => {
     expect(await editor.evaluate(() => (window as unknown as { shadowClicks: number }).shadowClicks)).toBe(1)
     await shadowed.evaluate(button => { (button as HTMLButtonElement).disabled = true })
     await expect(click(instance.app, shadowed, 500)).rejects.toThrow('the target stayed disabled')
+    // Replaced by a copy on the move the click sends just before its press, as a page that draws itself whole does
+    await shadowed.evaluate(button => {
+      (button as HTMLButtonElement).disabled = false
+      window.addEventListener('mousemove', () => button.replaceWith(button.cloneNode(true)), { capture: true, once: true })
+    })
+    await expect(click(instance.app, shadowed)).rejects.toThrow(/the target left the page under the press, as a redraw replaces it: the press went to what took its place/)
 
     const frameElement = await explorerOf(editor)!.frameElement()
     await frameElement.evaluate(frame => { (frame as HTMLElement).style.clipPath = 'inset(0 0 calc(100% - 4px) 0)' })

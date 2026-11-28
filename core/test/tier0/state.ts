@@ -16,7 +16,8 @@ export type Tab = { instance: string, text: string, title: string }
 export type Row = { path: string, folder: boolean, expanded: boolean, selected: boolean }
 // The Files view: whether its frame is on screen and its rows, null with a problem when they can't be read
 export type Files = { shown: boolean, rows: Row[] | null, problem: string | null }
-// A view the drawer draws: whether it is on screen, its lines of text and the notes its rows carry
+// A view the drawer draws: whether it is on screen, its lines of text, each field's value or placeholder after them,
+// and the notes its rows carry
 export type Drawn = { owner: string, instance: string, shown: boolean, lines: string[], notes: string[] }
 
 export type State = {
@@ -69,7 +70,10 @@ const readPage = (editor: Page) => editor.evaluate(() => {
     menu: seen(menu) ? Object.fromEntries(all('[data-hetu-view-key]').map(row => [row.dataset.hetuViewKey!, starOf(row)])) : null,
     drawer: all('div[data-hetu-view]').map(root => ({
       owner: root.dataset.hetuOwner!, instance: root.dataset.hetuView!, shown: seen(root),
-      lines: root.innerText.split('\n').map(line => line.trim()).filter(line => line !== ''),
+      // A field draws its value, else its placeholder, which innerText leaves out, so a view of a field alone, as
+      // Search before a word is typed, draws something
+      lines: [...root.innerText.split('\n'), ...all('input, textarea', root).map(field => (field as HTMLInputElement).value || (field as HTMLInputElement).placeholder)]
+        .map(line => line.trim()).filter(line => line !== ''),
       notes: all('[data-hetu-note]', root).map(row => row.dataset.hetuNote!),
     })),
     filesShown: seen(document.querySelector<HTMLElement>('iframe[data-hetu-owner="file-explorer"]')),
@@ -147,7 +151,8 @@ const foldersOf = (file: string) => file.split('/').slice(0, -1).map((_, at, par
 // - each note whose tab says saved against its file, a note whose file left only with the note bar saying so
 // - focus in an editor against the current note, and the frame main says has focus against that frame's own word
 // - the menu's stars against the settings
-// - the Files rows, notes and folders, against the files both ways, and a shown Files view whose rows can't be read
+// - the Files rows of a shown Files view, notes and folders, against the files both ways, and a shown Files view whose
+//   rows can't be read
 // - each row of a drawn view carrying a note against the files, each drawn view against its tab and a shown one
 //   drawing nothing
 // Not compared: the Files selection, which follows the explorer's own clicks and answers and never the current note,
@@ -200,7 +205,8 @@ export function disagreements(state: State): Disagreement[] {
 
   const onDisk = new Set(state.disk.files)
   if (state.files !== null && state.files.rows === null && state.files.shown) differ('Files view', 'shown', 'its rows', state.files.problem)
-  if (state.files?.rows != null) {
+  // Rows of a Files view another view hides aren't read by role, so they are compared only while it is shown
+  if (state.files?.rows != null && state.files.shown) {
     const rows = state.files.rows
     const notes = state.disk.files.filter(file => file.endsWith('.md'))
     const folders = new Set(notes.flatMap(foldersOf))
