@@ -405,6 +405,7 @@ export class Notes {
   // work in the tab's turn, after every step asked before it
   private step<T>(note: OpenNote, work: () => Promise<T>): Promise<T> {
     const run = (this.chains.get(note.instance) ?? Promise.resolve()).then(work)
+    // A step that failed already answered whoever asked it, so the turn only goes on to the next
     this.chains.set(note.instance, run.catch(() => {}))
     return run
   }
