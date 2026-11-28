@@ -46,8 +46,9 @@ const devices = new Set([
 export const keyOf = (relative: string) =>
   withoutIgnorable(relative).normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')
 
-// Before the disk is touched. Each rule closes a spelling the OS or the path joiner reads as another name
-function stringRule(input: string): StringRule | null {
+// Before the disk is touched. Each rule closes a spelling the OS or the path joiner reads as another name. The SDK's
+// fake lock refuses by it too
+export function stringRule(input: string): StringRule | null {
   if (typeof input !== 'string') return 'type'
   if (input === '') return 'empty'
   if (input.length > MAX_SCOPE_LENGTH) return 'too-long'

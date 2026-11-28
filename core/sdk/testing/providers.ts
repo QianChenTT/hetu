@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto'
 import { LIST_PAGE, type HistoryCommit, type ResultOf } from '../../api/actions.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE } from '../../api/exec.ts'
+import { localName } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { signatureOf, type Call, type Guard, type Prepared, type Provider, type ProviderRefusal } from '../../api/policy-jobs.ts'
-import { quotas, spaceOf } from '../../api/storage.ts'
+import { quotas as fixedQuotas, spaceOf } from '../../api/storage.ts'
 import type { LockOptions } from '../../backend/lock/header.ts'
 import { createLock } from '../../backend/lock/lock.ts'
+import { stringRule } from '../../lib/canonical.ts'
 
 // Each call waits ms before it is performed, as a provider on a slow disk would
 const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
@@ -128,6 +130,8 @@ export class MemoryLuoshu implements Provider {
 }
 
 type Kind = 'storage' | 'cache'
+// The most bytes and keys one space of each kind holds, shaped as core/api's quotas
+export type StorageQuotas = Readonly<Record<Kind, { readonly bytes: number, readonly keys: number }>>
 type Held = { value: unknown, size: number }
 
 // What a key takes in the storage plugin's files: its JSON line, with a 64-character hash line under it in storage
@@ -136,14 +140,17 @@ function sizeOf(kind: Kind, space: string, key: string, value: unknown): number 
 }
 
 // storage.* and cache.* in memory, as the storage plugin keeps them: a space per caller and kind named by spaceOf,
-// values through JSON, undefined refused and core/api's quotas held. get answers the value or null, set and delete
-// answer null
+// values through JSON, undefined refused and the quotas given held, core/api's unless a test names smaller ones. get
+// answers the value or null, set and delete answer null. A verb it doesn't serve or a key outside core/api's grammar answers invalid, as the storage plugin
+// answers. It holds no files, so it never answers tampered and has no clear
 export class MemoryStorage implements Provider {
   private readonly spaces: Record<Kind, Map<string, Map<string, Held>>> = { storage: new Map(), cache: new Map() }
   private readonly latencyMs: number
+  private readonly quotas: StorageQuotas
 
-  constructor(latencyMs = 0) {
+  constructor(latencyMs = 0, quotas: StorageQuotas = fixedQuotas) {
     this.latencyMs = latencyMs
+    this.quotas = quotas
   }
 
   async prepare(call: Call): Promise<Prepared | ProviderRefusal> {
@@ -153,9 +160,14 @@ export class MemoryStorage implements Provider {
   async perform(call: Call): Promise<unknown> {
     await after(this.latencyMs)
     const [kind, verb] = call.action.split('.') as [Kind, string]
-    const name = spaceOf(call.caller)!
+    const name = spaceOf(call.caller)
+    if (name === null) throw { code: 'not-granted' } satisfies ProviderRefusal
+    if ((kind !== 'storage' && kind !== 'cache') || !['get', 'set', 'delete'].includes(verb)) throw { code: 'invalid' } satisfies ProviderRefusal
+    const { key: given, value } = (call.args ?? {}) as { key?: unknown, value?: unknown }
+    const named = localName.safeParse(given)
+    if (!named.success) throw { code: 'invalid' } satisfies ProviderRefusal
+    const key = named.data
     const space = this.space(kind, name)
-    const { key, value } = call.args as { key: string, value?: unknown }
     if (verb === 'get') return space.has(key) ? JSON.parse(JSON.stringify(space.get(key)!.value)) as unknown : null
     if (verb === 'delete') {
       space.delete(key)
@@ -170,7 +182,7 @@ export class MemoryStorage implements Provider {
       bytes += held.size
       keys += 1
     }
-    if (bytes > quotas[kind].bytes || keys > quotas[kind].keys) throw { code: 'failed', reason: 'quota' } satisfies ProviderRefusal
+    if (bytes > this.quotas[kind].bytes || keys > this.quotas[kind].keys) throw { code: 'failed', reason: 'quota' } satisfies ProviderRefusal
     space.set(key, { value: JSON.parse(JSON.stringify(value)) as unknown, size })
     return null
   }
@@ -192,13 +204,28 @@ export class MemoryStorage implements Provider {
 
 // lock.* and the lock guard of the lock module itself, its table, holder, caps and expiry on the clock given and its
 // lock.changed through the publish given, with the paths taken as spelled where the module makes them canonical on the
-// disk. The folder it is handed is one no prepare here reads
+// disk. As the module's prepare does, a spelling the canonical string rule breaks is refused invalid and a dot name
+// not-granted, and a plugin's clear leaves either out. The folder it is handed is one no prepare here reads
 export function memoryLock(options: LockOptions): { provider: Provider, guard: Guard } {
   const lock = createLock(options)
   lock.role.open({ folder: 'memory', dataDir: '', installDir: '' })
+  // What the module's canonical answers before the disk, for a path with no link, alias or other spelling on it
+  const refusalOf = (path: unknown): ProviderRefusal | null => {
+    if (stringRule(path as string) !== null) return { code: 'invalid' }
+    return (path as string).split('/').some(isDotName) ? { code: 'not-granted' } : null
+  }
   return {
     provider: {
-      prepare: async call => ({ scope: { paths: [...(call.args as { paths: string[] }).paths] } }),
+      prepare: async call => {
+        const paths = (call.args as { paths?: unknown } | null)?.paths
+        if (!Array.isArray(paths)) return { code: 'invalid' }
+        if (call.action === 'lock.clear' && call.caller.kind !== 'window') return { scope: { paths: paths.filter(path => refusalOf(path) === null) } }
+        for (const path of paths) {
+          const refused = refusalOf(path)
+          if (refused !== null) return refused
+        }
+        return { scope: { paths: [...paths] } }
+      },
       perform: (call, prepared) => lock.provider.perform(call, prepared),
     },
     guard: lock.guard,
