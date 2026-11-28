@@ -1,11 +1,15 @@
 // Steps the journeys share: each a person's action through main's input route, then agree, which waits until the
 // action landed and every place showing a state agrees
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Frame, Page } from 'playwright'
 import { expect } from 'vitest'
-import { until, type Instance } from '../instance.ts'
-import { agree, type AgreeOptions, type State } from '../state.ts'
+import { heard, mark } from '../input.ts'
+import { until, type Instance, type RunRecord } from '../instance.ts'
+import { agree, readState, type AgreeOptions, type State } from '../state.ts'
+
+// A seed note in Inbox by its number
+export const note = (n: number) => `Inbox/Inbox note ${String(n).padStart(2, '0')}.md`
 
 export const current = (state: State) => state.editors.find(editor => editor.current)
 export const tabOf = (state: State, instance: string | undefined) => state.tabs.find(tab => tab.instance === instance)
@@ -44,11 +48,35 @@ export async function openFromFiles(instance: Instance, editor: Page, note: stri
   return step(instance, state => currentTab(state) === note)
 }
 
-// A click in the shown note, then keys through main, landed once the note holds them
+// A click in the shown note, then keys through main, landed once the note grew by them, so text the note held
+// before never counts
 export async function typeInNote(instance: Instance, editor: Page, text: string): Promise<State> {
+  const before = current(await readState(instance))?.text
+  if (before === undefined || before === null) throw new Error('no current note to type in')
   await instance.click(shownNote(editor))
   await instance.keys(editor, text)
-  return step(instance, state => current(state)?.text?.includes(text) === true)
+  return step(instance, state => current(state)?.text?.length === before.length + text.length && current(state)!.text!.includes(text))
+}
+
+// Waits until main heard the key go down in the editor window since the mark, so an action whose effect is that nothing
+// changes has reached hetu before agree holds
+export async function heardKey(instance: Instance, since: number, key: string): Promise<void> {
+  await until(async () => (await heard(instance.app, since, { url: 'hetu://editor/', kind: 'key' }))
+    .some(each => each.type === 'keyDown' && each.key?.toLowerCase() === key.toLowerCase()), `main to hear ${key}`)
+}
+export const markInput = (instance: Instance) => mark(instance.app)
+
+// shell.trashItem in main moves what it is handed into a bin in the instance's folder instead of the OS's Trash, so a
+// delete leaves the machine's own Trash alone. Main calls it through the same shell object at each remove
+export async function binned(instance: Instance): Promise<string> {
+  const bin = path.join(instance.folder, 'bin')
+  await mkdir(bin)
+  await instance.app.evaluate(({ shell }, into) => {
+    const { rename } = process.getBuiltinModule('node:fs/promises')
+    const { basename, join } = process.getBuiltinModule('node:path')
+    shell.trashItem = absolute => rename(absolute, join(into, basename(absolute)))
+  }, bin)
+  return bin
 }
 
 // Rename in Files on the selected note: the box holds the path less .md, which the keys replace, then Enter
@@ -63,13 +91,23 @@ export async function renameInFiles(instance: Instance, editor: Page, to: string
 }
 
 // The drafts the editor window keeps, each a JSON line naming its key and value, then the line's hash
-export async function drafts(instance: Instance): Promise<{ path: string, text: string }[]> {
+export async function drafts(instance: Instance): Promise<{ path: string, text: string, at: number }[]> {
   const space = path.join(instance.data, 'storage', 'window.editor')
   const names = (await readdir(space).catch(() => [])).filter(name => name.startsWith('key-draft'))
   const kept = []
   for (const name of names) {
-    const { value } = JSON.parse((await readFile(path.join(space, name), 'utf8')).split('\n')[0]!) as { value: { path: string, text: string } }
-    kept.push({ path: value.path, text: value.text })
+    const { value } = JSON.parse((await readFile(path.join(space, name), 'utf8')).split('\n')[0]!) as { value: { path: string, text: string, at: number } }
+    kept.push({ path: value.path, text: value.text, at: value.at })
   }
   return kept
+}
+
+// ⌘Q through main as a person quits, then the record once the process has closed. Main may go down before the
+// press's own call answers, which is the only failure let through
+export async function quitWithKeys(instance: Instance, editor: Page): Promise<RunRecord> {
+  await instance.press(editor, 'Mod+Q').catch((err: unknown) => {
+    if (!/closed/i.test(String(err))) throw err
+  })
+  await instance.ended()
+  return instance.quit()
 }

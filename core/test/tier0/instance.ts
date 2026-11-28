@@ -70,7 +70,8 @@ export type Options = {
   // The seed's notes folder written fresh for this instance, before any notes given
   seeded?: boolean
   // The data and notes folders an instance quit earlier in the test left, so this one starts as after a restart. Its
-  // folders are kept until the test ends, the earlier instance's cleanup removing them
+  // folders are kept until the test ends, the earlier instance's cleanup removing them. Nothing is written to them, so
+  // it takes no notes, seed or install route
   after?: Pick<Instance, 'data' | 'notes'>
   // The run's facts when a caller already read them, so a run of many instances hashes the zip once
   facts?: RunFacts
@@ -122,6 +123,8 @@ export type Instance = {
   focus(): Promise<Focus>
   // Main's open dialog answering with picked from now on. focusTrusted as a real picker's close does
   picker(picked: string | null, options?: { focusTrusted?: boolean }): Promise<void>
+  // Once hetu's process has ended and closed its pipes, after a quit the run asked for through its own keys
+  ended(): Promise<void>
   quit(): Promise<RunRecord>
 }
 
@@ -129,6 +132,9 @@ export type Instance = {
 // a passed instance's folders removed and a failed one's trace and folders kept. Under the memory floor it waits, then
 // skips the test saying so
 export async function start(context: TestContext, options: Options = {}): Promise<Instance> {
+  if (options.after !== undefined && (options.notes !== undefined || options.seeded === true || options.route === 'install')) {
+    throw new Error('an instance started after another takes its folders as they are: no notes, seed or install route')
+  }
   const profile = options.profile ?? profiles.shipped
   const kept = process.env.HETU_TIER0_RUN || undefined
   const folder = await mkdtemp(kept === undefined ? path.join(os.tmpdir(), `hetu-tier0-${profile.name}-`) : path.join(kept, `${profile.name}-`))
@@ -145,7 +151,10 @@ export async function start(context: TestContext, options: Options = {}): Promis
     } finally {
       for (const release of held.releases.splice(0)) await release()
       await rm(unpacked, { recursive: true, force: true })
-      if (state === 'fail') console.warn(`tier 0 kept the failed instance's trace and folders in ${folder}`)
+      if (state === 'fail') {
+        const shared = options.after === undefined ? '' : `, its data in ${data} and its notes in ${notes}`
+        console.warn(`tier 0 kept the failed instance's trace and folders in ${folder}${shared}`)
+      }
       else if (kept === undefined) await rm(folder, { recursive: true, force: true, maxRetries: 5 })
       else {
         for (const done of [tracePath, data, notes, path.join(folder, 'profile.zip')]) await rm(done, { recursive: true, force: true, maxRetries: 5 })
@@ -211,6 +220,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
   held.app = app
   // Held from the start, since Playwright lets go of its handle once the app is gone
   const child = app.process()
+  const closed = new Promise<void>(resolve => child.once('close', () => resolve()))
   const launched = Date.now()
   // The first call into main, before anything can bring a window forward
   const quieted = await quiet(app)
@@ -222,15 +232,24 @@ export async function start(context: TestContext, options: Options = {}): Promis
     let focus: RunRecord['focus'] = 'unknown'
     let quitMs: number | null = null
     let exitCode: number | null = null
+    let trace: string | null = null
     try {
-      focus = await focusNow(app).catch(() => 'unknown' as const)
-      await detachDebuggers(app).catch(() => {
-        // A main already gone has no debugger left to let go of
-      })
-      if (tracing) await app.context().tracing.stop({ path: tracePath }).catch((err: unknown) => console.warn(`tier 0 lost the trace: ${String(err)}`))
-      // A run that quit hetu as a person does, with its keys, finds the process gone, which says how it ended
-      if (child.exitCode !== null || child.signalCode !== null) exitCode = child.exitCode
-      else {
+      // A run that quit hetu as a person does, with its keys, finds the process gone, which says how it ended. Nothing
+      // is left to read focus or a trace from
+      if (child.exitCode !== null || child.signalCode !== null) {
+        await closed
+        exitCode = child.exitCode
+      } else {
+        focus = await focusNow(app).catch(() => 'unknown' as const)
+        await detachDebuggers(app).catch(() => {
+          // A main already gone has no debugger left to let go of
+        })
+        if (tracing) {
+          trace = await app.context().tracing.stop({ path: tracePath }).then(() => tracePath, (err: unknown) => {
+            console.warn(`tier 0 lost the trace: ${String(err)}`)
+            return null
+          })
+        }
         const exited = new Promise<number | null>(resolve => child.once('exit', code => resolve(code)))
         const asked = Date.now()
         // The quit takes main down while the call is out, so its answer never comes
@@ -238,13 +257,14 @@ export async function start(context: TestContext, options: Options = {}): Promis
         const ended = await Promise.race([exited, sleep(20_000).then(() => 'hung' as const)])
         if (ended === 'hung') await app.close()
         else [quitMs, exitCode] = [Date.now() - asked, ended]
+        await Promise.race([closed, sleep(5_000)])
       }
     } finally {
       const folders = (await readdir(path.join(data, 'plugins'), { withFileTypes: true }).catch(() => [])).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
       record = {
         instance: path.basename(folder), profile: profile.name, serial: isSerial(ids), build: facts.build, os: facts.os,
         input: [...input].sort(), presses, harness, focus, quiet: quieted, plugins: { ...facts.plugins, ids, tests: Object.keys(tests).sort(), folders, installed },
-        launchMs: launched - begun, quitMs, exitCode, trace: tracing ? tracePath : null,
+        launchMs: launched - begun, quitMs, exitCode, trace,
       }
       await writeFile(path.join(folder, 'record.json'), `${JSON.stringify(record, null, 2)}\n`)
     }
@@ -284,6 +304,7 @@ export async function start(context: TestContext, options: Options = {}): Promis
     usedInput: route => void input.add(route),
     focus: () => readFocus(app),
     picker: (picked, pick = {}) => stubPicker(app, picked, pick),
+    ended: () => closed,
     quit: () => held.quit!(),
   }
   // The next start reads free memory with this instance up
