@@ -4,7 +4,6 @@ import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink, 
 import path from 'node:path'
 import { LIST_PAGE } from '../../../api/actions.ts'
 import { defaultLimits } from '../../../api/limits.ts'
-import type { MovedFields } from '../../../api/envelope.ts'
 import { isDotName } from '../../../api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from '../../../api/policy-jobs.ts'
 import { canonical, folderState, listedState, looked, named, type Canonical, type FolderState, type NotCanonical, type Opened } from '../../../lib/canonical.ts'
@@ -27,8 +26,7 @@ export type Luoshu = {
 
 export type LuoshuOptions = {
   // Publishes luoshu.<topic> for a path, changed for each write of its own and outside for anything else
-  // fields is what a change carries beside its path: from at a move's new end
-  publish?: (topic: 'changed' | 'outside', path: string, fields?: MovedFields) => void
+  publish?: (topic: 'changed' | 'outside', path: string, fields?: { from: string }) => void
   // The most names one listing looks at, LIST_PAGE but in tests
   pageSize?: number
   // How long a path stays quiet before the watcher looks at it, as editors save a file in several writes
@@ -538,7 +536,6 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     // In this order, so a rename in place that only changed case ends stamped under its one folded name
     void stamped(from.relative, null)
     void stamped(to.relative, await stampOf(to.absolute).catch(() => null))
-    // The end it left first, then the new end naming it, so a tab open on the note follows it
     publish('changed', from.relative)
     publish('changed', to.relative, { from: from.relative })
     return null
