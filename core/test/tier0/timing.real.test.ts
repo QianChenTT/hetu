@@ -30,8 +30,8 @@ describe('tier 0 timing', () => {
       await mkdir(notes, { recursive: true })
       await prepare(data, notes, unpacked, ids, notesFolder())
       // Cold then warm on the same folder, so a busy spell on the machine falls on both kinds alike
-      samples.push(await timedRun(data, 'cold', 'Welcome', 'Start here.'))
-      samples.push(await timedRun(data, 'warm', 'Welcome', 'Start here.'))
+      samples.push(await timedRun(context, data, 'cold', 'Welcome', 'Start here.'))
+      samples.push(await timedRun(context, data, 'warm', 'Welcome', 'Start here.'))
     }
 
     const summary = summarize(samples)
@@ -45,16 +45,18 @@ describe('tier 0 timing', () => {
     expect(failures, failures.join('\n')).toEqual([])
   }, 230_000)
 
-  it('fails a measure past its baseline times the factor, naming the baseline, the value and the factor, and checks nothing while pending', () => {
+  it('fails a measure past its baseline times its factor, naming the baseline, the value and the factor, and checks nothing while pending', () => {
     const summary = summarize([
-      { kind: 'cold', ms: { ready: 700, shown: 2100, firstNote: 90, quit: 1000 }, stoppingMs: 5, freeGb: 4, load: 2, others: 1 },
-      { kind: 'cold', ms: { ready: 720, shown: 2050, firstNote: 80, quit: 1100 }, stoppingMs: 5, freeGb: 4, load: 2, others: 1 },
-      { kind: 'cold', ms: { ready: 690, shown: 2000, firstNote: 85, quit: 1050 }, stoppingMs: 5, freeGb: 4, load: 2, others: 1 },
+      { kind: 'cold', ms: { ready: 700, shown: 2100, editor: 1400, firstNote: 90, quit: 1000 }, stoppingMs: 5, freeGb: 4, load: 2, others: 1 },
+      { kind: 'cold', ms: { ready: 720, shown: 2050, editor: 1330, firstNote: 80, quit: 1100 }, stoppingMs: 5, freeGb: 4, load: 2, others: 1 },
+      { kind: 'cold', ms: { ready: 690, shown: 2000, editor: 1310, firstNote: 85, quit: 1050 }, stoppingMs: 5, freeGb: 4, load: 2, others: 1 },
     ])
     expect(summary['cold.shown']).toEqual({ values: [2100, 2050, 2000], median: 2050, spread: 100 })
-    const set: Baseline = { status: 'set', factor: 1.5, measures: { 'cold.ready': 700, 'cold.shown': 600, 'cold.firstNote': 90 } }
+    const set: Baseline = { status: 'set', factor: 1.5, factors: { 'cold.firstNote': 0.5 }, measures: { 'cold.ready': 700, 'cold.shown': 600, 'cold.firstNote': 90 } }
     expect(check(set, summary)).toEqual([
       'cold.shown: 2050 ms, past its baseline 600 ms × 1.5 = 900 ms',
+      'cold.editor: 1330 ms with no baseline',
+      'cold.firstNote: 85 ms, past its baseline 90 ms × 0.5 = 45 ms',
       'cold.quit: 1050 ms with no baseline',
     ])
     expect(check({ status: 'pending' }, summary)).toEqual([])
