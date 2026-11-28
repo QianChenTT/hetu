@@ -22,10 +22,12 @@ else {
 const run = path.join(repo, 'dist-package', 'tier0', new Date().toISOString().replace(/[:.]/g, '-'))
 await mkdir(run, { recursive: true })
 console.log(`tier 0 run folder: ${run}`)
-// Node runs vitest's own entry, with no shell between, so an argument reaches vitest as it was given
-const ran = spawnSync(process.execPath, [path.join(repo, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--config', 'test/tier0/vitest.config.ts', ...args.filter(arg => arg !== '--reuse')], {
+// Node runs vitest's own entry, with no shell between, so an argument reaches vitest as it was given. The timing file
+// runs after the rest, alone, and a filter matching no file of a pass passes that pass
+const pass = (timing: boolean) => spawnSync(process.execPath, [path.join(repo, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--config', 'test/tier0/vitest.config.ts', '--passWithNoTests', ...args.filter(arg => arg !== '--reuse')], {
   cwd: path.join(repo, 'core'),
   stdio: 'inherit',
-  env: { ...process.env, HETU_TIER0_RUN: run },
-})
-process.exit(ran.status ?? 1)
+  env: { ...process.env, HETU_TIER0_RUN: run, ...(timing ? { HETU_TIER0_TIMING: '1' } : {}) },
+}).status ?? 1
+const statuses = [pass(false), pass(true)]
+process.exit(statuses.find(status => status !== 0) ?? 0)
