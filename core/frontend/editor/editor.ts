@@ -315,7 +315,7 @@ export class EditorViews implements Editors {
     open.view.destroy()
     open.element.remove()
     this.open.delete(id)
-    if (this.shownId === id) this.shownId = null
+    if (this.shownId === id) this.current(null)
   }
 
   // Makes the note current, has it laid out and focuses it unless told not to
