@@ -35,7 +35,9 @@ const explorer = async (editor: Page) => {
   return (await element.contentFrame())!
 }
 
-// The Plugins tab, pressed until it is the one shown, since a redraw can replace the tab under the press
+// The Plugins tab, pressed until it is the one shown, since a redraw can replace the tab under the press. Each press
+// made again is recorded with why, so a page redrawing under every press shows in the run record
+const PRESSED_AGAIN = 'pressed the Plugins tab again after '
 async function pluginsTab(instance: Instance, trusted: Page): Promise<void> {
   const tab = trusted.getByRole('tab', { name: /^Plugins/ })
   for (let tries = 0; await tab.getAttribute('aria-selected') !== 'true'; tries++) {
@@ -43,6 +45,7 @@ async function pluginsTab(instance: Instance, trusted: Page): Promise<void> {
     await pressArmed(instance, tab).catch((err: unknown) => {
       // Replaced by a redraw mid press: pressed again
       if (!/not attached|detached|never held still|hits |left the page under the press/.test(String(err))) throw err
+      instance.harnessed(`${PRESSED_AGAIN}${String(err).replace(/^Error: /, '').split('\n')[0]}`)
     })
   }
 }
@@ -146,6 +149,26 @@ describe('first run and plugins on the driven build', () => {
     await pressArmed(instance, trusted.getByRole('tab', { name: /^Plugins/ }))
     expect(Date.now()).toBeGreaterThan(ends)
     await instance.quit()
+  })
+
+  // A press of the Plugins tab made again after a redraw took the first is recorded, so a page that redraws under every
+  // press shows in the run record instead of passing quietly. The tab is replaced on the press's mouse move by a copy
+  // that hands its click to the tab, as a redraw does with the page's own handler
+  it('records the Plugins tab pressed again after a redraw took the first press', async context => {
+    const instance = await start(context, { profile: pair, route: 'install', notes })
+    const trusted = await instance.trusted()
+    await trusted.evaluate(() => {
+      // The tab found at the move, as the window redraws itself while its plugins start
+      window.addEventListener('mousemove', () => {
+        const tab = [...document.querySelectorAll<HTMLElement>('[role=tab]')].find(each => /^Plugins/.test(each.textContent ?? ''))!
+        const copy = tab.cloneNode(true) as HTMLElement
+        copy.addEventListener('click', () => tab.click())
+        tab.replaceWith(copy)
+      }, { capture: true, once: true })
+    })
+    await pluginsTab(instance, trusted)
+    const record = await instance.quit()
+    expect(record.harness.filter(step => step.startsWith(PRESSED_AGAIN))).toEqual([`${PRESSED_AGAIN}the target left the page under the press, as a redraw replaces it: the press went to what took its place, the target got 0 pointerdown and 0 pointerup`])
   })
 
   // T-50: removing a plugin raises "New plugin found" for the plugin just removed, an approval nobody can answer. A known
