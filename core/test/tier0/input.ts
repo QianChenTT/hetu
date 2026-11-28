@@ -331,7 +331,12 @@ export async function click(app: ElectronApplication, target: Locator, timeout =
     if (Date.now() > end) break
     got = await frame.evaluate(token => (window as unknown as Record<string, { down: number, up: number }>)[token]!, token).catch(() => got)
   }
-  if (got.down !== 1 || got.up !== 1) throw new Error(`main heard the click but the target got ${got.down} pointerdown and ${got.up} pointerup: something over it took the click`)
+  if (got.down !== 1 || got.up !== 1) {
+    // A target no longer in its page was replaced between the hit check and the press, a redraw and not an overlay
+    const replaced = !await handle.evaluate(element => element.isConnected).catch(() => false)
+    if (replaced) throw new Error(`the target left the page under the press, as a redraw replaces it: the press went to what took its place, the target got ${got.down} pointerdown and ${got.up} pointerup`)
+    throw new Error(`main heard the click but the target got ${got.down} pointerdown and ${got.up} pointerup: something over it took the click`)
+  }
   return { x: presses[0]!.x!, y: presses[0]!.y!, page: seen, intended }
 }
 
