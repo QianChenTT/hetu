@@ -7,7 +7,7 @@ import { _electron as electron, type ElectronApplication, type Page } from 'play
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { quiet } from '../drive.ts'
+import { quiet, standIns } from '../drive.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 export const electronPath = createRequire(import.meta.url)('electron') as string
@@ -138,7 +138,11 @@ export async function launch(
   running.push(app)
   // An app some tests start to see it quit at once has no windows left to keep quiet, so a failure is told, not thrown
   if (environment.HETU_QUIET_WINDOWS === 'hidden' && options.takesFocus !== true) {
-    await quiet(app).catch((err: unknown) => console.warn(`the quiet launch was not applied: ${String(err)}`))
+    // What the quiet launch stands in for, said in the test's output as it happens
+    app.on('console', message => {
+      if (message.text().startsWith('quiet launch: ')) console.log(message.text())
+    })
+    await quiet(app).then(() => standIns(app)).catch((err: unknown) => console.warn(`the quiet launch was not applied: ${String(err)}`))
   }
   return app
 }

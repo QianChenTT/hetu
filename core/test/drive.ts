@@ -47,3 +47,59 @@ export const quiet = (app: ElectronApplication): Promise<Quieted> => app.evaluat
   app.on('browser-window-created', (_event, window) => passThrough(window))
   return { activation, mouse: 'ignored' as const }
 })
+
+// The events a person's run gives the trusted window and a quiet run doesn't, which start its input delay. Hidden, the
+// window is shown with showInactive and no show event, and under the activation policy hetu's focus() on it gives no
+// focus event, so its delay never runs out and every press in it is dropped. Each is emitted from main only when the
+// real one didn't come during the call, and logged, so a run says where it stood in for the OS. Installed only with
+// the quiet launch, where neither comes. Each is said on main's console as it happens and answered in the log
+export const standIns = (app: ElectronApplication): Promise<string[]> => app.evaluate(({ BrowserWindow }) => {
+  const shared = globalThis as unknown as { hetuStandIns?: string[] }
+  if (shared.hetuStandIns !== undefined) return shared.hetuStandIns
+  const log: string[] = []
+  shared.hetuStandIns = log
+  // Main's console reaches Playwright, which hands it to the test's output
+  const say = (line: string) => {
+    log.push(line)
+    console.log(`quiet launch: ${line}`)
+  }
+  type Window = InstanceType<typeof BrowserWindow>
+  const trusted = (window: Window) => !window.isDestroyed() && window.webContents.getURL() === 'hetu://trusted/'
+  // The real show and focus events each window gave
+  const given = new WeakMap<Window, number>()
+  const counted = new WeakSet<Window>()
+  const count = (window: Window) => {
+    if (counted.has(window)) return
+    counted.add(window)
+    const add = () => given.set(window, (given.get(window) ?? 0) + 1)
+    window.on('show', add)
+    window.on('focus', add)
+  }
+  // Wraps a method on the prototype that holds it, emitting event when the call gave none on a trusted window
+  const standIn = (method: 'showInactive' | 'focus', event: 'show' | 'focus') => {
+    let owner: object | null = BrowserWindow.prototype
+    while (owner !== null && !Object.prototype.hasOwnProperty.call(owner, method)) owner = Object.getPrototypeOf(owner)
+    const holder = owner as Record<string, (this: Window) => void>
+    const real = holder[method]!
+    holder[method] = function (this: Window) {
+      count(this)
+      const before = given.get(this) ?? 0
+      real.call(this)
+      if (trusted(this) && (given.get(this) ?? 0) === before) {
+        say(`emitted ${event} on the trusted window, its ${method}() giving none`)
+        this.emit(event)
+      }
+    }
+  }
+  standIn('showInactive', 'show')
+  standIn('focus', 'focus')
+  // A trusted window already shown before this ran, as the startup flow's can be
+  for (const window of BrowserWindow.getAllWindows()) {
+    count(window)
+    if (trusted(window) && window.isVisible()) {
+      say('emitted show on the trusted window, shown before the stand-ins were set')
+      window.emit('show')
+    }
+  }
+  return log
+})
