@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { Caller, LockFields } from '../api/envelope.ts'
+import type { Caller, LockFields, MovedFields } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Booted } from './boot/header.ts'
@@ -56,7 +56,7 @@ export type WireOptions = {
 // for its two topics alone, the lock its lock.changed, and flood control counting by limit, the fixed values unless one
 // is handed. Flood control and the lock time on a clock no change of the wall clock moves
 export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'installDir' | 'trash'> & Partial<CoreModulesOptions> & {
-  publish: (owner: 'luoshu' | 'lock', topic: string, path: string, fields?: LockFields) => void
+  publish: (owner: 'luoshu' | 'lock', topic: string, path: string, fields?: LockFields | MovedFields) => void
   limit?: (plugin: string | null, name: LimitName) => number
 }): CoreModules {
   const { publish, limit, ...given } = options
@@ -65,7 +65,7 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
     gate: given.gate ?? createGate(),
     grantRiskClassifier: given.grantRiskClassifier ?? createGrantRiskClassifier(),
     storage: given.storage ?? createStorage(),
-    luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish((topic, path) => publish('luoshu', topic, path)) }),
+    luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish((topic, path, fields) => publish('luoshu', topic, path, fields)) }),
     history: given.history ?? createHistory(),
     exec: given.exec ?? createExec(),
     floodControl: given.floodControl ?? createFloodControl({

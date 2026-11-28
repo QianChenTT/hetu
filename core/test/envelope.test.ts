@@ -352,6 +352,7 @@ describe('what the bus pushes and hears', () => {
     ['a core topic', { v: 1, kind: 'event', seq: 1, topic: 'core.status' }],
     ['a note locked with its end', locks()],
     ['a note unlocked', locks({ locked: false, until: null })],
+    ['a move\'s new end naming the end it left', pushed({ topic: 'luoshu.changed', from: 'notes/old.md' })],
   ])('takes %s', (_name, message) => {
     expect(event.safeParse(message).success).toBe(true)
   })
@@ -376,6 +377,9 @@ describe('what the bus pushes and hears', () => {
     ['lock.changed with an end that is not whole', locks({ until: 1.5 })],
     ['lock.changed with a negative end', locks({ until: -1 })],
     ['lock state on another topic', pushed({ locked: true, until: 5 })],
+    ['from on another topic', pushed({ topic: 'luoshu.outside', from: 'notes/old.md' })],
+    ['from with no path', pushed({ topic: 'luoshu.changed', path: undefined, from: 'notes/old.md' })],
+    ['from with a dot segment', pushed({ topic: 'luoshu.changed', from: 'notes/../old.md' })],
   ])('refuses an event with %s', (_name, message) => {
     expect(event.safeParse(message).success).toBe(false)
   })
@@ -403,10 +407,15 @@ describe('what the bus pushes and hears', () => {
 })
 
 describe('the topics core modules publish', () => {
-  it('names each with who hears it and what it carries beside its path, lock.changed alone read-only and with fields', () => {
+  it('names each with who hears it and what it carries beside its path, lock.changed alone read-only', () => {
     expect(Object.keys(moduleTopics)).toEqual(['luoshu.changed', 'luoshu.outside', 'lock.changed'])
-    expect(Object.entries(moduleTopics).map(([topic, spec]) => [topic, spec.hears, spec.fields === null]))
-      .toEqual([['luoshu.changed', 'list', true], ['luoshu.outside', 'list', true], ['lock.changed', 'read', false]])
+    expect(Object.entries(moduleTopics).map(([topic, spec]) => [topic, spec.hears, spec.fields === null, spec.pathFields ?? []]))
+      .toEqual([['luoshu.changed', 'list', false, ['from']], ['luoshu.outside', 'list', true, []], ['lock.changed', 'read', false, []]])
+    const moved = moduleTopics['luoshu.changed']!.fields!
+    for (const fields of [{}, { from: 'notes/a.md' }]) expect([fields, moved.safeParse(fields).success]).toEqual([fields, true])
+    for (const fields of [{ from: '' }, { from: 'notes/../x' }, { from: 'a.md', to: 'b.md' }, { locked: true, until: 5 }]) {
+      expect([fields, moved.safeParse(fields).success]).toEqual([fields, false])
+    }
     expect(Object.getPrototypeOf(moduleTopics)).toBeNull()
     expect(Object.isFrozen(moduleTopics) && Object.values(moduleTopics).every(Object.isFrozen)).toBe(true)
   })

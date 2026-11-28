@@ -1,3 +1,4 @@
+import type { MovedFields } from '../../api/envelope.ts'
 import type { CoreModuleId } from '../../api/ids.ts'
 import type { GrantRiskClassifier } from '../../api/classes.ts'
 import type { ExecView, Gate, GrantsSnapshot, Guard, Provider, StorageRole } from '../../api/policy-jobs.ts'
@@ -49,6 +50,8 @@ export type ModuleChange = 'started' | 'failed' | 'stopped' | 'recovered'
 
 // The topics luoshu publishes, each as luoshu.<topic>. A publish of any other reaches nobody
 export const luoshuTopics = Object.freeze(['changed', 'outside'] as const)
+// How the luoshu publishes a topic of its own, with what a change carries beside its path
+export type LuoshuPublish = (topic: string, path: string, fields?: MovedFields) => void
 
 // Storage as the core holds it: the provider, the clear the plugins manager runs in a space's turn and the data folder
 // it opens on

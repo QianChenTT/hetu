@@ -158,12 +158,21 @@ export const lockFields = z.union([
 ])
 export type LockFields = z.infer<typeof lockFields>
 
+// What luoshu.changed carries beside its path: at a move's new end, from names the end it left
+export const movedFields = z.strictObject({ from: eventPath.optional() })
+export type MovedFields = z.infer<typeof movedFields>
+
 // The topics core modules publish, each with a path. hears is who the bus gives one to: a subscriber the gate lets list
-// the path, or only one that reads it. fields is what one carries beside its path, null for nothing. A module's publish
-// of a topic not here, or with other fields, reaches nobody
-export type ModuleTopic = { readonly hears: 'list' | 'read', readonly fields: z.ZodType<Record<string, unknown>> | null }
+// the path, or only one that reads it. fields is what one carries beside its path, null for nothing. pathFields names
+// the fields that hold a path, which a subscriber hears only when the gate lets it hear that path too. A module's
+// publish of a topic not here, or with other fields, reaches nobody
+export type ModuleTopic = {
+  readonly hears: 'list' | 'read'
+  readonly fields: z.ZodType<Record<string, unknown>> | null
+  readonly pathFields?: readonly string[]
+}
 export const moduleTopics: Readonly<Record<string, ModuleTopic>> = Object.freeze(Object.assign(Object.create(null), {
-  'luoshu.changed': Object.freeze({ hears: 'list', fields: null }),
+  'luoshu.changed': Object.freeze({ hears: 'list', fields: movedFields, pathFields: Object.freeze(['from']) }),
   'luoshu.outside': Object.freeze({ hears: 'list', fields: null }),
   'lock.changed': Object.freeze({ hears: 'read', fields: lockFields }),
 }))
@@ -177,11 +186,12 @@ const pathEvent = z.strictObject({
   topic: qualifiedName.refine(topic => !topic.startsWith('events.'), 'a signal').refine(topic => topic !== 'lock.changed', 'carries fields'),
   path: eventPath.optional(),
 })
+const movedEvent = z.strictObject({ ...eventHead, topic: z.literal('luoshu.changed'), path: eventPath, from: eventPath })
 const lockChangedEvent = z.union([
   z.strictObject({ ...eventHead, topic: z.literal('lock.changed'), path: eventPath, locked: z.literal(true), until: z.int().nonnegative() }),
   z.strictObject({ ...eventHead, topic: z.literal('lock.changed'), path: eventPath, locked: z.literal(false), until: z.null() }),
 ])
-export const event = z.union([pathEvent, lockChangedEvent])
+export const event = z.union([pathEvent, movedEvent, lockChangedEvent])
 export type BusEvent = z.infer<typeof event>
 
 // A signal carries no seq, since no ack frees it. The topics it names are the subscriber's own

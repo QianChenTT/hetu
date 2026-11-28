@@ -9,9 +9,12 @@ export type Bridge = {
 
 export type Reply = { ok: boolean, result?: unknown, refusal?: { code: string, reason?: string } }
 
-export type CoreEvent = { topic: string, path?: string }
+// from names where a moved note came from, on luoshu.changed at the move's new end
+export type CoreEvent = { topic: string, path?: string, from?: string }
 
-type Heard = { v?: unknown, kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, refusal?: unknown, topic?: unknown, seq?: unknown, path?: unknown }
+type Heard = {
+  v?: unknown, kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, refusal?: unknown, topic?: unknown, seq?: unknown, path?: unknown, from?: unknown
+}
 
 export class CoreLink {
   private readonly bridge: Bridge
@@ -70,7 +73,8 @@ export class CoreLink {
       return
     }
     if (typeof got.seq === 'number') this.bridge.send({ v: 1, kind: 'ack', seq: got.seq })
-    this.tell(typeof got.path === 'string' ? { topic: got.topic, path: got.path } : { topic: got.topic })
+    if (typeof got.path !== 'string') return this.tell({ topic: got.topic })
+    this.tell(typeof got.from === 'string' ? { topic: got.topic, path: got.path, from: got.from } : { topic: got.topic, path: got.path })
   }
 
   private tell(event: CoreEvent): void {

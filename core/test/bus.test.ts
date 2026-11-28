@@ -1885,3 +1885,38 @@ describe('lock.changed', () => {
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canRead', count: 1 }])
   })
 })
+
+// A move's new end names the end it left. The name it left is a path too, so a subscriber hears it only when the gate
+// lets it list that path as well, else the event comes with its own path alone
+describe('a move\'s event at its new end', () => {
+  it('carries from to a subscriber that may list both ends and leaves it out for one that may list only the new end', async () => {
+    const { router, search, scribe, way } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
+    router.publishCore('luoshu', 'changed', 'notes/b.md', { from: 'secret/a.md' })
+    router.publishCore('luoshu', 'changed', 'notes/c.md', { from: 'notes/b.md' })
+    await until(() => search.events().length === 2 && scribe.events().length === 2 && way.events().length === 2)
+    const shown = (messages: Message[]) => messages.map(({ path, from }) => (from === undefined ? { path } : { path, from }))
+    expect(shown(search.events())).toEqual([{ path: 'notes/b.md' }, { path: 'notes/c.md', from: 'notes/b.md' }])
+    expect(shown(scribe.events())).toEqual([{ path: 'notes/b.md', from: 'secret/a.md' }, { path: 'notes/c.md', from: 'notes/b.md' }])
+    expect(shown(way.events())).toEqual([{ path: 'notes/b.md', from: 'secret/a.md' }, { path: 'notes/c.md', from: 'notes/b.md' }])
+    for (const message of [...search.events(), ...scribe.events(), ...way.events()]) expect(eventShape.safeParse(message).success).toBe(true)
+  })
+
+  it.each([
+    ['a from with a dot segment', { from: 'notes/../a.md' }],
+    ['a from in a dot folder', { from: '.git/a.md' }],
+    ['an empty from', { from: '' }],
+    ['a field beside from', { from: 'notes/a.md', text: 'the note' }],
+    ['from on luoshu.outside', { from: 'notes/a.md' }, 'outside'],
+  ])('sends nothing for %s', async (_name, fields, topic = 'changed') => {
+    const { router, search } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
+    router.publishCore('luoshu', topic, 'notes/b.md', fields)
+    router.publishCore('luoshu', 'changed', 'notes/z.md')
+    await until(() => search.events().some(message => message.path === 'notes/z.md'))
+    await settle()
+    expect(search.events().map(message => message.path)).toEqual(['notes/z.md'])
+  })
+})

@@ -21,6 +21,7 @@ function started(files: Record<string, string>) {
     text: instance => texts.get(instance) ?? '',
     replace: (instance, text) => void texts.set(instance, text),
     destroy: instance => void texts.delete(instance),
+    moved: () => {},
   }, () => {})
   notes.start()
   const raw = new RawSource(link, notes, instance => texts.get(instance) ?? '')

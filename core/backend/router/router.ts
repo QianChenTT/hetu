@@ -59,17 +59,21 @@ export class Router implements RouterDoor {
   }
 
   // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path, with the fields the contract's
-  // moduleTopics gives the topic. A topic not there, fields that don't parse as its own or a path the contract's path
-  // schema refuses, a dot segment among them, reaches nobody whatever the gate's state, since no shape step checks it
-  // here. The topic's hears says whether a subscriber the gate lets list the path hears it or only one that reads it.
-  // No manifest is read. No call carries it, so it makes no audit record of an events.publish
+  // moduleTopics gives the topic, none read as an empty set of them. A topic not there, fields that don't parse as its
+  // own or a path the contract's path schema refuses, at the path or in a field that holds one, a dot segment among
+  // them, reaches nobody whatever the gate's state, since no shape step checks it here. The topic's hears says whether
+  // a subscriber the gate lets list the path hears it or only one that reads it. No manifest is read. No call carries
+  // it, so it makes no audit record of an events.publish
   publishCore(owner: string, topic: string, path: string, fields?: Record<string, unknown>): void {
     const named = `${owner}.${topic}`
     const spec = Object.hasOwn(moduleTopics, named) ? moduleTopics[named] : undefined
     if (this.c.closed || spec === undefined || actionPathProblem(path) !== null) return
-    const parsed = spec.fields === null ? { success: fields === undefined, data: undefined } : spec.fields.safeParse(fields)
+    const parsed = spec.fields === null ? { success: fields === undefined, data: undefined } : spec.fields.safeParse(fields ?? {})
     if (!parsed.success) return
-    this.c.bus.publish(named, path, { hears: spec.hears, ...(parsed.data === undefined ? {} : { fields: parsed.data }) })
+    const { hears, pathFields = [] } = spec
+    const data = parsed.data ?? {}
+    if (pathFields.some(name => typeof data[name] === 'string' && actionPathProblem(data[name]) !== null)) return
+    this.c.bus.publish(named, path, { hears, pathFields, ...(parsed.data === undefined ? {} : { fields: parsed.data }) })
   }
 
   // Whether a plugin's luoshu.read reaches a path now, asked as the bus asks before it hands a reader a path: yes with

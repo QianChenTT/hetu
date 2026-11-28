@@ -161,6 +161,27 @@ describe('the fake core', () => {
     expect(fake.luoshu.read('notes/c.md')).toBe('c')
   })
 
+  // As hetu's luoshu publishes a move: the end it left, then the new end naming it. A plugin hears from only where it
+  // may list the end it left
+  it('publishes a move\'s new end naming the end it left, to a plugin that may list it', async () => {
+    const fake = core(undefined, {
+      capabilities: [
+        { type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['notes/**'] },
+        { type: 'events.subscribe', topics: ['luoshu.changed'] },
+      ],
+    })
+    const heard: object[] = []
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    await box.ctx!.events.on('luoshu.changed', event => { heard.push(event) })
+    expect(await box.ctx!.luoshu.move({ from: 'notes/a.md', to: 'notes/old/a.md' })).toBe(null)
+    await until(() => heard.length === 2)
+    expect(heard).toEqual([
+      { topic: 'luoshu.changed', path: 'notes/a.md' },
+      { topic: 'luoshu.changed', path: 'notes/old/a.md', from: 'notes/a.md' },
+    ])
+  })
+
   it('gives a test caller the grants it names', async () => {
     const fake = core(undefined, { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] })
     await fake.start(reader().plugin)
@@ -317,6 +338,61 @@ describe('the fake luoshu against the luoshu plugin', () => {
       [{ folder: '.obsidian' }, all], [{ folder: 'journal/deep/.config' }, all], [{}, null],
     ] as const) {
       expect(await ask(memory, args, canList), JSON.stringify(args)).toEqual(await ask(real.provider, args, canList))
+    }
+  })
+})
+
+describe('the fake luoshu\'s move against the luoshu plugin', () => {
+  let base: string
+  afterEach(async () => {
+    if (base !== undefined) await rm(base, { recursive: true, force: true })
+  })
+
+  // The same note moved on disk and in memory, each telling its changes: the end it left, then the new end naming it
+  it('tells a move\'s changes as the luoshu plugin publishes them', async () => {
+    base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-fake-move-')))
+    const folder = path.join(base, 'notes')
+    await mkdir(path.join(folder, 'journal'), { recursive: true })
+    await mkdir(path.join(base, 'data'))
+    await mkdir(path.join(base, 'install'))
+    await writeFile(path.join(folder, 'journal', 'a.md'), 'a')
+    await writeFile(path.join(folder, 'c.md'), 'c')
+    const told = { real: [] as unknown[], memory: [] as unknown[] }
+    const real = createLuoshu({ publish: (_topic, at, fields) => void told.real.push(fields?.from === undefined ? [at] : [at, fields.from]) })
+    real.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    const memory = new MemoryLuoshu(async (at, from) => void told.memory.push(from === undefined ? [at] : [at, from]))
+    memory.notes.set('journal/a.md', 'a')
+    memory.notes.set('c.md', 'c')
+    let n = 0
+    async function move(provider: Provider, from: string, to: string): Promise<unknown> {
+      const call: Call = {
+        callId: `m${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, root: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.move',
+        args: { from, to }, deadline: Date.now() + 30000,
+      }
+      const prepared = await provider.prepare(call)
+      if (!('scope' in prepared)) return { refused: prepared }
+      try {
+        return await provider.perform(call, prepared)
+      } catch (err) {
+        return { refused: err }
+      }
+    }
+    try {
+      // Into a folder it makes, out of it, onto a note that exists, from one that doesn't, a rename in place that only
+      // changes case and a move onto its own path
+      const moves = [
+        ['journal/a.md', 'old/2026/a.md'], ['old/2026/a.md', 'b.md'], ['b.md', 'c.md'], ['missing.md', 'd.md'], ['b.md', 'B.md'], ['c.md', 'c.md'],
+      ]
+      for (const [from, to] of moves) {
+        expect(await move(memory, from!, to!), `${from} ${to}`).toEqual(await move(real.provider, from!, to!))
+      }
+      expect(told.real).toEqual([
+        ['journal/a.md'], ['old/2026/a.md', 'journal/a.md'], ['old/2026/a.md'], ['b.md', 'old/2026/a.md'],
+        ['b.md'], ['B.md', 'b.md'], ['c.md'], ['c.md', 'c.md'],
+      ])
+      expect(told.memory).toEqual(told.real)
+    } finally {
+      real.close()
     }
   })
 })

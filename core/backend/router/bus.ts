@@ -29,8 +29,13 @@ export type BusParts = {
 export type Holder = { owner: object, caller: Caller, plugin: string | null, push: Send, alive: () => boolean }
 
 // How a core module's path event goes out: hears says whether a subscriber the gate lets list the path hears it or only
-// one that reads it, fields what it carries beside the path, as the contract's moduleTopics gives them
-export type Delivery = { readonly hears: 'list' | 'read', readonly fields?: Readonly<Record<string, unknown>> }
+// one that reads it, fields what it carries beside the path and pathFields those of them that hold a path, as the
+// contract's moduleTopics gives them
+export type Delivery = {
+  readonly hears: 'list' | 'read'
+  readonly fields?: Readonly<Record<string, unknown>>
+  readonly pathFields?: readonly string[]
+}
 
 type Subscription = {
   // Needs no gate: a plugin's own topic, or a core topic a window hears
@@ -148,8 +153,17 @@ export class Bus {
         }
         if (this.paths === 'ask' && !this.may(subscriber.caller, path, delivery.hears)) continue
       }
-      this.deliver(subscriber, topic, path, delivery.fields)
+      this.deliver(subscriber, topic, path, this.fieldsFor(subscriber.caller, delivery))
     }
+  }
+
+  // The fields as one subscriber hears them: a field holding a path the gate doesn't let it hear as it hears the
+  // event's own path is left out, so a move's end the subscriber can't list stays unnamed to it
+  private fieldsFor(caller: Caller, delivery: Delivery): Readonly<Record<string, unknown>> | undefined {
+    const { fields, pathFields = [] } = delivery
+    if (fields === undefined || this.paths !== 'ask') return fields
+    const held = pathFields.filter(name => typeof fields[name] === 'string' && !this.may(caller, fields[name], delivery.hears))
+    return held.length === 0 ? fields : Object.fromEntries(Object.entries(fields).filter(([name]) => !held.includes(name)))
   }
 
   // A core topic, to the windows that hear it and never to a plugin

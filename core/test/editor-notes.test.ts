@@ -20,6 +20,7 @@ function fakeEditors() {
       replaced.push({ instance, text, remote })
     },
     destroy: instance => void texts.delete(instance),
+    moved: (instance, path) => void paths.set(instance, path),
   }
   return { editors, texts, paths, replaced, type: (instance: string, text: string) => texts.set(instance, text) }
 }
@@ -685,5 +686,334 @@ describe('the draft of a note hetu moved or removed', () => {
     await flush()
     expect(told.at(-1)).toEqual({ kind: 'refused', instance, path: 'a.md', code: 'unavailable' })
     expect(told).not.toContainEqual(expect.objectContaining({ kind: 'gone', kept: true }))
+  })
+})
+
+// A move's new end names the end it left. hetu publishes the end it left first, whose read answers not-found
+describe('a note hetu moved, its new end naming where it came from', () => {
+  // The new keys take a digest, which no fake timer runs
+  const until = (check: () => void) => vi.waitFor(check, { interval: 1 })
+  function moved(files: Map<string, { text: string, version: string }>, from: string, to: string) {
+    files.set(to, files.get(from)!)
+    files.delete(from)
+  }
+
+  it('moves a dirty tab to the new path with its draft, its title and its saves', async () => {
+    const { notes, files, core, told, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine, unsaved')
+    notes.changed(instance)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(space.get(keyOf('a.md'))).toMatchObject({ path: 'a.md', text: 'mine, unsaved' })
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await flush()
+    expect(told).toEqual([])
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'b.md', gone: false, dirty: true })
+    expect(views.paths.get(instance)).toBe('b.md')
+    await until(() => expect(space.has(keyOf('b.md'))).toBe(true))
+    expect(space.get(keyOf('b.md'))).toEqual({ path: 'b.md', base: 'v-note a', text: 'mine, unsaved', at: 1000, edits: [] })
+    expect(space.has(keyOf('a.md'))).toBe(false)
+    expect(space.has(goneKeyOf('a.md'))).toBe(false)
+    // The old path is no longer the tab's: opening it reads anew and the new one is the same tab
+    expect(await notes.open('b.md')).toBe(instance)
+    expect(await notes.save(instance)).toBe('saved')
+    expect(core.calls('luoshu.write').map(call => (call.args as { path: string }).path)).toEqual(['b.md'])
+    expect(files.get('b.md')?.text).toBe('mine, unsaved')
+    expect(files.has('a.md')).toBe(false)
+    expect(space.has(keyOf('b.md'))).toBe(false)
+  })
+
+  it('follows a move whose new end comes first', async () => {
+    const { notes, files, core, told, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told).toEqual([])
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'b.md', gone: false })
+    expect(core.calls('luoshu.read').map(call => (call.args as { path: string }).path)).toEqual(['a.md'])
+  })
+
+  it('brings a tab already marked gone back to live at the new path, its kept draft with it', async () => {
+    const { notes, files, core, told, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    expect(told).toEqual([{ kind: 'gone', instance, path: 'a.md', kept: true }])
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await flush()
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'b.md', gone: false })
+    expect(views.paths.get(instance)).toBe('b.md')
+    await until(() => expect(space.get(keyOf('b.md'))).toMatchObject({ path: 'b.md', text: 'mine' }))
+    expect(space.has(goneKeyOf('a.md'))).toBe(false)
+    expect(await notes.save(instance)).toBe('saved')
+    expect(files.get('b.md')?.text).toBe('mine')
+  })
+
+  it('offers the draft at the new path after a quit', async () => {
+    const first = started()
+    const instance = await first.notes.open('a.md')
+    first.views.type(instance, 'typed before the quit')
+    first.notes.changed(instance)
+    moved(first.files, 'a.md', 'b.md')
+    first.core.event('luoshu.changed', 'a.md')
+    first.core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await flush()
+    await first.notes.keepAll()
+    // A new window on the same storage space and notes
+    const second = started({})
+    for (const [key, value] of first.space) second.space.set(key, value)
+    second.files.set('b.md', first.files.get('b.md')!)
+    const again = await second.notes.open('b.md')
+    expect(second.told).toEqual([{ kind: 'draft', instance: again, path: 'b.md', at: 1000, changedSince: false }])
+    second.notes.restore(again)
+    expect(second.views.texts.get(again)).toBe('typed before the quit')
+  })
+
+  it('leaves its lock answer behind, so Take over clears nothing at either path', async () => {
+    const { notes, files, core, locked, views } = started()
+    const instance = await notes.open('a.md')
+    locked.add('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('locked')
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await flush()
+    expect(await notes.takeOver(instance)).toBe(null)
+    expect(core.calls('lock.clear')).toEqual([])
+  })
+
+  it('moves an offered draft with the tab', async () => {
+    const { notes, files, core, space, told } = started()
+    space.set(keyOf('a.md'), { path: 'a.md', base: 'v-note a', text: 'kept earlier', at: 500, edits: [] })
+    const instance = await notes.open('a.md')
+    expect(told).toEqual([{ kind: 'draft', instance, path: 'a.md', at: 500, changedSince: false }])
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await until(() => expect(space.get(keyOf('b.md'))).toMatchObject({ path: 'b.md', text: 'kept earlier' }))
+    expect(space.has(keyOf('a.md'))).toBe(false)
+    await notes.discard(instance)
+    expect(space.has(keyOf('b.md'))).toBe(false)
+  })
+
+  it('takes a link for a note no tab holds as a change at the new path', async () => {
+    const { notes, files, core, told } = started({ 'a.md': 'note a', 'c.md': 'note c' })
+    const instance = await notes.open('c.md')
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await flush()
+    expect(told).toEqual([])
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'c.md', gone: false })
+  })
+})
+
+// Moves that race a read, follow one another, cross a recreated note or lose an event
+describe('a moved note\'s tab against what races it', () => {
+  const until = (check: () => void) => vi.waitFor(check, { interval: 1 })
+  function moved(files: Map<string, { text: string, version: string }>, from: string, to: string) {
+    files.set(to, files.get(from)!)
+    files.delete(from)
+  }
+  // The keys holding a draft, by the path each is for
+  const kept = (space: Map<string, unknown>, ...paths: string[]) => paths.flatMap(path => [
+    ...space.has(keyOf(path)) ? [`${path} draft`] : [], ...space.has(goneKeyOf(path)) ? [`${path} gone`] : [],
+  ])
+
+  it('ends live at the new path when a read of the end it left answered not-found before the move\'s events', async () => {
+    const { notes, files, core, space, views, told } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    let release = () => {}
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    // The read that brings the tab back answers last, after the draft under the gone key landed
+    let revived = () => {}
+    const reviving = new Promise<void>(resolve => {
+      revived = resolve
+    })
+    const read = core.answers['luoshu.read']
+    core.answers['luoshu.read'] = async (args, sent) => {
+      await ((args as { path: string }).path === 'b.md' ? reviving : gate)
+      return read(args, sent)
+    }
+    // The draft going under the gone key waits, as its reply comes after the move's events on the window's way
+    let stored = () => {}
+    const storing = new Promise<void>(resolve => {
+      stored = resolve
+    })
+    const set = core.answers['storage.set']
+    core.answers['storage.set'] = async (args, sent) => {
+      const answer = set(args, sent)
+      await storing
+      return answer
+    }
+    // The echo of an earlier save, its read on its way while the move renames the note
+    core.event('luoshu.changed', 'a.md')
+    await flush()
+    moved(files, 'a.md', 'b.md')
+    release()
+    // Its not-found lands before the move's events, and the tab starts going gone
+    await vi.waitFor(() => expect(notes.opened.get(instance)?.gone).toBe(true), { interval: 1 })
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    stored()
+    await flush()
+    revived()
+    await until(() => expect(notes.opened.get(instance)).toMatchObject({ path: 'b.md', gone: false }))
+    await until(() => expect(kept(space, 'a.md', 'b.md')).toEqual(['b.md draft']))
+    expect(space.get(keyOf('b.md'))).toMatchObject({ path: 'b.md', text: 'mine' })
+    // Never told gone, since the tab was live again before the gone notice went out
+    expect(told).toEqual([])
+    expect(await notes.save(instance)).toBe('saved')
+    expect(files.get('b.md')?.text).toBe('mine')
+  })
+
+  it('takes into the tab no text read at the path it left before the move, a note made there since included', async () => {
+    const { notes, files, core, views } = started()
+    const instance = await notes.open('a.md')
+    let release = () => {}
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const read = core.answers['luoshu.read']
+    core.answers['luoshu.read'] = async (args, sent) => {
+      await gate
+      return read(args, sent)
+    }
+    core.event('luoshu.changed', 'a.md')
+    moved(files, 'a.md', 'b.md')
+    files.set('a.md', { text: 'another note', version: 'v-another note' })
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    release()
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'b.md', version: 'v-note a', gone: false })
+    expect(views.texts.get(instance)).toBe('note a')
+    expect(views.replaced).toEqual([])
+  })
+
+  it('leaves a gone tab gone when the note moved is another one made at its path since', async () => {
+    const { notes, files, core, space, views } = started({ 'x.md': 'old x' })
+    const old = await notes.open('x.md')
+    views.type(old, 'typed in the old one')
+    notes.changed(old)
+    files.delete('x.md')
+    core.event('luoshu.changed', 'x.md')
+    await flush()
+    await until(() => expect(space.get(goneKeyOf('x.md'))).toMatchObject({ text: 'typed in the old one' }))
+    files.set('x.md', { text: 'new x', version: 'v-new x' })
+    core.event('luoshu.changed', 'x.md')
+    moved(files, 'x.md', 'y.md')
+    core.event('luoshu.changed', 'x.md')
+    core.event('luoshu.changed', 'y.md', { from: 'x.md' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(notes.opened.get(old)).toMatchObject({ path: 'x.md', gone: true })
+    expect(views.paths.get(old)).toBe('x.md')
+    expect(kept(space, 'x.md', 'y.md')).toEqual(['x.md gone'])
+  })
+
+  it('moves a draft offered from the gone key of the path it left, so the new path offers it after a quit', async () => {
+    const first = started()
+    first.space.set(goneKeyOf('a.md'), { path: 'a.md', base: 'v-note a', text: 'from a tab that went', at: 500, edits: [] })
+    const instance = await first.notes.open('a.md')
+    expect(first.told).toEqual([{ kind: 'draft', instance, path: 'a.md', at: 500, changedSince: false }])
+    moved(first.files, 'a.md', 'b.md')
+    first.core.event('luoshu.changed', 'a.md')
+    first.core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await first.notes.keepAll()
+    await until(() => expect(kept(first.space, 'a.md', 'b.md')).toEqual(['b.md gone']))
+    const second = started({})
+    for (const [key, value] of first.space) second.space.set(key, value)
+    second.files.set('b.md', first.files.get('b.md')!)
+    const again = await second.notes.open('b.md')
+    expect(second.told).toEqual([{ kind: 'draft', instance: again, path: 'b.md', at: 500, changedSince: false }])
+  })
+
+  it.each([
+    ['a to b and back to a', ['b.md', 'a.md'], 'a.md'],
+    ['a to b then c', ['b.md', 'c.md'], 'c.md'],
+  ])('keeps one draft at the last path for two moves in a row, %s', async (_name, steps, last) => {
+    const { notes, files, core, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    await vi.advanceTimersByTimeAsync(1000)
+    let at = 'a.md'
+    for (const to of steps) {
+      moved(files, at, to)
+      core.event('luoshu.changed', at)
+      core.event('luoshu.changed', to, { from: at })
+      at = to
+    }
+    // The draft's timer falls due between the moves and their new keys
+    views.type(instance, 'mine, typed on')
+    notes.changed(instance)
+    await vi.advanceTimersByTimeAsync(1000)
+    await notes.keepAll()
+    expect(notes.opened.get(instance)).toMatchObject({ path: last, gone: false })
+    expect(kept(space, 'a.md', 'b.md', 'c.md')).toEqual([`${last} draft`])
+    expect(space.get(keyOf(last))).toMatchObject({ path: last, text: 'mine, typed on' })
+  })
+
+  it('keeps under the new path\'s key what a quit right after the move keeps', async () => {
+    const { notes, files, core, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'typed before the quit')
+    notes.changed(instance)
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    // No turn of the loop between the move and the quit, so the new keys are still on their way
+    await notes.keepAll()
+    expect(kept(space, 'a.md', 'b.md')).toEqual(['b.md draft'])
+    expect(space.get(keyOf('b.md'))).toMatchObject({ path: 'b.md', text: 'typed before the quit' })
+  })
+
+  it('takes the link as a change at the new path when another tab is open there, the moved tab going gone', async () => {
+    const { notes, files, core, told, space, views } = started({ 'a.md': 'note a', 'b.md': 'note b' })
+    const a = await notes.open('a.md')
+    const b = await notes.open('b.md')
+    views.type(a, 'mine')
+    notes.changed(a)
+    files.set('b.md', files.get('a.md')!)
+    files.delete('a.md')
+    core.event('luoshu.changed', 'a.md')
+    core.event('luoshu.changed', 'b.md', { from: 'a.md' })
+    await until(() => expect(told).toContainEqual({ kind: 'gone', instance: a, path: 'a.md', kept: true }))
+    expect(notes.opened.get(b)).toMatchObject({ path: 'b.md', gone: false })
+    expect(views.texts.get(b)).toBe('note a')
+    expect(space.get(goneKeyOf('a.md'))).toMatchObject({ path: 'a.md', text: 'mine' })
+  })
+
+  // The window fell past its credits and the new end's event was lost: the tab goes gone as before the link, its draft
+  // under the gone key of the path it left
+  it('marks the tab gone with its draft under the gone key when the new end\'s event was dropped', async () => {
+    const { notes, files, core, told, space, views } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    moved(files, 'a.md', 'b.md')
+    core.event('luoshu.changed', 'a.md')
+    core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed'] })
+    await until(() => expect(told).toEqual([{ kind: 'gone', instance, path: 'a.md', kept: true }]))
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'a.md', gone: true })
+    expect(kept(space, 'a.md', 'b.md')).toEqual(['a.md gone'])
+    expect(space.get(goneKeyOf('a.md'))).toMatchObject({ path: 'a.md', text: 'mine' })
   })
 })

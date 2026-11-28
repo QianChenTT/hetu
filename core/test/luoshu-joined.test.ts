@@ -4,7 +4,7 @@ import { cp, mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile 
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
-import type { Caller } from '../api/envelope.ts'
+import type { Caller, MovedFields } from '../api/envelope.ts'
 import type { Gate, GuardCall } from '../api/policy-jobs.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
@@ -50,11 +50,14 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
     await writeApproved(store, id, root, { granted, class: 4 })
   }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
-  const luoshu = createLuoshu()
+  // Publishing through the router once it is made, as the wiring does
+  let published: ((topic: string, at: string, fields?: MovedFields) => void) | null = null
+  const luoshu = createLuoshu({ publish: (topic, at, fields) => published?.(topic, at, fields) })
   const runtime = new FakeRuntime()
   // The gate the core modules hold, the shipping one unless holder is given
   const gate = options.holder ?? createGate()
   const { recording, pluginsManager, router } = wireCore({ booted, installDir, doorFile: null, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
+  published = (topic, at, fields) => router.publishCore('luoshu', topic, at, fields)
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
@@ -280,6 +283,12 @@ describe('an open note judged on where it is, never on the spelling it was opene
       text: instance => texts.get(instance)?.text() ?? '',
       replace() {},
       destroy: instance => void texts.delete(instance),
+      // As the page does: the instance named by the new path and every plugin's reach judged again
+      moved(instance, at) {
+        const held = texts.get(instance)
+        if (held !== undefined) held.path = at
+        drawer.forget()
+      },
     }
     const opened = new Notes(link, editors, () => {})
     opened.start()
@@ -306,8 +315,24 @@ describe('an open note judged on where it is, never on the spelling it was opene
       await drawer.humanOpened(texts.get(id)!, 'lister')
       return id
     }
-    return { made, opened, texts, human, port: (plugin: string) => ports.get(plugin)! }
+    return { made, link, opened, texts, human, port: (plugin: string) => ports.get(plugin)! }
   }
+
+  // hetu's luoshu publishes the move, the end it left first, and the tab follows the new end. pub reads public/** and
+  // priv private/**, so the note leaves pub's reach for priv's
+  it('moves the tab of a note hetu moved to the new path, each plugin reaching it as it reaches the new path', async () => {
+    const { link, opened, texts, human, port } = await windowed()
+    const id = await human('public/a.md')
+    expect(await port('pub').call('editor.read', { instance: id })).toMatchObject({ ok: true, result: { text: 'public text' } })
+    expect(await link.call('luoshu.move', { from: 'public/a.md', to: 'private/a.md' })).toMatchObject({ ok: true })
+    for (let waited = 0; opened.opened.get(id)?.path !== 'private/a.md' && waited < 2000; waited += 10) await tick(10)
+    await tick(30)
+    expect(opened.opened.get(id)).toMatchObject({ path: 'private/a.md', gone: false })
+    expect(texts.get(id)?.path).toBe('private/a.md')
+    expect(await port('pub').call('editor.read', { instance: id })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await port('pub').call('editor.instances')).toMatchObject({ ok: true, result: { instances: [] } })
+    expect(await port('priv').call('editor.instances')).toMatchObject({ ok: true, result: { instances: [{ instance: id, path: 'private/a.md' }] } })
+  })
 
   it('opens a note through a junction under the path the luoshu resolved', async () => {
     const { opened, human, texts } = await windowed()

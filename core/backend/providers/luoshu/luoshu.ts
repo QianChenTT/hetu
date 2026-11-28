@@ -26,7 +26,7 @@ export type Luoshu = {
 
 export type LuoshuOptions = {
   // Publishes luoshu.<topic> for a path, changed for each write of its own and outside for anything else
-  publish?: (topic: 'changed' | 'outside', path: string) => void
+  publish?: (topic: 'changed' | 'outside', path: string, fields?: { from: string }) => void
   // The most names one listing looks at, LIST_PAGE but in tests
   pageSize?: number
   // How long a path stays quiet before the watcher looks at it, as editors save a file in several writes
@@ -537,7 +537,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     void stamped(from.relative, null)
     void stamped(to.relative, await stampOf(to.absolute).catch(() => null))
     publish('changed', from.relative)
-    publish('changed', to.relative)
+    publish('changed', to.relative, { from: from.relative })
     return null
   }
 
