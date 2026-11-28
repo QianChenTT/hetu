@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { afterFailure, Ending, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
+import { afterFailure, closeBecomesQuit, DRAFT_GRACE_MS, Ending, QUIT_GRACE_MS, QuitRun, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
 
 const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -82,6 +82,114 @@ describe('quit', () => {
   })
 })
 
+describe('closing the editor window', () => {
+  it('quits the way Quit does on every close, the trusted window open or not, so the page keeps its drafts first', () => {
+    expect(closeBecomesQuit({ byMain: false, quitting: false, failing: false })).toBe('quit')
+  })
+
+  it('holds a close during a quit or a failure, which closes the window itself once its grace ends', () => {
+    expect(closeBecomesQuit({ byMain: false, quitting: true, failing: false })).toBe('hold')
+    expect(closeBecomesQuit({ byMain: false, quitting: false, failing: true })).toBe('hold')
+  })
+
+  it('lets a close main makes itself go on, as Quit closing the windows and the stopped mode leaving only the trusted window', () => {
+    expect(closeBecomesQuit({ byMain: true, quitting: true, failing: false })).toBe('close')
+    expect(closeBecomesQuit({ byMain: true, quitting: false, failing: true })).toBe('close')
+  })
+})
+
+// Electron's quit as main runs it: a window's close() raises its close event at once, and app.quit() raises
+// before-quit at once, the harshest timing either can have
+function electronLike(options: { announced: boolean }) {
+  const did: string[] = []
+  let grace: (() => void) | null = null
+  type Fake = { name: string, closed: boolean, close(): void, isDestroyed(): boolean }
+  const windows: Fake[] = []
+  const run: QuitRun<Fake> = new QuitRun<Fake>({
+    windows: () => windows,
+    announce: () => {
+      did.push('announce')
+      return options.announced
+    },
+    wait: ms => new Promise<void>(resolve => {
+      did.push(`wait ${ms}`)
+      grace = resolve
+    }),
+    finish: async () => { did.push('shutdown') },
+    exit: err => { did.push(err === null ? 'exit' : `exit ${String(err)}`) },
+    quit: () => {
+      did.push('before-quit')
+      run.start()
+    },
+  })
+  const editor: Fake = {
+    name: 'editor',
+    closed: false,
+    close() {
+      let prevented = false
+      run.editorClosing(editor, { preventDefault: () => { prevented = true } })
+      if (!prevented) editor.closed = true
+    },
+    isDestroyed: () => editor.closed,
+  }
+  windows.push(editor)
+  return { run, editor, did, endGrace: () => grace?.() }
+}
+
+const settled = () => new Promise(resolve => setTimeout(resolve, 0))
+
+describe('a quit and the editor window closing', () => {
+  it('turns a human close into the one quit, which closes the window after the draft grace', async () => {
+    const { editor, did, endGrace } = electronLike({ announced: true })
+    editor.close()
+    expect(editor.closed).toBe(false)
+    await settled()
+    expect(did).toEqual(['before-quit', 'announce', `wait ${DRAFT_GRACE_MS}`])
+    endGrace()
+    await settled()
+    expect(editor.closed).toBe(true)
+    expect(did).toEqual(['before-quit', 'announce', `wait ${DRAFT_GRACE_MS}`, 'shutdown', 'exit'])
+  })
+
+  it('holds a human close during the grace and starts no second quit, so the grace runs out in full', async () => {
+    const { editor, did, endGrace } = electronLike({ announced: true })
+    editor.close()
+    await settled()
+    editor.close()
+    expect(editor.closed).toBe(false)
+    endGrace()
+    await settled()
+    expect(editor.closed).toBe(true)
+    expect(did.filter(step => step === 'before-quit' || step === 'shutdown')).toEqual(['before-quit', 'shutdown'])
+  })
+
+  it('closes the windows itself with no grace after a failure and starts no second quit or shutdown', async () => {
+    const { run, editor, did } = electronLike({ announced: false })
+    run.start()
+    run.start()
+    await settled()
+    expect(editor.closed).toBe(true)
+    expect(did).toEqual(['announce', 'shutdown', 'exit'])
+  })
+
+  it('holds a human close once a failure is on its way to quitting, which keeps its exit code and its start again', async () => {
+    const { run, editor, did } = electronLike({ announced: false })
+    run.failed()
+    editor.close()
+    await settled()
+    expect(editor.closed).toBe(false)
+    expect(did).toEqual([])
+  })
+
+  it('lets a window main closes itself close with no quit', async () => {
+    const { run, editor, did } = electronLike({ announced: true })
+    run.close(editor)
+    await settled()
+    expect(editor.closed).toBe(true)
+    expect(did).toEqual([])
+  })
+})
+
 describe('starting again after a failure', () => {
   it('starts again, and in a packaged build always', () => {
     expect(relaunches({ packaged: false, env: {} })).toBe(true)
@@ -143,6 +251,8 @@ describe('after a failure', () => {
         return 'quit'
       },
       closeEditors: () => { did.push('close editors') },
+      holdCloses: () => { did.push('hold') },
+      editorsOpen: () => false,
       packaged: false,
       env: {},
       later: (run, ms) => { timers.push({ ms, run }) },
@@ -154,12 +264,13 @@ describe('after a failure', () => {
   it('tells the windows hetu is quitting, then quits with exit code 1 and starts again after the grace', () => {
     const { made, did, timers } = parts()
     afterFailure({ action: 'relaunch', control: 'gate', reason: 'state-changed' }, made)
-    expect(did).toEqual(['announce'])
+    // A human close in the grace is held, so the failure's exit code and start again stay
+    expect(did).toEqual(['hold', 'announce'])
     // A quit after a failure keeps the restart marker
     expect(made.ending.asked()).toBe(false)
     expect(timers.map(timer => timer.ms)).toEqual([QUIT_GRACE_MS])
     timers[0].run()
-    expect(did).toEqual(['announce', 'quit 1 true'])
+    expect(did).toEqual(['hold', 'announce', 'quit 1 true'])
   })
 
   it('quits without starting again where HETU_NO_RELAUNCH says so', () => {
@@ -185,22 +296,40 @@ describe('after a failure', () => {
   it('shows the native box with quit only when the plugins manager says so, then quits with exit code 1 and starts nothing again', () => {
     const { made, did, timers } = parts()
     afterFailure({ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: true }, made)
-    expect(did).toEqual(['close editors', 'box log', 'quit 1 false'])
+    expect(did).toEqual(['hold', 'close editors', 'box log', 'quit 1 false'])
     expect(timers).toEqual([])
+  })
+
+  it('gives an open editor the draft grace before the box closes it, holding a human close meanwhile', () => {
+    const { made, did, timers } = parts({ editorsOpen: () => true })
+    afterFailure({ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: true }, made)
+    expect(did).toEqual(['hold', 'announce'])
+    expect(timers.map(timer => timer.ms)).toEqual([DRAFT_GRACE_MS])
+    timers[0].run()
+    expect(did).toEqual(['hold', 'announce', 'close editors', 'box log', 'quit 1 false'])
+  })
+
+  it('joins a quit the human started in the box path\'s grace with exit code 1, showing no box', () => {
+    let quitting = false
+    const { made, did, timers } = parts({ editorsOpen: () => true, quitting: () => quitting })
+    afterFailure({ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: true }, made)
+    quitting = true
+    timers[0].run()
+    expect(did).toEqual(['hold', 'announce', 'quit 1 false'])
   })
 
   it('offers Try again in the box for a control that failed at start and starts hetu again once chosen', async () => {
     const failed = { control: 'gate', why: 'start-failed', reason: 'state-changed', again: false } as const
     const retried = parts({ showBox: () => 'retry' })
     afterFailure({ action: 'stopped', mode: failed, box: true }, retried.made)
-    expect(retried.did).toEqual(['close editors', 'quit 1 true'])
+    expect(retried.did).toEqual(['hold', 'close editors', 'quit 1 true'])
     // It keeps the restart marker
     const cleared: string[] = []
     await retried.made.ending.leave({ cleanQuit: async () => { cleared.push('cleared') } })
     expect(cleared).toEqual([])
     const left = parts({ showBox: () => 'retry', env: { HETU_NO_RELAUNCH: '1' } })
     afterFailure({ action: 'stopped', mode: failed, box: true }, left.made)
-    expect(left.did).toEqual(['close editors', 'quit 1 false'])
+    expect(left.did).toEqual(['hold', 'close editors', 'quit 1 false'])
     expect(stoppedBox(failed)).toEqual({
       title: 'hetu stopped',
       message: 'hetu stopped: gate failed at start',

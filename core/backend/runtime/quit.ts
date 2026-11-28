@@ -90,6 +90,80 @@ export const QUIT_GRACE_MS = 2000
 // How long a quit the human asked for waits after core.quitting before its windows close, for the same drafts
 export const DRAFT_GRACE_MS = 750
 
+// What a close of the editor window does. A close main makes itself goes on, as Quit closing the windows and the
+// stopped mode leaving only the trusted window. A human close during a quit or once a failure is on its way to quitting
+// is held, and that quit closes the window itself once its grace ended. Any other is held and hetu quits the way Quit
+// does instead, the trusted window open or not, so the page keeps its drafts first
+export function closeBecomesQuit(state: { byMain: boolean, quitting: boolean, failing: boolean }): 'close' | 'hold' | 'quit' {
+  if (state.byMain) return 'close'
+  return state.quitting || state.failing ? 'hold' : 'quit'
+}
+
+export type Closable = { close(): void, isDestroyed(): boolean }
+
+// What a quit needs from main
+export type QuitRunParts<W> = {
+  // The windows a human sees
+  windows(): Iterable<W>
+  // Tells the windows hetu quits when they get a grace to keep their drafts, true when told
+  announce(): boolean
+  wait(ms: number): Promise<void>
+  // All after the windows closed: the plugins manager's leave, Quit in its order, the hidden renderers
+  finish(): Promise<void>
+  // Once the quit settled, null when nothing threw
+  exit(err: unknown): void
+  // app.quit, which raises before-quit
+  quit(): void
+}
+
+// The one quit of a run, kept apart from Electron so it runs in tests. Every window it closes is marked first, so only
+// closes main makes itself go through while it runs
+export class QuitRun<W extends Closable> {
+  private run: Promise<void> | null = null
+  private failing = false
+  private readonly byMain = new WeakSet<W>()
+  private readonly parts: QuitRunParts<W>
+
+  constructor(parts: QuitRunParts<W>) {
+    this.parts = parts
+  }
+
+  started(): boolean {
+    return this.run !== null
+  }
+
+  // The first before-quit starts the quit and later ones join it. Set before any of it runs, so a close or a quit from
+  // inside it never starts a second
+  start(): void {
+    if (this.run !== null) return
+    this.run = Promise.resolve().then(async () => {
+      if (this.parts.announce()) await this.parts.wait(DRAFT_GRACE_MS)
+      for (const window of this.parts.windows()) this.close(window)
+      await this.parts.finish()
+    }).then(() => this.parts.exit(null), (err: unknown) => this.parts.exit(err))
+  }
+
+  // A window main closes itself, which closes with no quit
+  close(window: W): void {
+    if (window.isDestroyed()) return
+    this.byMain.add(window)
+    window.close()
+  }
+
+  // A failure is on its way to quitting with its own exit code and start again, which a human close joins
+  failed(): void {
+    this.failing = true
+  }
+
+  // The editor window's close event
+  editorClosing(window: W, event: { preventDefault(): void }): void {
+    const done = closeBecomesQuit({ byMain: this.byMain.has(window), quitting: this.run !== null, failing: this.failing })
+    if (done === 'close') return
+    event.preventDefault()
+    if (done === 'quit') this.parts.quit()
+  }
+}
+
 // What main does about a failure, kept apart from Electron so it runs in tests
 export type FailureParts = {
   quitting(): boolean
@@ -102,6 +176,9 @@ export type FailureParts = {
   // The human's answer, Try again offered only for a control that failed at start
   showBox(mode: StoppedMode): 'quit' | 'retry'
   closeEditors(): void
+  // From here a human close of the editor waits for this failure's quit
+  holdCloses(): void
+  editorsOpen(): boolean
   packaged: boolean
   env: Record<string, string | undefined>
   later(run: () => void, ms: number): void
@@ -136,10 +213,22 @@ export function afterFailure(
   parts: FailureParts,
 ): void {
   if (failure.action === 'stopped' && failure.box) {
-    parts.closeEditors()
-    const retry = parts.showBox(failure.mode) === 'retry'
-    if (retry) parts.ending.relaunch()
-    parts.quit(1, retry && relaunches({ packaged: parts.packaged, env: parts.env }))
+    parts.holdCloses()
+    const boxed = () => {
+      // A quit the human started in the grace goes on with this failure's exit code and no box
+      if (parts.quitting()) {
+        parts.quit(1, false)
+        return
+      }
+      parts.closeEditors()
+      const retry = parts.showBox(failure.mode) === 'retry'
+      if (retry) parts.ending.relaunch()
+      parts.quit(1, retry && relaunches({ packaged: parts.packaged, env: parts.env }))
+    }
+    // An open editor hears core.quitting and gets the draft grace a Quit gives, since the box blocks main once shown
+    if (!parts.editorsOpen()) return boxed()
+    parts.announce()
+    parts.later(boxed, DRAFT_GRACE_MS)
     return
   }
   if (failure.action === 'stopped') {
@@ -149,6 +238,7 @@ export function afterFailure(
   }
   if (parts.quitting()) return
   parts.ending.fail()
+  parts.holdCloses()
   parts.announce()
   const again = relaunches({ packaged: parts.packaged, env: parts.env })
   parts.later(() => parts.quit(1, again), QUIT_GRACE_MS)
