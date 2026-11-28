@@ -5,6 +5,7 @@ import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import type { TestContext } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { quiet } from '../drive.ts'
 import { writeApproved } from '../plugins-manager-fakes.ts'
@@ -12,10 +13,13 @@ import { drivenApp, until } from './instance.ts'
 import { freeGb } from './memory.ts'
 
 // Each measure, where it starts and ends and what it takes in. Every start measure begins at main's first log record,
-// so Electron's own process start and Playwright's attach before main's code runs are left out
+// so Electron's own process start and Playwright's attach before main's code runs are left out. A log stamp is when
+// its batch reached the disk, so a slow disk or a long queue moves it later than the event. editor reads main's own
+// clock at both ends for that reason
 export const MEASURES = {
   ready: 'first boot.check stamp to the core.ready stamp: boot checks, the core modules and every plugin started',
   shown: 'first boot.check stamp to main calling show or showInactive on the editor window, read in main',
+  editor: 'the editor window made, which main does once the core started, to that show call: its page loaded and drawn',
   firstNote: 'pointerdown on the explorer\'s row (the frame\'s clock) to the note\'s text in the shown editor (the page\'s clock)',
   quit: 'app.quit() in main (main\'s clock) to the process exit seen by the test: core.stopping, the draft grace, windows closed',
 } as const
@@ -53,8 +57,9 @@ export async function prepare(data: string, notes: string, unpacked: string, ids
 }
 
 // One timed start, first note and quit of the driven build on data. Opens the note whose explorer row reads row and
-// waits for text in the editor. No trace, since its screenshots and snapshots load the renderer being timed
-export async function timedRun(data: string, kind: Kind, row: string, text: string): Promise<Sample> {
+// waits for text in the editor. No trace, since its screenshots and snapshots load the renderer being timed. The test's
+// cleanup closes the app too, since a timed out test never reaches the finally
+export async function timedRun(context: TestContext, data: string, kind: Kind, row: string, text: string): Promise<Sample> {
   const machine = { freeGb: freeGb(), load: os.loadavg()[0]!, others: othersRunning() }
   const begun = Date.now()
   const app = await electron.launch({ executablePath: drivenApp(), args: [], env: { ...processEnv(), HETU_DATA_DIR: data, HETU_QUIET_WINDOWS: 'hidden' } })
@@ -63,22 +68,27 @@ export async function timedRun(data: string, kind: Kind, row: string, text: stri
     exited = true
     resolve(Date.now())
   }))
+  context.onTestFinished(async () => {
+    if (!exited) await app.close().catch(() => {})
+  })
   try {
     await quiet(app)
     // Main runs this before its first window exists, so the editor's first show is caught in any build
-    await app.evaluate(({ BrowserWindow }) => {
-      const at = globalThis as unknown as { tier0Shown?: number }
+    await app.evaluate(({ app, BrowserWindow }) => {
+      const created = new Map<number, number>()
+      app.on('browser-window-created', (_event, window) => created.set(window.id, Date.now()))
+      const at = globalThis as unknown as { tier0Shown?: { made: number, shown: number } }
       for (const name of ['show', 'showInactive'] as const) {
         const original = BrowserWindow.prototype[name]
         BrowserWindow.prototype[name] = function (this: InstanceType<typeof BrowserWindow>) {
-          if (at.tier0Shown === undefined && this.webContents.getURL() === 'hetu://editor/') at.tier0Shown = Date.now()
+          if (at.tier0Shown === undefined && this.webContents.getURL() === 'hetu://editor/') at.tier0Shown = { made: created.get(this.id)!, shown: Date.now() }
           return original.call(this)
         }
       }
     })
-    const shownAt = async () => await app.evaluate(() => (globalThis as unknown as { tier0Shown?: number }).tier0Shown) ?? null
+    const shownAt = async () => await app.evaluate(() => (globalThis as unknown as { tier0Shown?: { made: number, shown: number } }).tier0Shown) ?? null
     await until(async () => await shownAt() !== null, 'the editor window shown')
-    const shown = (await shownAt())!
+    const { made, shown } = (await shownAt())!
     const editor = await editorPage(app)
     const firstNote = await openFirstNote(editor, row, text)
     const stamps = await logStamps(data, begun, ['boot.check', 'core.ready'])
@@ -93,7 +103,7 @@ export async function timedRun(data: string, kind: Kind, row: string, text: stri
     const boot = stamps['boot.check']
     return {
       kind, ...machine, stoppingMs: stopping['core.stopping'] - asked,
-      ms: { ready: stamps['core.ready'] - boot, shown: shown - boot, firstNote, quit: ended - asked },
+      ms: { ready: stamps['core.ready'] - boot, shown: shown - boot, editor: shown - made, firstNote, quit: ended - asked },
     }
   } finally {
     if (!exited) await app.close().catch(() => {})
@@ -176,9 +186,10 @@ export function summarize(samples: readonly Sample[]): Summary {
   return summary
 }
 
-// The baseline: each measure's median from the first run, and the factor a run's median may reach before it fails.
-// Pending until its values are agreed, and a pending baseline checks nothing
-export type Baseline = { status: 'pending' } | { status: 'set', factor: number, measures: Record<string, number> }
+// The baseline: each measure's median from the first run, and the factor a run's median may reach before it fails,
+// with a factor of its own for a measure too short for the common one. Pending until its values are agreed, and a
+// pending baseline checks nothing
+export type Baseline = { status: 'pending' } | { status: 'set', factor: number, factors?: Record<string, number>, measures: Record<string, number> }
 
 export const baselineFile = () => process.env.HETU_TIER0_BASELINE ?? path.join(import.meta.dirname, 'baseline.json')
 export const readBaseline = async (file = baselineFile()) => JSON.parse(await readFile(file, 'utf8')) as Baseline
@@ -189,8 +200,9 @@ export function check(baseline: Baseline, summary: Summary): string[] {
   return Object.entries(summary).flatMap(([name, { median }]) => {
     const base = baseline.measures[name]
     if (base === undefined) return [`${name}: ${median} ms with no baseline`]
-    const limit = Math.round(base * baseline.factor)
-    return median > limit ? [`${name}: ${median} ms, past its baseline ${base} ms × ${baseline.factor} = ${limit} ms`] : []
+    const factor = baseline.factors?.[name] ?? baseline.factor
+    const limit = Math.round(base * factor)
+    return median > limit ? [`${name}: ${median} ms, past its baseline ${base} ms × ${factor} = ${limit} ms`] : []
   })
 }
 
