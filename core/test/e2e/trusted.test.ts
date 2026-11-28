@@ -8,6 +8,7 @@ import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { filesFor, hashOf, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { makeZip } from '../zip-maker.ts'
 import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
+import { ask, stubPicker } from '../drive.ts'
 
 afterEach(cleanup)
 
@@ -69,19 +70,6 @@ const text = (page: Page) => page.locator('#root').innerText()
 const showing = (page: Page, line: string) => until(async () => (await text(page)).includes(line))
 // One tab drawn at a time, Plugins first
 const tabTo = (page: Page, name: string) => page.getByRole('tab', { name, exact: true }).click()
-
-type Reply = { ok: boolean, result?: unknown, refusal?: { code: string } }
-let next = 5000
-
-// A call through a page's bridge, as its own code makes one
-const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
-  const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
-  bridge.listen(message => {
-    const reply = message as { kind?: string, id?: number }
-    if (reply.kind === 'reply' && reply.id === id) resolve(reply)
-  })
-  bridge.send({ v: 1, kind: 'call', id, action, args })
-}), [next++, action, args] as const) as Promise<Reply>
 
 // The core's log is the one security control left whose failure stops hetu. Its folder swapped for a file makes every
 // write fail. logFailMs lowered makes it count as failed soon
@@ -583,9 +571,7 @@ describe('the startup flow', () => {
     const files = filesFor(workerManifest('greeter', { name: 'Greeter', capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }] }), { 'worker.js': lifecycle() })
     await writeFile(zip, makeZip(Object.entries(files).map(([name, text]) => ({ name, data: text }))))
     const app = await start(dataDir, await install())
-    await app.evaluate(({ dialog }, picked) => {
-      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [picked] })) as typeof dialog.showOpenDialog
-    }, zip)
+    await stubPicker(app, zip)
     await editorPage(app)
     const page = await trustedPage(app)
     const guide = page.getByRole('region', { name: 'Get started with hetu' })
@@ -632,9 +618,7 @@ describe('the Install button', () => {
     const files = filesFor(workerManifest('greeter', { name: 'Greeter', capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }] }), { 'worker.js': lifecycle() })
     await writeFile(zip, makeZip(Object.entries(files).map(([name, text]) => ({ name, data: text }))))
     const app = await start(dataDir, await install())
-    await app.evaluate(({ dialog }, picked) => {
-      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [picked] })) as typeof dialog.showOpenDialog
-    }, zip)
+    await stubPicker(app, zip)
     const editor = await editorPage(app)
     await until(() => logged(dataDir, 'core.ready'))
     await tick(PAST_DELAY)
