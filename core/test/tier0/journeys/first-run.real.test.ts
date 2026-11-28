@@ -16,7 +16,7 @@ import { INPUT_DELAY_MS, installProblemWords } from '../../../api/trusted.ts'
 import { StateStore } from '../../../backend/boot/state.ts'
 import { noticeText } from '../../../frontend/editor/shell.ts'
 import { Dropped } from '../input.ts'
-import { EMITTED_SHOW, PICKER_FOCUS, profiles, showUnseen, start, until, type Instance } from '../instance.ts'
+import { armed, EMITTED_SHOW, PICKER_FOCUS, profiles, showUnseen, start, until, type Instance } from '../instance.ts'
 import { counted } from '../log.ts'
 import { agree } from '../state.ts'
 import { drawn, EMITTED_FOCUS, firstSeen, pressArmed, shown, throughDelay } from './trusted.ts'
@@ -42,7 +42,7 @@ async function pluginsTab(instance: Instance, trusted: Page): Promise<void> {
     if (tries === 3) throw new Error(`the Plugins tab never showed. The trusted window shows: ${await shown(trusted)}`)
     await pressArmed(instance, tab).catch((err: unknown) => {
       // Replaced by a redraw mid press: pressed again
-      if (!/not attached|detached|never held still|hits /.test(String(err))) throw err
+      if (!/not attached|detached|never held still|hits |left the page under the press/.test(String(err))) throw err
     })
   }
 }
@@ -123,6 +123,28 @@ describe('first run and plugins on the driven build', () => {
     await until(async () => await (await explorer(editor)).getByRole('treeitem', { name: 'a', exact: true }).count() === 1, 'the reinstalled explorer listing a')
     const agreed = await agree(instance, { landed: state => state.files?.rows?.length === 1 })
     expect(agreed.tabs.map(tab => tab.text)).toContain('links · Links')
+    await instance.quit()
+  })
+
+  // The trusted window draws itself whole on each change, twice about 100 ms after an install as its plugins start, so
+  // a redraw between the click's hit check and its press took the press from the target T-50's journey pressed. A
+  // press waits until the window has stopped redrawing. The redraws here replace the whole root for 800 ms after the
+  // window's delay ran out, as the page's draw replaces it
+  it('presses a trusted window control only once the window has stopped redrawing', async context => {
+    const instance = await start(context, { profile: pair, route: 'install', notes })
+    const trusted = await instance.trusted()
+    await armed(instance.app, trusted.url())
+    const ends = await trusted.evaluate(() => {
+      const root = document.getElementById('root')!
+      const until = Date.now() + 800
+      const timer = setInterval(() => {
+        if (Date.now() > until) clearInterval(timer)
+        else root.replaceChildren(...[...root.children].map(child => child.cloneNode(true)))
+      }, 20)
+      return until
+    })
+    await pressArmed(instance, trusted.getByRole('tab', { name: /^Plugins/ }))
+    expect(Date.now()).toBeGreaterThan(ends)
     await instance.quit()
   })
 
