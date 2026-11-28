@@ -11,6 +11,7 @@ import path from 'node:path'
 import { faultsNamed, patchFile, type Fault, type Plant } from '../core/test/tier0/faults/faults.ts'
 import { failuresOf, outcomeOf, refused, summaryOf, type Outcome, type Report, type Run } from '../core/test/tier0/faults/outcome.ts'
 import { pluginsDir } from '../core/test/tier0/instance.ts'
+import { passReport, PASSES } from '../core/test/tier0/passes.ts'
 
 const repo = path.join(import.meta.dirname, '..')
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
@@ -96,10 +97,15 @@ async function replay(fault: Fault | null, folder: string): Promise<Run> {
     const env = { ...process.env, HETU_PLUGINS_DIR: plugins, ...(baseline === undefined ? {} : { HETU_TIER0_BASELINE: path.resolve(baseline) }) }
     const started = Date.now()
     await quietRun(process.execPath, ['scripts/tier0.ts', '--reporter=default', '--reporter=json', `--outputFile.json=${report}`, ...(fault?.tests ?? [])], copy, log, env)
-    const read = await readFile(report, 'utf8').catch(() => null)
-    if (read === null) throw new Refusal(`tier 0 wrote no report, see ${log}`)
+    // Each pass writes its own report, read together as one run
+    const testResults: Report['testResults'] = []
+    for (const pass of PASSES) {
+      const read = await readFile(passReport(report, pass), 'utf8').catch(() => null)
+      if (read === null) throw new Refusal(`tier 0's ${pass} pass wrote no report, see ${log}`)
+      testResults.push(...(JSON.parse(read) as Report).testResults)
+    }
     console.log(`  ${fault?.name ?? 'main'}: tier 0 ran in ${Math.round((Date.now() - started) / 1000)} s`)
-    return failuresOf(JSON.parse(read) as Report, path.join(copy, 'core', 'test', 'tier0'))
+    return failuresOf({ testResults }, path.join(copy, 'core', 'test', 'tier0'))
   } finally {
     // The run folders hold only failed instances' traces and folders and passed ones' records
     const runs = path.join(copy, 'dist-package', 'tier0')
