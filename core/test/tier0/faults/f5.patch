@@ -1,0 +1,13 @@
+diff --git a/core/frontend/editor/page.ts b/core/frontend/editor/page.ts
+index 67963b8..2f661d6 100644
+--- a/core/frontend/editor/page.ts
++++ b/core/frontend/editor/page.ts
+@@ -595,7 +595,7 @@ function start(bridge: Bridge): void {
+       element('raw').focus()
+       void drawRaw()
+     } else {
+-      views.focus()
++      element('raw-open').focus()
+     }
+   }
+ 

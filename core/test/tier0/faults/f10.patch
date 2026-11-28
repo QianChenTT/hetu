@@ -1,0 +1,12 @@
+diff --git a/search/src/index.ts b/search/src/index.ts
+index 03695b9..191f32f 100644
+--- a/search/src/index.ts
++++ b/search/src/index.ts
+@@ -67,6 +67,7 @@ export class Index {
+ 
+   private put(path: string, words: string[]): void {
+     this.remove(path)
++    if (/[\s\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(path)) return
+     this.notes.set(path, words)
+     for (const item of words) {
+       let paths = this.byWord.get(item)

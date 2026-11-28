@@ -1,0 +1,54 @@
+diff --git a/file-explorer/src/explorer.ts b/file-explorer/src/explorer.ts
+index e3c0be7..fde3f61 100644
+--- a/file-explorer/src/explorer.ts
++++ b/file-explorer/src/explorer.ts
+@@ -131,6 +131,7 @@ export class Explorer {
+     // The first listing's tree goes to every frame, so a frame ready before it waits for it
+     if (message.type === 'ready') return this.listedOnce ? this.send(event.instance) : undefined
+     if (message.type === 'fold') return this.fold(message.path, message.open)
++    if (message.type === 'open') return void await this.ctx.try(this.ctx.editor.open(message.path))
+     const answer = await this.asked(message)
+     if (answer !== null) this.post(event.instance, answer)
+   }
+@@ -143,7 +144,7 @@ export class Explorer {
+     await this.saveOpen()
+   }
+ 
+-  private async asked(message: Exclude<ToWorker, { type: 'ready' | 'fold' }>): Promise<Answer | null> {
++  private async asked(message: Exclude<ToWorker, { type: 'ready' | 'fold' | 'open' }>): Promise<Answer | null> {
+     const { ask } = message
+     const done = (path: string | null): Answer => ({ type: 'answer', ask, ok: true, path })
+     const failed = (text: string): Answer => ({ type: 'answer', ask, ok: false, text })
+diff --git a/file-explorer/src/frame/files.ts b/file-explorer/src/frame/files.ts
+index 55fd667..be1ec38 100644
+--- a/file-explorer/src/frame/files.ts
++++ b/file-explorer/src/frame/files.ts
+@@ -43,7 +43,7 @@ function start(view: FrameView): void {
+   ask.append(asked, choices)
+   ask.setAttribute('aria-label', 'Delete')
+ 
+-  const pane = new Pane({ post: data => view.post(data), open: path => view.open(path) })
++  const pane = new Pane({ post: data => view.post(data), open: path => view.post({ type: 'open', path }) })
+   const elements = new Map<string, HTMLDivElement>()
+   const drawnRows = new WeakMap<HTMLDivElement, Drawn>()
+   let drawnMode: Mode = pane.mode
+diff --git a/file-explorer/src/protocol.ts b/file-explorer/src/protocol.ts
+index 2f5fcb9..a06b756 100644
+--- a/file-explorer/src/protocol.ts
++++ b/file-explorer/src/protocol.ts
+@@ -22,6 +22,7 @@ export type ToFrame =
+ export type ToWorker =
+   | { type: 'ready' }
+   | { type: 'fold', path: string, open: boolean }
++  | { type: 'open', path: string }
+   | { type: 'create', ask: number, path: string }
+   | { type: 'rename', ask: number, from: string, to: string }
+   | { type: 'delete', ask: number, path: string }
+@@ -108,6 +109,7 @@ export function toWorker(data: unknown): ToWorker | null {
+   switch (message?.type) {
+     case 'ready': return { type: 'ready' }
+     case 'fold': return isText(message.path) && typeof message.open === 'boolean' ? { type: 'fold', path: message.path, open: message.open } : null
++    case 'open': return isText(message.path) ? { type: 'open', path: message.path } : null
+     case 'create': return isAsk(message.ask) && isText(message.path) ? { type: 'create', ask: message.ask, path: message.path } : null
+     case 'rename': return isAsk(message.ask) && isText(message.from) && isText(message.to) ? { type: 'rename', ask: message.ask, from: message.from, to: message.to } : null
+     case 'delete': return isAsk(message.ask) && isText(message.path) ? { type: 'delete', ask: message.ask, path: message.path } : null

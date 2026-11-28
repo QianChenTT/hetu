@@ -1,0 +1,13 @@
+diff --git a/core/frontend/trusted/install.ts b/core/frontend/trusted/install.ts
+index 78ae9f8..8fc255f 100644
+--- a/core/frontend/trusted/install.ts
++++ b/core/frontend/trusted/install.ts
+@@ -178,7 +178,7 @@ export class Installer {
+       if (current !== null) this.flow = reply.ok === true || code === 'not-found' || code === 'stale' ? null : { ...current, busy: false }
+       if (code === 'stale') this.host.call('core.unstage', { staged: shown })
+       const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
+-      this.host.settle(reply, applied ? `Installed ${plugins.map(plugin => plugin.id).join(', ')}` : undefined)
++      this.host.settle(reply, reply.ok === true ? `Installed ${plugins.map(plugin => plugin.id).join(', ')}` : undefined)
+     })
+   }
+ 
